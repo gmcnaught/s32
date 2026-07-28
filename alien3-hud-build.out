@@ -1,0 +1,11 @@
+Build lock acquired. Persistent log: D:\Arcade\AI\s32\build-20260727-223912-23908.log
+s32Alien3.qsf is current.
+[0/4] Validating toolchain, active revision, resources, and exclusivity...
+Another Quartus/Qsys compiler process is active: quartus_map (PID 24000)
+At D:\Arcade\AI\s32\tools\build-preflight.ps1:126 char:5
++     throw "Another Quartus/Qsys compiler process is active: $details"
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (Another Quartus...map (PID 24000):String) [], RuntimeException
+    + FullyQualifiedErrorId : Another Quartus/Qsys compiler process is active: quartus_map (PID 24000)
+ 
+ERROR: incremental Quartus build failed.
