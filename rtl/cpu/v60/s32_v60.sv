@@ -35,7 +35,17 @@ module s32_v60 #(
     // instead of the ce-gated 16-bit data adapter.  This is what makes the
     // prefetch pay off on the production (gated-ce) build; the unit testbenches
     // run ce=1 (adapter already fast) and leave it 0 so if_* can stay unconnected.
-    parameter        FAST_IFETCH = 1'b0
+    parameter        FAST_IFETCH = 1'b0,
+    // SEQ_DISPATCH=1: overlap the inter-instruction handoff with the completing
+    // instruction (docs/v60-pipelining-plan.md Stage A).  The real uPD70616 runs
+    // six concurrent units and overlaps up to four instructions; this core is
+    // strictly sequential, and the resulting S_NEXT -> S_FILL -> S_DECODE
+    // handoff is a 2-3 cycle bubble on EVERY instruction.  With this set, the
+    // first fetch-window realign is performed in S_NEXT itself and, when the
+    // successor is already complete in the window, S_FILL is skipped entirely.
+    // Timing only -- architectural results are identical either way, which is
+    // what the differential co-sim gate proves.  Set to 0 to A/B the effect.
+    parameter        SEQ_DISPATCH = 1'b1
 )(
     input             clk,
     input             ce,            // 16.108 MHz (V60) / 20 MHz (V70) enable
@@ -203,6 +213,76 @@ always @* begin
         endcase
     end
 end
+
+// ---------------------------------------------------------------------------
+// Stage A: sequential dispatch overlap (docs/v60-pipelining-plan.md §3 Stage A)
+//
+// The bubble being removed.  For a sequential instruction of length L the core
+// currently spends: 1 cycle in S_NEXT (advance PC), ceil(L/4) cycles in S_FILL
+// shifting the consumed bytes out of the window, one more S_FILL cycle to
+// observe fb_base==pc && fb_valid>=fb_need, then S_DECODE.  Only S_DECODE does
+// architectural work; the rest is handoff the real part overlaps.  Measured on
+// ga2 work code this is S_FILL 19% + S_NEXT 3% of all CPU cycles.
+//
+// What is done here: the FIRST realign step moves into S_NEXT (it cannot start
+// earlier -- the EA/execute stages read displacement and immediate bytes out of
+// fb[] until the instruction retires, and S_NEXT is the first cycle after that
+// last use), and when the successor is provably complete in the window the
+// S_FILL readiness check is evaluated in S_NEXT too so S_FILL is skipped.
+//
+// Why this is safe rather than merely fast:
+//   * It is pure window bookkeeping plus a dispatch decision.  No register or
+//     memory VALUE is read early, so no RAW hazard exists and no scoreboard is
+//     needed -- that is Stage B's problem, not this one.
+//   * S_NEXT is only ever reached on sequential retirement.  Every control
+//     transfer leaves through S_BR_TAKE/S_JSR1/S_RET*/S_EXC_* and sets pc
+//     itself, so there is no branch shadow to squash here.  If some earlier
+//     state did move pc, fb_base!=pc and the fast path disables itself.
+//   * Interrupts are sampled in S_DECODE (not S_FILL), so skipping S_FILL
+//     cannot delay or drop one.  Latency in fact improves by up to two cycles.
+//   * The predecode below is deliberately CONSERVATIVE: any opcode whose length
+//     requirement is not trivially known demands the 20-byte worst case, so the
+//     fast path is taken only when the window certainly holds a whole
+//     instruction.  Over-estimating costs a fall back to S_FILL, which applies
+//     the exact fb_need.  It can never dispatch on a short window.
+// ---------------------------------------------------------------------------
+
+// Conservative mirror of the fb_need decoder, evaluated on the SUCCESSOR's head
+// byte.  fb_need's 0x2D lookahead case is deliberately omitted: resolving it
+// needs two further window bytes and would deepen this path for no measurable
+// gain (0x2D then simply falls back to S_FILL).
+function automatic [4:0] seq_need(input [7:0] op);
+    casez (op)
+        8'h00,                                          // HALT
+        8'hc8, 8'hc9, 8'hca, 8'hcd: seq_need = 5'd1;    // BRK/BRKV, RSR, NOP
+        8'b0110_????:               seq_need = 5'd2;    // Bcc disp8
+        8'b0111_????, 8'h48:        seq_need = 5'd3;    // Bcc/BSR disp16
+        8'hc6, 8'hc7:               seq_need = 5'd4;    // DBcc/TB
+        default:                    seq_need = FB_THRESH;
+    endcase
+endfunction
+
+// Bytes shifted out this step, capped at 4.  Kept at 4 for the same
+// timing-closure reason S_FILL is (see the note there): widening the fb[] input
+// mux from 5:1 to 9:1 risks the thin setup margin.
+wire [4:0] seq_s = (total_len >= 5'd4) ? 5'd4 : total_len;
+// The window may be shifted in place only when it is aligned on the retiring
+// instruction and still holds the successor's first byte -- the same condition
+// S_FILL uses to choose shifting over rebasing.  total_len==0 must not shift:
+// pc is unchanged, so S_FILL's aligned branch applies and clobbering fb_prev
+// would corrupt the loop cache.
+wire seq_shift_ok = SEQ_DISPATCH && (fb_base == pc)
+                    && (total_len != 5'd0) && (total_len < fb_valid);
+wire [4:0] seq_valid_after = fb_valid - total_len;   // decode-visible after shift
+// Dispatch straight to S_DECODE only when one 4-byte step aligns the window
+// (total_len<=4) AND the successor is already complete within it.
+wire seq_dispatch_now = seq_shift_ok && (total_len <= 5'd4)
+                        && (seq_valid_after >= seq_need(fb[total_len[2:0]]));
+// True in any cycle the main FSM shifts fb[] itself.  A prefetch ack landing in
+// such a cycle must be discarded: its append indexes off the pre-shift frontier
+// and would race the shift's own assignment to the same fb[] bytes.
+wire win_shift_now = (st == S_FILL && fb_base != pc)
+                     || (st == S_NEXT && seq_shift_ok);
 
 function automatic [31:0] fb32(input [4:0] o);
     fb32 = {fb[o+3], fb[o+2], fb[o+1], fb[o]};
@@ -1800,10 +1880,30 @@ else if (ce) begin
         end
     end
 
-    // advance PC and refill
+    // advance PC and refill.  With SEQ_DISPATCH the window realign that S_FILL
+    // would perform next cycle is done here instead, and when the successor is
+    // already complete in the window we enter S_DECODE directly, retiring the
+    // S_NEXT->S_FILL->S_DECODE bubble (docs/v60-pipelining-plan.md Stage A).
     S_NEXT: begin
         pc <= pc + total_len;
         st <= S_FILL; st_after_fill <= S_DECODE;
+        if (seq_shift_ok) begin
+            // Identical bookkeeping to S_FILL's first realign step, including the
+            // fb_prev snapshot: the loop cache restores fb_prev whenever a branch
+            // lands on fb_prev_base, so letting it go stale against fb[] would
+            // serve wrong bytes, not merely lose performance.
+            for (int i = 0; i < 24; i++) fb_prev[i] <= fb[i];
+            fb_prev_base  <= fb_base;
+            fb_prev_valid <= fb_valid;
+            for (int i = 0; i < 24; i++)
+                if (i + seq_s < 24) fb[i] <= fb[i + seq_s];
+            fb_base  <= fb_base + {27'b0, seq_s};
+            fb_valid <= fb_valid - seq_s;
+            fb_wr    <= fb_wr - seq_s;      // frontier shifts down with the window
+            // >4 bytes consumed: S_FILL finishes the shift and must not re-snapshot.
+            fb_realigning <= (total_len > 5'd4);
+            if (seq_dispatch_now) st <= S_DECODE;
+        end
     end
 
     // ------------------------------------------------------------------
@@ -3070,9 +3170,15 @@ else if (ce) begin
         pf_req  <= 1'b0;
         if_req  <= 1'b0;
         pf_busy <= 1'b0;
+        // win_shift_now covers BOTH window-shifting states (S_FILL realign and
+        // the S_NEXT realign added for Stage A).  Note the frontier ADDRESS is
+        // invariant under a shift (fb_base+s, fb_wr-s), so the pf_addr check
+        // above cannot catch this case on its own -- without win_shift_now a
+        // prefetch ack landing in the S_NEXT shift cycle would append at the
+        // stale index and fight the shift for the same fb[] bytes.
         if (pf_iss_epoch == pf_epoch
             && pf_addr == fb_base + {27'b0, fb_wr}
-            && !(st == S_FILL && fb_base != pc)) begin
+            && !win_shift_now) begin
             if (FAST_IFETCH) begin
                 // append the 8-byte line from the frontier offset to the line end
                 // (1..8 bytes).  s32_core has ALREADY aligned if_data so byte 0 is
@@ -3099,6 +3205,18 @@ else if (ce) begin
             end
         end
     end
+
+    // Stage A depends on this guard never firing in the same cycle as the S_NEXT
+    // realign: it invalidates the window, and the fast path may have already
+    // committed to entering S_DECODE, which would then decode invalid bytes.  It
+    // cannot happen -- every path that reaches S_NEXT clears dbus_req in the
+    // cycle its write acks, so dbus_req is low throughout S_NEXT.  That is a
+    // cross-state argument, so pin it with an assertion instead of paying gates
+    // to defend a condition that should be impossible.
+`ifdef SIMULATION
+    if (st == S_NEXT && dbus_req && dbus_we)
+        $fatal(1, "V60 Stage A: data write outstanding in S_NEXT (pc=%08x) -- the SMC window invalidation can race the fast dispatch", pc);
+`endif
 
     // Self-modifying-code guard (audit R20 V60-19): a completing data write that
     // overlaps the live or retained fetch window invalidates it, so a subsequent
