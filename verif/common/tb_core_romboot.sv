@@ -5,10 +5,15 @@
 //  Plusargs:
 //    +IMG=<dir>     image directory (maincpu.hex/soundcpu.hex/tiles.hex/
 //                   sprites.hex expected inside)
-//    +B0=<hex>      board descriptor byte 0 (flags), default 0
-//    +B1=<hex>      board descriptor byte 1: dual/flipY/gun/coin-swap bits 0..3
-//    +B2=<hex>      protection selector (1 = Sonic), default 0
-//    +SBM=<hex>     physical sprite-ROM bank mask (0/1/3), default 3
+//    +DESC=<file>   the real 64-byte board descriptor as ASCII hex, i.e. the
+//                   desc.txt that make_sim_images.py writes beside the image.
+//                   This is what an MRA delivers on ioctl index 0; use it.
+//    +B0=<hex>      override descriptor byte 0 (device-presence flags)
+//    +B1=<hex>      override descriptor byte 1: dual/flipY/gun/coin-swap bits 0..3
+//    +B2=<hex>      override the protection selector (PROT_*)
+//    +SBM=<hex>     override the physical sprite-ROM bank mask (0/1/3)
+//                   Without +DESC and without overrides the descriptor is all
+//                   zeroes with a four-bank sprite mask.
 //    +FRAMES=<n>    frames to run (804k clk_sys each), default 3
 //    +COINAT=<n>     assert P1 coin active-low starting at harness frame n
 //    +COINLEN=<n>    coin assertion length in frames, default 1
@@ -89,17 +94,90 @@ always @(posedge clk_sys) begin
     end
 end
 
-// board descriptor from plusargs
+// ---------------------------------------------------------------------------
+// Board descriptor.
+//
+// +DESC=<file> reads the real descriptor that tools/make_sim_images.py writes
+// beside the ROM image (desc.txt), which is byte-identical to the 64 bytes an
+// MRA delivers on ioctl index 0.  Prefer it: hand-maintained per-game bytes in
+// a runner script drift from the shipped MRA, and a descriptor that does not
+// match the MRA means the harness is simulating a different machine than the
+// core ships -- wrong device presence, wrong protection selector, wrong sprite
+// bank mask.
+//
+// The +B0/+B1/+B2/+SBM plusargs remain as explicit per-field overrides for
+// directed descriptor-variation tests, and win over the file when given.  Only
+// a plusarg that is actually present overrides; absence is not zero.
+//
+// The field/bit assignment below mirrors s32_rom_loader.sv's descriptor decode
+// exactly.  Keep the two in step: a divergence here silently invalidates every
+// run made through this harness.
+// ---------------------------------------------------------------------------
 board_desc_t board;
+reg [7:0] desc_bytes [0:15];
+string    desc_path;
+integer   desc_fd, desc_c, desc_i, desc_nib, desc_hi, desc_eof;
 integer b0;
 integer b1;
 integer b2;
 integer sbm;
+
+function automatic integer hex_nibble(input integer c);
+    if      (c >= "0" && c <= "9") hex_nibble = c - "0";
+    else if (c >= "a" && c <= "f") hex_nibble = 10 + (c - "a");
+    else if (c >= "A" && c <= "F") hex_nibble = 10 + (c - "A");
+    else                           hex_nibble = -1;   // whitespace/newline/junk
+endfunction
+
 initial begin
-    if (!$value$plusargs("B0=%h", b0)) b0 = 0;
-    if (!$value$plusargs("B1=%h", b1)) b1 = 0;
-    if (!$value$plusargs("B2=%h", b2)) b2 = 0;
-    if (!$value$plusargs("SBM=%h", sbm)) sbm = 3;
+    for (desc_i = 0; desc_i < 16; desc_i = desc_i + 1) desc_bytes[desc_i] = 8'h00;
+
+    if ($value$plusargs("DESC=%s", desc_path)) begin
+        desc_fd = $fopen(desc_path, "r");
+        if (desc_fd == 0) begin
+            $display("[desc] FATAL: cannot open %0s", desc_path);
+            $fatal(1);
+        end
+        // desc.txt is one line of ASCII hex.  Consume nibble pairs, ignoring
+        // any separator, until the 16 bytes the loader inspects are filled.
+        desc_i = 0; desc_hi = -1; desc_eof = 0;
+        while (desc_i < 16 && desc_eof == 0) begin
+            desc_c = $fgetc(desc_fd);
+            if (desc_c < 0) desc_eof = 1;
+            else begin
+                desc_nib = hex_nibble(desc_c);
+                if (desc_nib >= 0) begin
+                    if (desc_hi < 0) desc_hi = desc_nib;
+                    else begin
+                        desc_bytes[desc_i] = 8'((desc_hi << 4) | desc_nib);
+                        desc_i  = desc_i + 1;
+                        desc_hi = -1;
+                    end
+                end
+            end
+        end
+        $fclose(desc_fd);
+        if (desc_i < 4) begin
+            $display("[desc] FATAL: %0s held only %0d descriptor bytes",
+                     desc_path, desc_i);
+            $fatal(1);
+        end
+        $display("[desc] %0s -> %02x %02x %02x %02x",
+                 desc_path, desc_bytes[0], desc_bytes[1],
+                 desc_bytes[2], desc_bytes[3]);
+    end
+
+    b0  = desc_bytes[0];
+    b1  = desc_bytes[1];
+    b2  = desc_bytes[2];
+    sbm = desc_bytes[3][7] ? desc_bytes[3][1:0] : 3;
+    // Explicit overrides.  $value$plusargs leaves its argument untouched when
+    // the plusarg is absent, so each read is conditional rather than defaulted.
+    void'($value$plusargs("B0=%h",  b0));
+    void'($value$plusargs("B1=%h",  b1));
+    void'($value$plusargs("B2=%h",  b2));
+    void'($value$plusargs("SBM=%h", sbm));
+
     board = '0;
     board.multi32     = b0[0];
     board.has_v25     = b0[1];
@@ -108,6 +186,7 @@ initial begin
     board.has_track   = b0[4];
     board.has_ppi     = b0[5];
     board.has_dsp_hle = b0[6];
+    board.has_cd_stub = b0[7];
     board.dual_pcb    = b1[0];
     board.flip_y      = b1[1];
     board.gun_aim     = b1[2];
@@ -115,6 +194,11 @@ initial begin
     board.prot_sel    = b2[6:0];
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
+    $display("[desc] board: multi32=%0d v25=%0d/%0d adc=%0d track=%0d ppi=%0d dsp=%0d dual=%0d prot=%0d flip_y=%0d gun=%0d coinsw=%0d sbm=%0d",
+             board.multi32, board.has_v25, board.v25_table, board.has_adc,
+             board.has_track, board.has_ppi, board.has_dsp_hle, board.dual_pcb,
+             board.prot_sel, board.flip_y, board.gun_aim, board.coin_swap,
+             board.sprite_bank_mask);
 end
 
 // ---------------------------------------------------------------------------

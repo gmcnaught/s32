@@ -527,7 +527,16 @@ class LockWrapperTests(unittest.TestCase):
             env.pop("S32_BUILD_LOCK_HELD", None)
             env.pop("S32_BUILD_LOCK_TOKEN", None)
             result = subprocess.run(
-                [env.get("ComSpec", "cmd.exe"), "/d", "/c", "build-goldenaxe.bat"],
+                # Name the script by its full path.  cmd.exe only resolves a
+                # bare name from the current directory when the environment
+                # permits it, and NoDefaultCurrentDirectoryInExePath=1 (set in
+                # some sandboxes, including Claude Code sessions) forbids it --
+                # the script is then "not recognized" and this test fails for a
+                # reason that has nothing to do with the build wrapper.  cwd
+                # stays on tools because the wrapper resolves its siblings
+                # relative to %~dp0 and writes ..\order.txt.
+                [env.get("ComSpec", "cmd.exe"), "/d", "/c",
+                 str(tools / "build-goldenaxe.bat")],
                 cwd=tools,
                 env=env,
                 text=True,

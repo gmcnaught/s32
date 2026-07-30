@@ -19,7 +19,10 @@ warnings=(
   -Wno-INITIALDLY -Wno-DECLFILENAME -Wno-SYNCASYNCNET
 )
 
-verilator --binary --timing -j 0 "${warnings[@]}" \
+# -j/--build-jobs are capped at 6, matching the Quartus NUM_PARALLEL_PROCESSORS
+# limit.  This was -j 0, which forks one compiler per core: 32 on this machine,
+# at up to ~1 GB each, and two concurrent builds exhaust the 64 GB.
+verilator --binary --timing -j 6 --build-jobs 6 --threads 1 "${warnings[@]}" \
   +define+SIMULATION +define+S32_REAL_FB_SIM \
   +define+S32_SYSTEM32_ONLY +define+S32_GA2_ONLY \
   +define+S32_GOLDENAXE_ONLY +define+S32_RELEASE_MINIMAL \
@@ -33,5 +36,5 @@ verilator --binary --timing -j 0 "${warnings[@]}" \
 mkdir -p "$output_dir"
 cd "$output_dir"
 "$repo_root/$build_dir/romboot" \
-  +IMG="$repo_root/roms/sim/ga2" +B0=22 +B2=0 +SBM=3 \
+  +IMG="$repo_root/roms/sim/ga2" +DESC="$repo_root/roms/sim/ga2/desc.txt" \
   +FRAMES="$frames" "$@"
