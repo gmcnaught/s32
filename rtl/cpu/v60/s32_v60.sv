@@ -44,8 +44,15 @@ module s32_v60 #(
     // first fetch-window realign is performed in S_NEXT itself and, when the
     // successor is already complete in the window, S_FILL is skipped entirely.
     // Timing only -- architectural results are identical either way, which is
-    // what the differential co-sim gate proves.  Set to 0 to A/B the effect.
+    // what the differential co-sim gate proves.  Build with
+    // +define+V60_NO_SEQ_DISPATCH to A/B the effect against the sequential
+    // baseline without editing this file (the full-core testbenches do not
+    // override module parameters, so a define is the only lever they have).
+`ifdef V60_NO_SEQ_DISPATCH
+    parameter        SEQ_DISPATCH = 1'b0
+`else
     parameter        SEQ_DISPATCH = 1'b1
+`endif
 )(
     input             clk,
     input             ce,            // 16.108 MHz (V60) / 20 MHz (V70) enable

@@ -1630,6 +1630,12 @@ integer instr_count = 0;
 // the authentic V60 band (~4.6-8 cyc/instr; IPSJ 1990 paper: 3.5 MIPS@16MHz peak).
 integer work_cyc = 0;
 integer work_instr = 0;
+// Stage A (SEQ_DISPATCH) take-rate counters, work-only window.
+integer seq_next_cyc = 0;
+integer seq_shift_cnt = 0;
+integer seq_disp_cnt = 0;
+integer seq_long_cnt = 0;      // realigned but total_len > 4 (needs 2nd shift)
+integer seq_shortwin_cnt = 0;  // realigned in one step but window too short
 integer st_prev = 0;
 integer vbl_cyc = 0;
 reg     pchist_done = 0;
@@ -1656,6 +1662,27 @@ always @(posedge clk_sys) begin
         if (core.v60.dbg_pc != 32'h0013_3505 && core.v60.dbg_pc != 32'h0013_350b) begin
             work_cyc = work_cyc + 1;
             if (core.v60.st == 3 && st_prev != 3) work_instr = work_instr + 1;
+            // Stage A take-rate: how often the S_NEXT fast path actually fires.
+            // st==15 is S_NEXT.  seq_shift_ok = the realign moved into S_NEXT;
+            // seq_dispatch_now = S_FILL skipped entirely.
+            if (core.v60.st == 15) begin
+                seq_next_cyc = seq_next_cyc + 1;
+                if (core.v60.seq_shift_ok)     seq_shift_cnt = seq_shift_cnt + 1;
+                if (core.v60.seq_dispatch_now) seq_disp_cnt  = seq_disp_cnt  + 1;
+                // Partition the cases where the realign happened but S_FILL
+                // could NOT be skipped.  The two causes need different fixes:
+                //   long  = total_len > 4, so one 4-byte shift cannot align the
+                //           window and S_FILL must run a second step.  Fixing
+                //           this means an 8-byte shift, which widens the fb[]
+                //           input mux 5:1 -> 9:1 and spends timing margin.
+                //   short = window aligned in one step but not holding
+                //           seq_need bytes.  Fixing this is a prefetch/window
+                //           occupancy problem, not a shift-width one.
+                if (core.v60.seq_shift_ok && !core.v60.seq_dispatch_now) begin
+                    if (core.v60.total_len > 5'd4) seq_long_cnt = seq_long_cnt + 1;
+                    else                           seq_shortwin_cnt = seq_shortwin_cnt + 1;
+                end
+            end
         end
         st_prev = core.v60.st;
     end
@@ -1669,6 +1696,16 @@ always @(posedge clk_sys) begin
                  work_cyc, work_instr,
                  work_instr ? work_cyc/work_instr : 0,
                  work_instr ? (100*work_cyc/work_instr)%100 : 0);
+        $display("[seqdisp] S_NEXT cycles=%0d  realign-in-S_NEXT=%0d (%0d%%)  S_FILL-skipped=%0d (%0d%%)",
+                 seq_next_cyc, seq_shift_cnt,
+                 seq_next_cyc ? (100*seq_shift_cnt)/seq_next_cyc : 0,
+                 seq_disp_cnt,
+                 seq_next_cyc ? (100*seq_disp_cnt)/seq_next_cyc : 0);
+        $display("[seqdisp] S_FILL still needed: total_len>4=%0d (%0d%%)  window-short=%0d (%0d%%)",
+                 seq_long_cnt,
+                 seq_next_cyc ? (100*seq_long_cnt)/seq_next_cyc : 0,
+                 seq_shortwin_cnt,
+                 seq_next_cyc ? (100*seq_shortwin_cnt)/seq_next_cyc : 0);
         foreach (pc_hist[k])
             if (pc_hist[k] * 100 > pc_samples)
                 $display("[pchist] pc=%08x count=%0d pct=%0d", k, pc_hist[k],
