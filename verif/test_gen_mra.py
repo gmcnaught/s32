@@ -50,7 +50,7 @@ class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        self.assertEqual(len(paths), 59)
+        self.assertEqual(len(paths), 48)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
@@ -63,6 +63,47 @@ class OptimizedLayoutTests(unittest.TestCase):
             descriptor = bytes.fromhex(descriptor_rom.findtext("part", ""))
             self.assertEqual(len(descriptor), 64, path.name)
             self.assertTrue(any(index >= 4 for index in indexes), path.name)
+
+
+class Multi32ExclusionTests(unittest.TestCase):
+    """This repository is System 32 only.
+
+    Every shipped Quartus revision sets S32_SYSTEM32_ONLY=1, which folds
+    is_multi32 to a constant and removes the second palette, the second mixer,
+    the MultiPCM path and half of work RAM.  A Multi 32 MRA therefore
+    advertises a game no RBF built here can run.  These tests fail if one is
+    reintroduced by either surface: the generator table or the tracked MRAs.
+    """
+
+    MULTI32_PARENTS = ("harddunk", "orunners", "scross", "titlef")
+
+    def test_generator_defines_no_multi32_set(self) -> None:
+        for parent in self.MULTI32_PARENTS:
+            self.assertNotIn(parent, GAMES)
+
+    def test_no_game_descriptor_sets_the_multi32_bit(self) -> None:
+        # b0 bit0 is the multi32 flag the RTL parses out of the index-0
+        # descriptor.  No emitted set may assert it.
+        for name, descriptor in GAMES.items():
+            self.assertEqual(descriptor[0] & 0x01, 0x00, name)
+
+    def test_no_tracked_mra_carries_a_multi32_descriptor(self) -> None:
+        mra_dir = Path(__file__).parents[1] / "mra"
+        paths = sorted(mra_dir.glob("*.mra"))
+        self.assertTrue(paths)
+        for path in paths:
+            root = ElementTree.parse(path).getroot()
+            setname = root.findtext("setname", "")
+            self.assertNotIn(setname, self.MULTI32_PARENTS, path.name)
+            descriptor = bytes.fromhex(root.findall("rom")[-1].findtext("part", ""))
+            self.assertEqual(descriptor[0] & 0x01, 0x00, path.name)
+
+    def test_no_mra_targets_a_multi32_rbf(self) -> None:
+        mra_dir = Path(__file__).parents[1] / "mra"
+        for path in sorted(mra_dir.glob("*.mra")):
+            rbf = ElementTree.parse(path).getroot().findtext("rbf", "")
+            self.assertNotIn("Multi32", rbf, path.name)
+            self.assertNotIn("OutRunners", rbf, path.name)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,17 @@
 Built cores avalible (for free) at https://www.patreon.com/cw/Meathax
 
 # This core is 100% AI coded
-# Sega System 32 / Multi 32 for MiSTer FPGA
+# Sega System 32 for MiSTer FPGA
 
-An open FPGA recreation of Sega's System 32 and Multi 32 arcade hardware
-(1990–1994) for the MiSTer DE10-Nano. The project is source-first and does
-not distribute commercial arcade ROMs.
+An open FPGA recreation of Sega's System 32 arcade hardware (1990–1994) for
+the MiSTer DE10-Nano. The project is source-first and does not distribute
+commercial arcade ROMs.
+
+**System 32 only — Multi 32 is not supported.** Every Quartus revision here
+builds with `S32_SYSTEM32_ONLY=1`, which removes the second palette, the
+second mixer, the MultiPCM path and half of work RAM, so the Multi 32 boards
+(Hard Dunk, OutRunners, Stadium Cross, Title Fight) cannot run on any RBF this
+repository produces. No MRA is emitted for them.
 
 This is an active work in progress. A tick means the game is currently
 working on the target MiSTer setup; an X means it is not yet ready.
@@ -32,10 +38,6 @@ working on the target MiSTer setup; an X means it is not yet ready.
 | Rad Rally | ✗ |
 | Slip Stream | ✗ |
 | SegaSonic The Hedgehog | ✗ |
-| Hard Dunk | ✗ |
-| OutRunners | ✗ |
-| Stadium Cross | ✗ |
-| Title Fight | ✗ |
 | AS-1 Controller | ✗ |
 
 ## What the core implements
@@ -43,21 +45,22 @@ working on the target MiSTer setup; an X means it is not yet ready.
 - System 32 video: four scrolling/zooming tilemap layers, text and bitmap
   layers, a hardware-style sprite list with zoom, priority, blending, fades,
   and 320/416-pixel display modes.
-- Audio: Z80 sound CPU, two YM3438-compatible FM channels, RF5C68-family PCM,
-  and the Multi 32 MultiPCM path.
+- Audio: Z80 sound CPU, two YM3438-compatible FM channels, and RF5C68-family
+  PCM. (A MultiPCM path exists in the source but is compiled out: it is Multi
+  32 hardware, which this repository does not build.)
 - Board devices: 315-5296 I/O, 93C46 EEPROM save/load, MSM6253 gun ADC,
   µPD4701 trackball counters, 8255 PPI, timers/interrupt controller, and the
   V25 protection path used by Golden Axe 2 and Arabian Fight.
 - MiSTer integration: MRA-based ROM loading, 16-bit HPS transfers, Cyclone V
   SDRAM for ROM regions, and the DE10-Nano DDR3 framebuffer for sprites.
 
-## NEC V60/V70 CPU
+## NEC V60 CPU
 
-`rtl/cpu/v60/s32_v60.sv` is a from-scratch, synthesizable NEC V60 core with a
-parameterized V70 profile. System 32 uses the µPD70616 V60 at about 16.108 MHz
-with a 16-bit external bus; Multi 32 uses the µPD70632 V70 profile at 20 MHz
-with a 32-bit board bus (the current adapter keeps the proven 16-bit cycle
-interface where required). Both are little-endian 32-bit CISC processors.
+`rtl/cpu/v60/s32_v60.sv` is a from-scratch, synthesizable NEC V60 core. System
+32 uses the µPD70616 V60 at about 16.108 MHz with a 16-bit external bus — a
+little-endian 32-bit CISC processor. The module also carries a parameterized
+µPD70632 V70 profile, which is unused here: the V70 is the Multi 32 CPU, and
+this repository builds System 32 only.
 
 The implementation is a sequential micro-sequencer with a bounded prefetch
 queue and a small instruction-stream cache. It models the programmer-visible

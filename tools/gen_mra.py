@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-MRA generator for the Sega System 32 / Multi 32 MiSTer core.
+MRA generator for the Sega System 32 MiSTer core.
+
+System 32 only: no Multi 32 set is emitted (see the note on GAMES below).
 
 Parses MAME's segas32.cpp (ROM_START blocks + GAME macros) and emits one
 .mra per supported set using independent download regions:
@@ -38,6 +40,8 @@ REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 
 # board descriptor per parent (DESIGN.md §3.4):
 #   b0: flags {multi32,v25,v25table,adc,track,ppi,dsp_hle,cd_stub}
+#       multi32 is retained because the RTL still parses the bit, but it is
+#       always 0 here: this repository emits no Multi 32 set.
 #   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional-gun
 #       analog default-invert (alien3/jpark)
 #   b2: prot_sel
@@ -73,10 +77,13 @@ GAMES = {
     "spidman":  desc(ppi=1),
     "svf":      desc(),
     "jleague":  desc(prot=PROT["JLEAGUE"]),
-    "harddunk": desc(multi32=1, ppi=1),
-    "orunners": desc(multi32=1, adc=1),
-    "scross":   desc(multi32=1, adc=1),
-    "titlef":   desc(multi32=1),
+    # NO MULTI 32 SETS.  harddunk/orunners/scross/titlef are Multi 32 boards and
+    # this repository builds System 32 only: every shipped revision sets
+    # S32_SYSTEM32_ONLY=1, which folds is_multi32 to a constant and removes the
+    # second palette, the second mixer, the MultiPCM path and half of work RAM.
+    # Emitting MRAs for them advertised games no RBF here can run.  Adding one
+    # back means restoring a Multi 32 revision first, not just a line here --
+    # Multi32ExclusionTests in verif/test_gen_mra.py fails if one reappears.
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board

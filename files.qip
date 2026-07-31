@@ -1,4 +1,6 @@
-# Sega System 32 / Multi 32 — project file list
+# Sega System 32 — project file list (System 32 only; no Multi 32 target).
+# s32_multipcm.sv stays listed because S32_SYSTEM32_ONLY folds is_multi32 to a
+# constant and the instance optimises away; removing it reclaims no logic.
 set_global_assignment -name QIP_FILE sys/sys.qip
 set_global_assignment -name SDC_FILE Arcade-SegaSystem32.sdc
 

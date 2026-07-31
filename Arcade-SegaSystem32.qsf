@@ -61,10 +61,13 @@ set_global_assignment -name SEED 2
 # worker is slower but avoids that nondeterministic router failure.
 set_global_assignment -name NUM_PARALLEL_PROCESSORS 1
 
-# This revision deliberately targets single-screen Sega System 32.  It keeps
-# the future Multi 32 RTL path in source, but compiles out the second palette /
-# mixer and sizes work RAM to the board-correct 64 KiB so SegaS32.rbf fits the
-# Cyclone V memory budget.  A future Multi 32 revision must omit this macro.
+# This repository is single-screen Sega System 32 only; Multi 32 is not a
+# supported target here.  The macro compiles out the second palette / mixer and
+# sizes work RAM to the board-correct 64 KiB so SegaS32.rbf fits the Cyclone V
+# memory budget.  The Multi 32 arms remain in the RTL because is_multi32 folds
+# to a constant and reclaims no logic -- deleting them buys nothing.  Every
+# revision in this repository must set this macro; Multi32ExclusionTests in
+# verif/test_gen_mra.py keeps the MRA side in step.
 set_global_assignment -name VERILOG_MACRO "S32_SYSTEM32_ONLY=1"
 
 # files.qip retains the real-V25 source for compatibility builds. Its upstream
