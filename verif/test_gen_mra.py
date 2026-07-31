@@ -1,3 +1,4 @@
+import sys
 import unittest
 from pathlib import Path
 from xml.etree import ElementTree
@@ -63,6 +64,56 @@ class OptimizedLayoutTests(unittest.TestCase):
             descriptor = bytes.fromhex(descriptor_rom.findtext("part", ""))
             self.assertEqual(len(descriptor), 64, path.name)
             self.assertTrue(any(index >= 4 for index in indexes), path.name)
+
+
+class RegenerationFidelityTests(unittest.TestCase):
+    """The tracked MRAs must be exactly what gen_mra.py emits today.
+
+    Drift here is silent and lossy: a regeneration overwrites hand-carried
+    metadata with whatever the generator tables happen to say.  That is how the
+    ga2 Pause mapping was lost -- BUTTONS["ga2"] omitted it while the three
+    tracked MRAs shipped it, so any regeneration would have dropped a working
+    control with no error.  Skipped when the MAME source is absent (it is
+    reference material, not tracked).
+    """
+
+    MAME_SRC = (Path(__file__).parents[1] / "reference" / "ga2-cycle-accuracy" /
+                "07_emulator_sources" / "mame_current" / "src" / "mame" /
+                "sega" / "segas32.cpp")
+
+    def test_ga2_mras_keep_the_pause_mapping(self) -> None:
+        names, defaults = BUTTONS["ga2"]
+        self.assertEqual(names.split(",")[-1], "Pause")
+        self.assertEqual(defaults.split(",")[-1], "Y")
+        mra_dir = Path(__file__).parents[1] / "mra"
+        paths = sorted(mra_dir.glob("Golden Axe*.mra"))
+        self.assertEqual(len(paths), 3)
+        for path in paths:
+            buttons = ElementTree.parse(path).getroot().find("buttons")
+            self.assertIsNotNone(buttons, path.name)
+            self.assertEqual(buttons.attrib["names"], names, path.name)
+            self.assertEqual(buttons.attrib["default"], defaults, path.name)
+
+    def test_generator_reproduces_every_tracked_mra(self) -> None:
+        if not self.MAME_SRC.is_file():
+            self.skipTest(f"MAME reference source not present: {self.MAME_SRC}")
+        import subprocess, tempfile
+        repo = Path(__file__).parents[1]
+        tracked = sorted((repo / "mra").glob("*.mra"))
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(
+                [sys.executable, str(repo / "tools" / "gen_mra.py"),
+                 str(self.MAME_SRC), tmp],
+                check=True, capture_output=True)
+            generated = sorted(Path(tmp).glob("*.mra"))
+            self.assertEqual([p.name for p in generated],
+                             [p.name for p in tracked])
+            for want, got in zip(tracked, generated):
+                # Compare text, not bytes: the tracked files carry CRLF from
+                # git's autocrlf checkout while the generator emits LF.
+                self.assertEqual(want.read_text(encoding="utf-8").splitlines(),
+                                 got.read_text(encoding="utf-8").splitlines(),
+                                 want.name)
 
 
 class Multi32ExclusionTests(unittest.TestCase):

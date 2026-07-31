@@ -90,9 +90,15 @@ GAMES = {
 # descriptor. Keep them here so regenerating tracked MRAs preserves the
 # remapping UI metadata as well as the ROM stream.
 BUTTONS = {
+    # The trailing Pause entry is not cosmetic: the core exposes an OSD Pause
+    # (CONF_STR "O[12],Pause,Off,On" -> status[12], which gates the CPU/sound
+    # clock enables and mutes audio in Arcade-SegaSystem32.sv).  The three
+    # tracked ga2 MRAs ship that mapping on Y; omitting it here meant any
+    # regeneration silently dropped a working control.  Pinned by
+    # test_ga2_mras_keep_the_pause_mapping in verif/test_gen_mra.py.
     "ga2": (
-        "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
+        "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,X,Start,Select,R,L,Y",
     ),
     "jpark": (
         "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
