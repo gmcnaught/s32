@@ -9,12 +9,14 @@
 //                   desc.txt that make_sim_images.py writes beside the image.
 //                   This is what an MRA delivers on ioctl index 0; use it.
 //    +B0=<hex>      override descriptor byte 0 (device-presence flags)
-//    +B1=<hex>      override descriptor byte 1: dual/flipY/gun/coin-swap bits 0..3
+//    +B1=<hex>      override descriptor byte 1: board and analog-profile flags
 //    +B2=<hex>      override the protection selector (PROT_*)
 //    +SBM=<hex>     override the physical sprite-ROM bank mask (0/1/3)
 //                   Without +DESC and without overrides the descriptor is all
 //                   zeroes with a four-bank sprite mask.
 //    +FRAMES=<n>    frames to run (804k clk_sys each), default 3
+//    +REQUIRE_VERILATOR_SCREENSHOT  require +DUMPAT to produce a non-black
+//                   PPM from this same full-core Verilator run
 //    +COINAT=<n>     assert P1 coin active-low starting at harness frame n
 //    +COINLEN=<n>    coin assertion length in frames, default 1
 //    +STARTAT=<n>    assert P1 start active-low starting at harness frame n
@@ -23,8 +25,6 @@
 //    +P1LEN<n>=<n>   event length in frames, default 1
 //    +P1MASK<n>=<h>  P1A bits to pull low: L/R/U/D=80/40/20/10,
 //                    B3/B2/B1 (Magic/Jump/Attack)=04/02/01
-//    +ALIEN3UIAT=<f>  first Alien 3 gameplay HUD/sight regression field
-//    +ALIEN3UIN=<n>   consecutive UI fields (default 8; must all be solid)
 //    +ARABPERFAT=<f>  first Arabian Fight frame-boundary performance sample
 //    +ARABPERFN=<n>   consecutive samples; each must be at FE4244/FE4248
 //    +ARABHEAVYAT=<f> first field in the heavy-sprite recurrence window
@@ -44,6 +44,10 @@
 module tb_core_romboot;
 
 import s32_pkg::*;
+
+initial $display({
+    "[audio] comparison unavailable: romboot uses the T80 and JT12 simulation stubs; ",
+    "validate production sound with the mixed-language sound regressions"});
 
 reg clk_sys = 0, clk_ram = 0, rst = 1;
 reg clk_v25 = 0;
@@ -121,6 +125,7 @@ integer b0;
 integer b1;
 integer b2;
 integer sbm;
+integer ga2_qualification;
 
 function automatic integer hex_nibble(input integer c);
     if      (c >= "0" && c <= "9") hex_nibble = c - "0";
@@ -177,6 +182,11 @@ initial begin
     void'($value$plusargs("B1=%h",  b1));
     void'($value$plusargs("B2=%h",  b2));
     void'($value$plusargs("SBM=%h", sbm));
+    // Keep the Golden Axe-only qualification anchored to the raw descriptor
+    // flags.  The protection selector in b2 is unrelated, and using the
+    // packed board struct in a late final block made the generated Verilator
+    // model vulnerable to an incorrect qualification on standard descriptors.
+    ga2_qualification = ((b0 & 8'h06) == 8'h02);
 
     board = '0;
     board.multi32     = b0[0];
@@ -185,19 +195,20 @@ initial begin
     board.has_adc     = b0[3];
     board.has_track   = b0[4];
     board.has_ppi     = b0[5];
-    board.has_dsp_hle = b0[6];
-    board.has_cd_stub = b0[7];
     board.dual_pcb    = b1[0];
     board.flip_y      = b1[1];
     board.gun_aim     = b1[2];
-    board.coin_swap   = b1[3];
+    board.analog_profile = b1[5:4];
+    board.dual_comm_ff = b1[6];
+    board.comm_link_hle = b2[7];
     board.prot_sel    = b2[6:0];
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
-    $display("[desc] board: multi32=%0d v25=%0d/%0d adc=%0d track=%0d ppi=%0d dsp=%0d dual=%0d prot=%0d flip_y=%0d gun=%0d coinsw=%0d sbm=%0d",
-             board.multi32, board.has_v25, board.v25_table, board.has_adc,
-             board.has_track, board.has_ppi, board.has_dsp_hle, board.dual_pcb,
-             board.prot_sel, board.flip_y, board.gun_aim, board.coin_swap,
+    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d track=%0d ppi=%0d dual=%0d prot=%0d flip_y=%0d gun=%0d analog=%0d sbm=%0d",
+             board.multi32, board.has_v25, board.v25_table,
+             ga2_qualification, board.has_adc, board.has_track, board.has_ppi, board.dual_pcb,
+             board.prot_sel, board.flip_y, board.gun_aim,
+             board.analog_profile,
              board.sprite_bank_mask);
 end
 
@@ -210,7 +221,11 @@ reg [63:0]  tl  [0:524287];     // tiles     base 0x600000, 4MB
 reg [127:0] sp  [0:1048575];    // sprites   base 0x1000000, 16MB
 reg [7:0] mcu_raw [0:65535];
 reg [7:0] mcu_ext [0:65535];
+reg [15:0] eep_img [0:63];
 integer mcu_fd, mcu_got, mcu_i;
+integer eep_fd;
+reg images_loaded = 1'b0;
+reg eep_present = 1'b0;
 
 function automatic [15:0] mcu_descramble(input [15:0] i);
     mcu_descramble = {i[14], i[11], i[15], i[12], i[13], i[4], i[3], i[7],
@@ -224,6 +239,12 @@ initial begin
     $readmemh({imgdir, "/soundcpu.hex"}, sc);
     $readmemh({imgdir, "/tiles.hex"},    tl);
     $readmemh({imgdir, "/sprites.hex"},  sp);
+    eep_fd = $fopen({imgdir, "/eeprom.hex"}, "r");
+    if (eep_fd != 0) begin
+        $fclose(eep_fd);
+        $readmemh({imgdir, "/eeprom.hex"}, eep_img);
+        eep_present = 1'b1;
+    end
     mcu_fd = $fopen({imgdir, "/mcu.bin"}, "rb");
     if (mcu_fd == 0) begin
         $display("ROMBOOT FAIL: cannot open %s/mcu.bin", imgdir);
@@ -238,6 +259,7 @@ initial begin
         for (mcu_i = 0; mcu_i < 65536; mcu_i = mcu_i + 1)
             mcu_ext[mcu_i] = mcu_raw[mcu_descramble(mcu_i[15:0])];
     end
+    images_loaded = 1'b1;
 end
 
 // p0: V60 program (clk_sys single-cycle toggle ack)
@@ -422,11 +444,10 @@ end
 
 // Confirm that the CPU-side I/O transaction returned each active-low pulse.
 // P1A is C00000; MAME system32_generic puts start on port E bit 4 and P1 coin
-// on bit 2. Alien 3's cabinet wiring swaps Coin1/Coin2, putting P1 coin on bit 3.
+// on bit 2.
 integer p1a_rd_cnt = 0, coin_rd_cnt = 0, start_rd_cnt = 0;
 integer p1a_active_samples = 0;
 integer coin_active_samples = 0, start_active_samples = 0;
-wire [2:0] p1_coin_bit = board.coin_swap ? 3'd3 : 3'd2;
 always @(posedge clk_sys) begin
     if (core.m_req && core.m_ack && !core.m_we && !core.ack_d) begin
         if ({core.A[23:1], 1'b0} == 24'hc00000) begin
@@ -440,7 +461,7 @@ always @(posedge clk_sys) begin
         if ({core.A[23:1], 1'b0} == 24'hc00008) begin
             coin_rd_cnt = coin_rd_cnt + 1;
             start_rd_cnt = start_rd_cnt + 1;
-            if (!core.m_rdata[p1_coin_bit]) begin
+            if (!core.m_rdata[2]) begin
                 coin_active_samples = coin_active_samples + 1;
                 $display("[input-sampled] frame %0d: P1 coin read=%04x pc=%08x",
                     cur_frame, core.m_rdata, core.v60.dbg_pc);
@@ -463,6 +484,10 @@ integer p1_at [0:3];
 integer p1_len [0:3];
 integer p1_mask [0:3];
 integer p1_event_count;
+integer trk_at, trk_len, trk_dx_arg, trk_dy_arg;
+reg trk0_dv = 1'b0;
+reg signed [8:0] trk0_dx = 9'sd0;
+reg signed [8:0] trk0_dy = 9'sd0;
 initial begin
     if (!$value$plusargs("COINAT=%d", coin_at)) coin_at = -1;
     if (!$value$plusargs("COINLEN=%d", coin_len)) coin_len = 1;
@@ -480,6 +505,10 @@ initial begin
     if (!$value$plusargs("P1AT3=%d", p1_at[3])) p1_at[3] = -1;
     if (!$value$plusargs("P1LEN3=%d", p1_len[3])) p1_len[3] = 1;
     if (!$value$plusargs("P1MASK3=%h", p1_mask[3])) p1_mask[3] = 0;
+    if (!$value$plusargs("TRKAT=%d", trk_at)) trk_at = -1;
+    if (!$value$plusargs("TRKLEN=%d", trk_len)) trk_len = 1;
+    if (!$value$plusargs("TRKDX=%d", trk_dx_arg)) trk_dx_arg = 0;
+    if (!$value$plusargs("TRKDY=%d", trk_dy_arg)) trk_dy_arg = 0;
     p1_event_count = (p1_at[0] >= 0) + (p1_at[1] >= 0) +
                      (p1_at[2] >= 0) + (p1_at[3] >= 0);
 end
@@ -487,9 +516,25 @@ wire [7:0] adc_a [0:7];
 wire       tdv_a [0:2];
 wire signed [8:0] tdx_a [0:2], tdy_a [0:2];
 wire [7:0] tbt_a [0:2];
+// MAME's no-input PADDLE default is not always the nominal 0x80.  The
+// retained Rad Rally reference trace reports 0x75, so allow a bounded
+// diagnostic override while keeping the normal deterministic board defaults.
+integer adc0_override;
+initial if (!$value$plusargs("ADC0=%h", adc0_override)) adc0_override = -1;
+assign adc_a[0] = (adc0_override >= 0) ? adc0_override[7:0] :
+                  (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
+assign adc_a[1] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
+                  (board.analog_profile == ANALOG_DRIVING) ? 8'h00 : 8'h80;
+assign adc_a[2] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
+                  (board.analog_profile == ANALOG_DRIVING) ? 8'h00 : 8'h80;
 generate
-    for (genvar gi = 0; gi < 8; gi = gi + 1) assign adc_a[gi] = 8'h80;
-    for (genvar gj = 0; gj < 3; gj = gj + 1) begin
+    for (genvar gi = 3; gi < 8; gi = gi + 1)
+        assign adc_a[gi] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
+    assign tdv_a[0] = trk0_dv;
+    assign tdx_a[0] = trk0_dx;
+    assign tdy_a[0] = trk0_dy;
+    assign tbt_a[0] = 8'hff;
+    for (genvar gj = 1; gj < 3; gj = gj + 1) begin
         assign tdv_a[gj] = 1'b0;
         assign tdx_a[gj] = 9'sd0;
         assign tdy_a[gj] = 9'sd0;
@@ -497,10 +542,48 @@ generate
     end
 endgenerate
 
+integer track_log_n = 0;
+integer track_log_max;
+initial if (!$value$plusargs("TRACKLOG=%d", track_log_max)) track_log_max = 0;
+always @(posedge clk_sys) begin
+    if (track_log_n < track_log_max && trk_at >= 0 &&
+        cur_frame >= trk_at - 5 && cur_frame <= trk_at + trk_len + 5 &&
+        core.m_req && core.m_ack &&
+        !core.ack_d && {core.A[23:3], 3'b000} == 24'hc00040) begin
+        $display("[track] f=%0d pc=%08x rw=%s a=%06x d=%04x be=%b",
+            cur_frame, core.v60.dbg_pc, core.m_we ? "w" : "r",
+            {core.A[23:1], 1'b0}, core.m_we ? core.m_wdata : core.m_rdata,
+            core.m_be);
+        track_log_n = track_log_n + 1;
+    end
+end
+
 wire hs, vs, hb, vb;
 wire [23:0] rgb_a;
 wire        ce_pix;
 wire signed [15:0] audio_l, audio_r;
+reg        eep_ld_wr = 1'b0;
+reg  [5:0] eep_ld_addr = 6'd0;
+reg [15:0] eep_ld_data = 16'hffff;
+
+// Reproduce the live loader's index-2 default transfer before reset releases.
+// eeprom.hex already contains the little-endian 16-bit words that ioctl_dout
+// presents to s32_rom_loader in WIDE mode.
+integer eep_load_i;
+initial begin
+    wait (images_loaded);
+    if (eep_present) begin
+        repeat (2) @(posedge clk_sys);
+        for (eep_load_i = 0; eep_load_i < 64; eep_load_i = eep_load_i + 1) begin
+            eep_ld_addr = eep_load_i[5:0];
+            eep_ld_data = eep_img[eep_load_i];
+            eep_ld_wr = 1'b1;
+            @(posedge clk_sys);
+        end
+        eep_ld_wr = 1'b0;
+        $display("[eep] loaded %0s/eeprom.hex", imgdir);
+    end
+end
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
@@ -523,7 +606,8 @@ s32_core core (
     .fb_rd_dual(fbr_dual), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
-    .eep_ld_wr(1'b0), .eep_ld_addr(6'h0), .eep_ld_data(16'h0), .eep_rd_addr(6'h0),
+    .eep_ld_wr(eep_ld_wr), .eep_ld_addr(eep_ld_addr), .eep_ld_data(eep_ld_data),
+    .eep_rd_addr(6'h0),
     .eep_rd_data(), .eep_upload(1'b0), .eep_modified(),
     .in_p1a(in_p1a_r), .in_p2a(8'hff), .in_portc(in_portc_r),
     .in_svc12(in_svc12_r), .in_svc34(8'hff),
@@ -620,7 +704,7 @@ end
 // stuck-PC watchdog (+ one-shot deep state dump on a long freeze)
 reg [31:0] last_pc = 0;
 integer same_pc = 0;
-reg dumped = 0;
+reg dumped = 0, resumed = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.dbg_pc == last_pc) same_pc = same_pc + 1;
     else begin same_pc = 0; last_pc = core.v60.dbg_pc; end
@@ -634,29 +718,27 @@ always @(posedge clk_sys) if (ce_cpu) begin
             core.v60.op1, core.v60.op2, core.v60.r[0], core.v60.r[1],
             core.v60.r[3], core.v60.r[26], core.v60.r[31]);
     end
+    if (dumped && !resumed && same_pc == 0) begin
+        resumed = 1;
+        $display("[UNFROZEN] pc=%08x resumed after stuck-PC watchdog", core.v60.dbg_pc);
+    end
 end
 
 // frame capture: with +DUMPAT=<frame#> (+DUMPN=<count>, default 1) write
 // active-video pixels of those frames as PPM files (dump<frame>.ppm in cwd)
 integer dump_at, dump_n, dump_fd = 0, dump_x, dump_y, dump_every;
 reg dumping = 0;
-// Alien 3 gameplay probe. Count live sprite pixels in the two static UI areas
-// implicated by the hardware report: P1 LIFE/POWER and the centred gun sight.
-// This is deliberately based on the sprite scanout, not PPM output; PPM capture
-// crosses the pixel/mixer pipeline and is unsuitable as a field-parity oracle.
-integer alien3_ui_at, alien3_ui_n;
-integer alien3_hud_opq = 0, alien3_sight_opq = 0;
-integer alien3_sight_green = 0;
-integer alien3_ui_samples = 0, alien3_hud_lows = 0, alien3_sight_lows = 0;
-integer alien3_hud_lows_next, alien3_sight_lows_next;
-reg alien3_ui_done = 0;
+integer dump_nonblack = 0;
+integer dump_frame = -1;
+reg dump_complete = 0;
+reg dump_nonblack_seen = 0;
+reg require_verilator_screenshot = 0;
+initial require_verilator_screenshot = $test$plusargs("REQUIRE_VERILATOR_SCREENSHOT");
 initial begin
     if (!$value$plusargs("DUMPAT=%d", dump_at)) dump_at = -1;
     if (!$value$plusargs("DUMPN=%d", dump_n)) dump_n = 1;
     // +DUMPEVERY=<n>: dump every n-th frame (stride) — maps the attract cycle
     if (!$value$plusargs("DUMPEVERY=%d", dump_every)) dump_every = 1;
-    if (!$value$plusargs("ALIEN3UIAT=%d", alien3_ui_at)) alien3_ui_at = -1;
-    if (!$value$plusargs("ALIEN3UIN=%d", alien3_ui_n)) alien3_ui_n = 8;
 end
 
 // +DUMPSPRAT=<frame>: dump the V60-written sprite command RAM (0x400000, the
@@ -801,6 +883,19 @@ initial if (!$value$plusargs("OVLOG=%d", ovlog)) ovlog = 0;
 // the arabfgt period-2 sprite flicker (render truncation / buffer divergence).
 integer sprlog;
 initial if (!$value$plusargs("SPRLOG=%d", sprlog)) sprlog = 0;
+// +TMLOG=1: per-frame tile renderer progress.  Rad Mobile reaches the
+// display-enabled loop before its background is visible; keep this probe
+// separate from the normal frame report so the broad regression stays quiet.
+integer tmlog;
+initial if (!$value$plusargs("TMLOG=%d", tmlog)) tmlog = 0;
+integer tm_req_cnt = 0, tm_lb_cnt = 0, tm_opaque_cnt = 0;
+always @(posedge clk_ram) begin
+    if (core.sdr_p1_req) tm_req_cnt = tm_req_cnt + 1;
+    if (core.tm_lb_we) begin
+        tm_lb_cnt = tm_lb_cnt + 1;
+        if (core.tm_lb_pix[13]) tm_opaque_cnt = tm_opaque_cnt + 1;
+    end
+end
 reg [31:0] spr_px_cnt, spr_px_latch;
 reg [31:0] spr_draw_seen;            // fb_wr_start pulses this frame (# runs)
 integer arab_heavy_at, arab_heavy_n, arab_heavy_min;
@@ -820,31 +915,6 @@ always @(posedge clk_sys) begin
     vb_d <= vb;
     if (vb & ~vb_d) begin              // end of visible field
         cur_frame = cur_frame + 1;
-        if (alien3_ui_at >= 0 && cur_frame - 1 >= alien3_ui_at &&
-            cur_frame - 1 < alien3_ui_at + alien3_ui_n) begin
-            alien3_hud_lows_next = alien3_hud_lows + (alien3_hud_opq < 1000);
-            alien3_sight_lows_next = alien3_sight_lows + (alien3_sight_green < 150);
-            alien3_ui_samples = alien3_ui_samples + 1;
-            alien3_hud_lows = alien3_hud_lows_next;
-            alien3_sight_lows = alien3_sight_lows_next;
-            $display("[alien3-ui] f=%0d hud_opq=%0d sight_green=%0d sight_opq=%0d scan=%0d disp=%0d ctl3=%02x count=%0d rs=%0d work=%0d ready=%0d/%0d",
-                cur_frame - 1, alien3_hud_opq, alien3_sight_green, alien3_sight_opq,
-                core.sprite.scan_buf, core.sprite.disp_buf, core.sprite.ctl[3],
-                core.sprite.render_count, core.sprite.rs, core.sprite.work_buf,
-                core.sprite.ready_valid, core.sprite.ready_buf);
-            if (cur_frame - 1 == alien3_ui_at + alien3_ui_n - 1) begin
-                alien3_ui_done = 1'b1;
-                if (alien3_hud_lows_next != 0 || alien3_sight_lows_next != 0)
-                    $fatal(1, "ALIEN3 UI FLICKER FAIL: hud_low=%0d sight_low=%0d over %0d fields",
-                        alien3_hud_lows_next, alien3_sight_lows_next, alien3_ui_samples);
-                else
-                    $display("ALIEN3 UI FLICKER PASS: HUD and sight solid over %0d fields",
-                        alien3_ui_samples);
-            end
-        end
-        alien3_hud_opq = 0;
-        alien3_sight_opq = 0;
-        alien3_sight_green = 0;
         // +OVLOG=1: per-frame tilemap line-overrun + sprite-fb underrun telemetry
         if (ovlog) $display("[ov] f=%0d tile_overrun sticky=%b cnt=%0d  fb_underrun sticky=%b cnt=%0d",
             cur_frame, core.tm_line_overrun_sticky, core.tm_line_overrun_count,
@@ -853,6 +923,11 @@ always @(posedge clk_sys) begin
         // (0=R_IDLE means render finished; 5..23 = still walking list = overran).
         if (sprlog) $display("[spr] f=%0d disp_buf=%0d rs=%0d px=%0d runs=%0d",
             cur_frame, core.sprite.disp_buf, core.sprite.rs, spr_px_cnt, spr_draw_seen);
+        if (tmlog) $display("[tm] f=%0d req=%0d lb=%0d opaque=%0d tst=%0d lay=%0d x=%0d name=%04x row=%016x addr=%05x off=%02x",
+            cur_frame, tm_req_cnt, tm_lb_cnt, tm_opaque_cnt,
+            core.tilemap.tst, core.tilemap.lay, core.tilemap.x,
+            core.tilemap.name, core.tilemap.row, core.tilemap.tile_addr,
+            core.tm_layer_off);
         if (arab_heavy_at >= 0 && cur_frame >= arab_heavy_at &&
             cur_frame < arab_heavy_at + arab_heavy_n) begin
             arab_heavy_samples = arab_heavy_samples + 1;
@@ -882,15 +957,27 @@ always @(posedge clk_sys) begin
             end
             $fclose(dump_fd);
             dumping = 0;
-            $display("[dump] wrote frame %0d", cur_frame-1);
+            dump_complete = 1'b1;
+            if (dump_nonblack != 0) dump_nonblack_seen = 1'b1;
+            $display("[dump] wrote frame %0d nonblack=%0d", cur_frame-1, dump_nonblack);
         end
         if (dump_at >= 0 && cur_frame >= dump_at &&
             ((cur_frame - dump_at) % dump_every == 0) &&
             ((cur_frame - dump_at) / dump_every < dump_n)) begin
             dump_fd = $fopen($sformatf("dump%0d.ppm", cur_frame), "w");
+            if (dump_fd == 0)
+                $fatal(1, "VERILATOR SCREENSHOT FAIL: cannot create dump%0d.ppm", cur_frame);
             // 52*8=416 wide, 224 high fixed header (PPM allows trailing slack)
             $fwrite(dump_fd, "P3\n416 224\n255\n");
-            dumping = 1; dump_x = 0; dump_y = 0;
+            // Every capture owns a fresh raster cursor.  Without these resets,
+            // dump_y remains 224 after the first file and later multi-frame
+            // captures contain only a PPM header while still reporting done.
+            dump_x = 0;
+            dump_y = 0;
+            dump_nonblack = 0;
+            dump_complete = 1'b0;
+            dumping = 1;
+            dump_frame = cur_frame;
         end
     end
     hb_d <= hb;
@@ -906,23 +993,10 @@ always @(posedge clk_sys) begin
     if (dumping && ce_pix && !hb && !vb && dump_y < 224) begin
         if (dump_x < 416) begin
             $fwrite(dump_fd, "%0d %0d %0d\n", rgb_a[23:16], rgb_a[15:8], rgb_a[7:0]);
+            if (rgb_a != 24'h000000) dump_nonblack = dump_nonblack + 1;
             dump_x = dump_x + 1;
         end
     end
-    if (ce_pix && !hb && !vb && core.mix0.spr_opaque) begin
-        if (core.hcnt >= 9'd8 && core.hcnt < 9'd145 &&
-            core.vcnt >= 9'd181 && core.vcnt < 9'd224)
-            alien3_hud_opq = alien3_hud_opq + 1;
-        if (core.hcnt >= 9'd145 && core.hcnt < 9'd177 &&
-            core.vcnt >= 9'd90 && core.vcnt < 9'd122)
-            alien3_sight_opq = alien3_sight_opq + 1;
-    end
-    // These two palette outputs are exclusive to the green sight in the
-    // deterministic centred-aim frame. Count globally because rgb_a exits the
-    // pipelined mixer several pixel clocks behind hcnt/vcnt.
-    if (ce_pix && !hb && !vb &&
-        (rgb_a == 24'h20f860 || rgb_a == 24'h00a000))
-        alien3_sight_green = alien3_sight_green + 1;
 end
 
 // instruction trace window (+TRLO/+TRHI plusargs): pc, opcode, key regs
@@ -1113,6 +1187,94 @@ always @(posedge clk_sys) begin
     end
 end
 
+// Diagnostic-only proof that an accepted CPU VRAM write reaches the backing
+// dual-port RAM with the requested byte lanes.  This is deliberately generic:
+// it can distinguish a CPU/write-path fault from a renderer fault without
+// introducing game-specific production behaviour.  The check is delayed one
+// clock so the RAM's nonblocking write has committed before it is inspected.
+integer vramverify_first, vramverify_last, vramverify_n = 0;
+reg        vramverify_pending = 1'b0;
+reg [15:0] vramverify_addr;
+reg [15:0] vramverify_expect;
+reg [31:0] vramverify_pc;
+initial begin
+    if (!$value$plusargs("VRAMVERIFYFIRST=%d", vramverify_first))
+        vramverify_first = 0;
+    if (!$value$plusargs("VRAMVERIFYLAST=%d", vramverify_last))
+        vramverify_last = 32'h7fff_ffff;
+end
+always @(posedge clk_sys) begin : vram_backing_verify
+    reg [15:0] old_word;
+    if ($test$plusargs("VRAMVERIFY")) begin
+        if (vramverify_pending) begin
+            if (core.vram.video_ram.mem[vramverify_addr] !== vramverify_expect) begin
+                $display("[vramverify] FAIL f=%0d pc=%08x a=%04x expect=%04x got=%04x",
+                    cur_frame, vramverify_pc, vramverify_addr, vramverify_expect,
+                    core.vram.video_ram.mem[vramverify_addr]);
+                $fatal(1, "accepted VRAM write did not reach backing RAM");
+            end
+            vramverify_n = vramverify_n + 1;
+        end
+        vramverify_pending <= 1'b0;
+        if (cur_frame >= vramverify_first && cur_frame <= vramverify_last &&
+            core.vram.cpu_we) begin
+            old_word = core.vram.video_ram.mem[core.vram.cpu_addr];
+            vramverify_addr <= core.vram.cpu_addr;
+            vramverify_expect <= {
+                core.vram.cpu_be[1] ? core.vram.cpu_wdata[15:8] : old_word[15:8],
+                core.vram.cpu_be[0] ? core.vram.cpu_wdata[7:0]  : old_word[7:0]
+            };
+            vramverify_pc <= core.v60.dbg_pc;
+            vramverify_pending <= 1'b1;
+        end
+    end
+end
+
+// Optional bounded PC-range trace.  This is intentionally instruction-edge
+// only: it can prove whether a ROM helper/caller ran without the volume and
+// slowdown of per-cycle tracing during a long visible gameplay replay.
+integer pctrace_lo, pctrace_hi, pctrace_first, pctrace_last, pctrace_max;
+integer pctrace_n = 0;
+reg [31:0] pctrace_prev = 32'hffff_ffff;
+initial begin
+    if (!$value$plusargs("PCTRACELO=%h", pctrace_lo)) pctrace_lo = -1;
+    if (!$value$plusargs("PCTRACEHI=%h", pctrace_hi)) pctrace_hi = -1;
+    if (!$value$plusargs("PCTRACEFIRST=%d", pctrace_first)) pctrace_first = 0;
+    if (!$value$plusargs("PCTRACELAST=%d", pctrace_last)) pctrace_last = 32'h7fff_ffff;
+    if (!$value$plusargs("PCTRACEMAX=%d", pctrace_max)) pctrace_max = 4096;
+end
+always @(posedge clk_sys) if (ce_cpu && core.v60.dbg_pc != pctrace_prev) begin
+    if (pctrace_lo >= 0 && pctrace_hi >= pctrace_lo &&
+        cur_frame >= pctrace_first && cur_frame <= pctrace_last &&
+        core.v60.dbg_pc >= pctrace_lo && core.v60.dbg_pc <= pctrace_hi &&
+        pctrace_n < pctrace_max) begin
+        $display("[pctrace] f=%0d pc=%08x op=%02x r0=%08x r1=%08x r10=%08x r11=%08x",
+            cur_frame, core.v60.dbg_pc, core.v60.cur_op, core.v60.r[0],
+            core.v60.r[1], core.v60.r[10], core.v60.r[11]);
+        pctrace_n = pctrace_n + 1;
+    end
+    pctrace_prev <= core.v60.dbg_pc;
+end
+
+// +RADMPC: compact instruction-path trace around Rad Mobile's frame wait and
+// state-table dispatcher.  Emit only PC changes so a short comparison remains
+// readable; this is inert for normal regressions and all other games.
+reg [31:0] radm_pc_prev = 32'hffff_ffff;
+always @(posedge clk_sys) begin
+    if ($test$plusargs("RADMPC") && ce_cpu &&
+        core.v60.dbg_pc != radm_pc_prev &&
+        ((core.v60.dbg_pc >= 32'h0006_6080 &&
+          core.v60.dbg_pc <  32'h0006_6230) ||
+         (core.v60.dbg_pc >= 32'h0007_0270 &&
+          core.v60.dbg_pc <  32'h0007_02b0))) begin
+        $display("[radmpc] f=%0d pc=%08x op=%02x st=%0d r0=%08x r25=%08x f007=%02x",
+            cur_frame, core.v60.dbg_pc, core.v60.cur_op, core.v60.st,
+            core.v60.r[0], core.v60.r[25],
+            core.work_ram.mem[16'h7803][15:8]);
+        radm_pc_prev <= core.v60.dbg_pc;
+    end
+end
+
 // ModelSim X-provenance aid for GA2's object-state setup.  The behavioural
 // work RAM is zero-filled, so an unknown at these locations must have arrived
 // on a CPU write.  Keep this diagnostic inert unless +XDIAG is requested.
@@ -1135,7 +1297,7 @@ always @(posedge clk_sys) begin
     if (core.m_req && !core.m_ack) begin
         hang_cnt = hang_cnt + 1;
         if (hang_cnt == 20000)
-`ifdef S32_V25_GAME_ONLY
+`ifdef S32_PROFILE_V25
             $display("[HANG] pc=%08x A=%06x we=%b be=%b st=%0d p0req=%b",
                 core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
                 core.v60.st, p0_req);
@@ -1203,6 +1365,32 @@ always @(posedge clk_sys) begin
                     core.m_rdata, core.m_be);
         end
         prot_txn_n = prot_txn_n + 1;
+    end
+end
+
+// Optional dual-PCB bridge timing probe.  This distinguishes a responder
+// value from a stale read-mux value without changing production RTL.  It is
+// deliberately inert unless +DUALLOG=<n> is supplied.
+integer dual_log_max = 0, dual_log_n = 0;
+initial void'($value$plusargs("DUALLOG=%d", dual_log_max));
+always @(posedge clk_sys) begin
+    if (dual_log_max > 0 && dual_log_n < dual_log_max &&
+        core.m_req && core.m_ack && !core.ack_d &&
+        core.A[23:16] == 8'h81) begin
+        dual_log_n = dual_log_n + 1;
+        if (core.m_we)
+            $display("[dual] f=%0d pc=%08x W A=%06x bus=%04x be=%b comm0=%04x written0=%0d phase=%0d heartbeat=%0d",
+                cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_wdata, core.m_be,
+                core.g_dualpcb.dual.comm[0], core.g_dualpcb.dual.comm_written[0],
+                core.g_dualpcb.dual.partner_phase,
+                core.g_dualpcb.dual.partner_heartbeat);
+        else
+            $display("[dual] f=%0d pc=%08x R A=%06x bus=%04x dualq=%04x rmux=%04x be=%b rdwait=%0d ack=%0d comm0=%04x written0=%0d phase=%0d heartbeat=%0d",
+                cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_rdata,
+                core.dual_q, core.rmux, core.m_be, core.rd_wait, core.ack_r,
+                core.g_dualpcb.dual.comm[0], core.g_dualpcb.dual.comm_written[0],
+                core.g_dualpcb.dual.partner_phase,
+                core.g_dualpcb.dual.partner_heartbeat);
     end
 end
 
@@ -1315,13 +1503,16 @@ always @(posedge clk_sys) if (core.fb_rd_req) rdreq_cnt = rdreq_cnt + 1;
 always @(posedge clk_ram) if (core.line_start_r) kick_cnt = kick_cnt + 1;
 always @(posedge clk_sys) if (ce_pix && !hb && !vb && core.mix0.spr_opaque)
     spr_opq_cnt = spr_opq_cnt + 1;
-// mixer register write log
+// Mixer register write log.  The default remains deliberately small for broad
+// boot sweeps; focused differential runs can raise it with +MIXWMAX=<count>.
 integer mixw_n = 0;
+integer mixw_max = 80;
+initial if (!$value$plusargs("MIXWMAX=%d", mixw_max)) mixw_max = 80;
 always @(posedge clk_sys) begin
-    if (core.mix0.reg_we && mixw_n < 80) begin
+    if (core.mix0.reg_we && mixw_n < mixw_max) begin
         mixw_n = mixw_n + 1;
-        $display("[mixw] pc=%08x mreg[%02x] <= %04x (byte ofs %03x) busA=%06x",
-            core.v60.dbg_pc, core.mix0.reg_addr, core.mix0.reg_wdata,
+        $display("[mixw] f=%0d pc=%08x mreg[%02x] <= %04x (byte ofs %03x) busA=%06x",
+            cur_frame, core.v60.dbg_pc, core.mix0.reg_addr, core.mix0.reg_wdata,
             {core.mix0.reg_addr, 1'b0}, {core.A[23:1],1'b0});
     end
 end
@@ -1336,6 +1527,36 @@ always @(posedge clk_sys) begin
             core.mix0.bestsel, core.mix0.pal_addr,
             core.pal0.sim_peek(core.mix0.pal_addr), rgb_a,
             core.mix0.spr_group, core.mix0.sprreg, core.mix0.r4c);
+    end
+end
+
+// Bounded tile/palette-path diagnostic for real-game black frames.  Sprite-only
+// logging cannot localize a title screen rendered entirely by NBG/text layers.
+// Keep this behind plusargs so the normal sweep has zero extra output and the
+// probe cannot mask a timing or liveness failure.
+integer layerlog_n = 0;
+integer layerlog_max = 0;
+integer layerlog_frame = 300;
+initial begin
+    if (!$value$plusargs("LAYERLOG=%d", layerlog_max)) layerlog_max = 0;
+    if (!$value$plusargs("LAYERFRAME=%d", layerlog_frame)) layerlog_frame = 300;
+end
+always @(posedge clk_sys) begin
+    if (layerlog_max > 0 && layerlog_n < layerlog_max &&
+        ce_pix && !hb && !vb && cur_frame >= layerlog_frame &&
+        (core.mix0.px_text[13] || core.mix0.px_nbg0[13] ||
+         core.mix0.px_nbg1[13] || core.mix0.px_nbg2[13] ||
+         core.mix0.px_nbg3[13] || core.mix0.px_bmp[13] ||
+         core.mix0.spr_opaque)) begin
+        layerlog_n = layerlog_n + 1;
+        $display("[layer] f=%0d x=%0d y=%0d txt=%04x n0=%04x n1=%04x n2=%04x n3=%04x bmp=%04x spr=%04x best=%0d best2=%0d idxw=%04x idx2=%04x paladdr=%04x palq=%04x rgb=%06x loff=%b",
+            cur_frame, core.hcnt, core.vcnt,
+            core.mix0.px_text, core.mix0.px_nbg0, core.mix0.px_nbg1,
+            core.mix0.px_nbg2, core.mix0.px_nbg3, core.mix0.px_bmp,
+            core.mix0.spr_pix, core.mix0.bestsel, core.mix0.best2sel,
+            core.mix0.idx_winner, core.mix0.idx_runner, core.mix0.pal_addr,
+            core.pal0.sim_peek(core.mix0.pal_addr), rgb_a,
+            core.tilemap.layer_off);
     end
 end
 
@@ -1389,12 +1610,6 @@ initial begin
                 $display("[input] frames %0d..%0d: P1 start low (port E bit 4)",
                     start_at, start_at + start_len - 1);
         end
-        // MAME's Sonic driver exposes the same coin/start actions on the
-        // player-3 service bits used by its three-player join path.
-        if (b2 == 1) begin
-            in_svc12_r[6] = in_svc12_r[2];  // Coin 3
-            in_svc12_r[7] = in_svc12_r[4];  // 3 Players Start
-        end
         // +PLAYMAGIC gameplay autopilot: after coin+start, repeatedly tap
         // Button1 (0x01) to confirm the char select, then in gameplay hold Right
         // (0x40) toward the scripted rocks-flame and run a magic (Button3 0x04)
@@ -1431,7 +1646,22 @@ initial begin
             // tap Attack (Button1) every 25 frames during gameplay to engage them
             if (f >= 700 && (f % 25) < 5) in_p1a_r[0] = 1'b0;           // Button1 attack
         end
-        repeat (804000) @(posedge clk_sys);
+        // Apply one immutable relative-motion packet at the start of each
+        // selected native frame. Holding delta_valid for the full frame would
+        // incorrectly add the same trackball delta on every system clock.
+        if (trk_at >= 0 && trk_len > 0 && f >= trk_at && f < trk_at + trk_len) begin
+            trk0_dx = trk_dx_arg;
+            trk0_dy = trk_dy_arg;
+            trk0_dv = 1'b1;
+            if (f == trk_at)
+                $display("[input] frames %0d..%0d: P1 track delta dx=%0d dy=%0d",
+                    trk_at, trk_at + trk_len - 1, trk_dx_arg, trk_dy_arg);
+        end
+        @(posedge clk_sys);
+        trk0_dv = 1'b0;
+        trk0_dx = 9'sd0;
+        trk0_dy = 9'sd0;
+        repeat (803999) @(posedge clk_sys);
         // Synchronise to the game scene rather than an absolute emulator frame.
         // In the matched MAME replay, NBG1 is at 4.0x zoom and scroll X advances
         // from 0x0271 to 0x0659 while the neutral-input player walks in.  Absolute
@@ -1553,6 +1783,7 @@ initial begin
         end
         rdreq_cnt = 0; kick_cnt = 0; spr_cmd_cnt = 0; srom_req_cnt = 0; spr_opq_cnt = 0;
         p1a_rd_cnt = 0; coin_rd_cnt = 0; start_rd_cnt = 0;
+        tm_req_cnt = 0; tm_lb_cnt = 0; tm_opaque_cnt = 0;
     end
     dump_trace;
     if ($test$plusargs("SPRDUMP")) begin
@@ -1565,6 +1796,15 @@ initial begin
     end
     if (fbr_accepts == 0)
         $fatal(1, "ROMBOOT framebuffer read handshake never accepted a line");
+    if (require_verilator_screenshot) begin
+        if (dump_at < 0)
+            $fatal(1, "VERILATOR SCREENSHOT FAIL: +DUMPAT=<frame> is required");
+        if (!dump_complete)
+            $fatal(1, "VERILATOR SCREENSHOT FAIL: requested PPM frame was not completed");
+        if (!dump_nonblack_seen)
+            $fatal(1, "VERILATOR SCREENSHOT FAIL: completed PPM frame is entirely black");
+        $display("VERILATOR SCREENSHOT PASS: frame=%0d nonblack=%0d", dump_frame, dump_nonblack);
+    end
     if (coin_at >= 0 || start_at >= 0 || p1_event_count > 0)
         $display("[input-summary] active CPU samples: coin=%0d start=%0d p1a=%0d",
             coin_active_samples, start_active_samples, p1a_active_samples);
@@ -1574,9 +1814,6 @@ initial begin
         $fatal(1, "ROMBOOT P1 start was never returned on SERVICE12 bit 4");
     if (p1_event_count > 0 && p1a_active_samples == 0)
         $fatal(1, "ROMBOOT P1 digital event was never returned on P1A");
-    if (alien3_ui_at >= 0 && !alien3_ui_done)
-        $fatal(1, "ALIEN3 UI window was not completed: at=%0d fields=%0d samples=%0d",
-            alien3_ui_at, alien3_ui_n, alien3_ui_samples);
     if (arab_perf_at >= 0 && !arab_perf_done)
         $fatal(1, "ARABIAN FIGHT PERF window was not completed: at=%0d frames=%0d samples=%0d",
             arab_perf_at, arab_perf_n, arab_perf_samples);
@@ -1596,14 +1833,18 @@ initial begin
     if (fb_line_acks < frames * 128)
         $fatal(1, "GA2 framebuffer line service too sparse: acks=%0d frames=%0d",
                fb_line_acks, frames);
-    if (b2 != 1 && frames >= 70 && spr_px == 0)
+    // This is a Golden Axe-specific visual qualification.  b2 is the
+    // protection selector (Sonic uses 1), so it cannot identify GA2: several
+    // standard-profile games also have b2=0.  ga2_qualification is derived
+    // from the raw descriptor's V25/table flags above.
+    if (ga2_qualification && frames >= 70 && spr_px == 0)
         $fatal(1, "GA2 reached gameplay window without any sprite pixels");
     if (frame_sig_x != 0)
         $fatal(1, "GA2 active-video signature contained X on %0d frames",
                frame_sig_x);
-    if (b2 != 1 && frames >= 70 && frame_sig_samples < 10)
+    if (ga2_qualification && frames >= 70 && frame_sig_samples < 10)
         $fatal(1, "GA2 active-video signature window was not exercised");
-    if (b2 != 1 && frames >= 90 && frame_sig_changes < 3)
+    if (ga2_qualification && frames >= 90 && frame_sig_changes < 3)
         $fatal(1, "GA2 active video stopped changing: samples=%0d changes=%0d",
                frame_sig_samples, frame_sig_changes);
     $display("GA2 DDR QUALIFICATION PASS writes=%0d reads=%0d line_acks=%0d max_wr=%0d max_rd=%0d max_er=%0d sig_samples=%0d sig_changes=%0d",

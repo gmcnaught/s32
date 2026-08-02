@@ -39,41 +39,45 @@ STREAM_ORDER = ["maincpu", "soundcpu", "tiles", "sega", "mcu", "sprites"]
 REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 
 # board descriptor per parent (DESIGN.md §3.4):
-#   b0: flags {multi32,v25,v25table,adc,track,ppi,dsp_hle,cd_stub}
+#   b0: flags {multi32,v25,v25table,adc,track,ppi}
 #       multi32 is retained because the RTL still parses the bit, but it is
 #       always 0 here: this repository emits no Multi 32 set.
 #   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional-gun
-#       analog default-invert (alien3/jpark)
-#   b2: prot_sel
+#       analog default-invert (jpark), bits5:4=analog profile;
+#       bit6=dual-PCB comm RAM reset-to-FF
+#   b2: bits6:0=prot_sel; bit7=descriptor-selected EPR-14084 link HLE
 #   b3: bit7=physical sprite-bank metadata valid; bits1:0=bank mask
 PROT = dict(NONE=0, SONIC=1, BRIVAL=2, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
-def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0, dsp=0, cd=0,
-         dual=0, flip_y=0, prot=0, gun=0, coin_swap=0):
+ANALOG = dict(CENTERED=0, DRIVING=1, ALL_FF=2)
+DIGITAL = dict(GENERIC=0, RADM=1)
+def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0,
+         dual=0, flip_y=0, prot=0, gun=0, analog=0, dual_ff=0,
+         comm_hle=0, gear_toggle=0, digital=0):
     b0 = (multi32 | v25 << 1 | v25table << 2 | adc << 3 | track << 4 |
-          ppi << 5 | dsp << 6 | cd << 7)
-    d = bytes([b0, dual | (flip_y << 1) | (gun << 2) | (coin_swap << 3), prot]) + bytes(61)
+          ppi << 5)
+    b1 = (dual | (flip_y << 1) | (gun << 2) |
+          (analog << 4) | (dual_ff << 6) | (gear_toggle << 7))
+    b2 = prot | (comm_hle << 7)
+    # Byte 3 is populated from the physical sprite region by gen(); byte 4 is
+    # the semantic player-port layout.  Remaining bytes stay reserved/zero.
+    d = bytes([b0, b1, b2, 0, digital]) + bytes(59)
     return d
 
 GAMES = {
     # parent: (descriptor, per-set list built from clones automatically)
-    "arescue":  desc(adc=1, dsp=1, dual=1),
-    "alien3":   desc(adc=1, gun=1, coin_swap=1),
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
     "brival":   desc(ppi=1, prot=PROT["BRIVAL"]),
     "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
-    "dbzvrvs":  desc(adc=1, prot=PROT["DBZVRVS"]),
-    "f1en":     desc(adc=1, dual=1),
-    "f1lap":    desc(adc=1, prot=PROT["F1LAP"]),
+    "dbzvrvs":  desc(adc=1, prot=PROT["DBZVRVS"], analog=ANALOG["ALL_FF"]),
+    "f1en":     desc(adc=1, dual=1, analog=ANALOG["DRIVING"], dual_ff=1),
+    "f1lap":    desc(adc=1, prot=PROT["F1LAP"], analog=ANALOG["DRIVING"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
     "holo":     desc(flip_y=1),
     "jpark":    desc(adc=1, gun=1),
-    "kokoroj":  desc(cd=1),
-    "kokoroj2": desc(cd=1),
-    "radm":     desc(adc=1),
-    "radr":     desc(adc=1),
-    "slipstrm": desc(adc=1),
+    "radm":     desc(adc=1, analog=ANALOG["DRIVING"], digital=DIGITAL["RADM"]),
+    "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1, gear_toggle=1),
+    "slipstrm": desc(adc=1, analog=ANALOG["DRIVING"], gear_toggle=1),
     "sonic":    desc(track=1, prot=PROT["SONIC"]),
-    "sonicp":   desc(track=1),
     "spidman":  desc(ppi=1),
     "svf":      desc(),
     "jleague":  desc(prot=PROT["JLEAGUE"]),
@@ -100,28 +104,77 @@ BUTTONS = {
         "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,X,Start,Select,R,L,Y",
     ),
+    "arabfgt": (
+        "Attack,Magic,-,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,Start,Select,R,L,Y",
+    ),
+    "brival": (
+        "Button 1,Button 2,Button 3,Button 4,Button 5,Button 6,Start,Coin,Test,Service",
+        "A,B,X,Y,R,L,Start,Select",
+    ),
+    "darkedge": (
+        "Button 1,Button 2,Button 3,Button 4,Button 5,-,Start,Coin,Test,Service",
+        "A,B,X,Y,R,Start,Select,L",
+    ),
+    "f1en": (
+        "Gear Up,Gear Down,-,-,-,-,Start,Coin,Test,Service",
+        "A,B,Start,Select,R,L",
+    ),
+    "f1lap": (
+        "Gear Up,Gear Down,Overtake,-,-,-,Start,Coin,Test,Service",
+        "A,B,X,Start,Select,R,L",
+    ),
     "jpark": (
         "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
         "A,Start,Select,R,L",
-    ),
-    "alien3": (
-        "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
     ),
     "spidman": (
         "Attack,Jump,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
     ),
+    "sonic": (
+        "Action,-,-,-,-,-,Start,Coin,Test,Service",
+        "A,Start,Select,R,L",
+    ),
+    "svf": (
+        "Button 1,Button 2,Button 3,-,-,-,Start,Coin,Test,Service",
+        "A,B,X,Start,Select,R,L",
+    ),
+    "radm": (
+        "Light,Wiper,-,-,-,-,Start,Coin,Test,Service",
+        "A,B,Start,Select,R,L",
+    ),
+    "radr": (
+        "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
+        "A,Start,Select,R,L",
+    ),
+    "slipstrm": (
+        "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
+        "A,Start,Select,R,L",
+    ),
 }
 
-BUTTON_COUNTS = {"ga2": 3, "jpark": 1, "alien3": 2, "spidman": 2}
+BUTTON_COUNTS = {
+    "arabfgt": 2,
+    "brival": 6,
+    "darkedge": 5,
+    "f1en": 2,
+    "f1lap": 3,
+    "ga2": 3,
+    "jpark": 1,
+    "spidman": 2,
+    "sonic": 1,
+    "svf": 3,
+    "radm": 2,
+    "radr": 1,
+    "slipstrm": 1,
+}
 RBF_BY_PARENT = {
-    "ga2": "s32GoldenAxe",
-    "arabfgt": "s32ArabianFight",
-    "alien3": "s32Alien3",
+    "ga2": "s32v25",
+    "arabfgt": "s32v25",
 }
 
-UNSUPPORTED = {"as1", "as1a", "as1b", "as1c"}
+UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
 
 # MAME init_* ROM pokes the hardware cannot supply, keyed by parent and applied
 # to every set of that parent. Offsets are local to the maincpu index-4 stream.
@@ -272,7 +325,11 @@ def interleave_parts(loads, region_size, ctx=""):
 
 def gen(setname, data, outdir):
     parent = data.get("parent") or setname
-    d_base = GAMES.get(parent) or GAMES.get(setname)
+    # A set-specific entry must override its parent's board descriptor when
+    # MAME installs a different init/protection handler for the clone.  This
+    # matters for the J.League handler; falling back to the parent is correct
+    # only when no explicit set entry exists.
+    d_base = GAMES.get(setname) or GAMES.get(parent)
     if d_base is None or setname in UNSUPPORTED:
         return False
     regions = {r["region"]: r for r in data["regions"]}
@@ -297,7 +354,7 @@ def gen(setname, data, outdir):
         lines.append(f'  <parent>{parent}</parent>')
     lines.append(f'  <year>{data.get("year", "")}</year>')
     lines.append(f'  <manufacturer>{escape(data.get("manu", "Sega"))}</manufacturer>')
-    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "SegaS32")}</rbf>')
+    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "s32")}</rbf>')
     button_meta = BUTTONS.get(parent)
     if button_meta:
         names, defaults = button_meta
@@ -332,12 +389,7 @@ def gen(setname, data, outdir):
 
     # Defaults precede index 0 so the descriptor is the final boot commit.
     ee = regions.get("eeprom")
-    # Alien 3's tiny factory EEPROM dump is absent from many otherwise valid
-    # MAME ROM sets. Requiring it makes MiSTer abort with a misleading missing
-    # "93c45_eeprom.ic76" error. The core's erased 93C46 image and index-3
-    # persistent NVRAM provide the same writable hardware contract, so let the
-    # game initialise it instead of requiring a separate copyrighted dump.
-    if ee and ee["loads"] and parent != "alien3":
+    if ee and ee["loads"]:
         lines.append('  <rom index="2">')
         lines.append(f'    <part name="{escape(ee["loads"][0]["file"])}" crc="{ee["loads"][0]["crc"]}"/>')
         lines.append('  </rom>')

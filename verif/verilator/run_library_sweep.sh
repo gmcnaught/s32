@@ -5,19 +5,20 @@
 # sets boot, which fault, which render nothing, and whether the SDRAM/DDR paths
 # meet their per-scanline deadlines.
 #
-#   ./verif/verilator/run_library_sweep.sh                 # all 17 sets
+#   ./verif/verilator/run_library_sweep.sh                 # all 13 media-present standard parents
 #   SETS="radm radr slipstrm" ./verif/verilator/run_library_sweep.sh
 #   FRAMES=420 DUMPAT=200 ./verif/verilator/run_library_sweep.sh
+#   ATTRACT=1 ./verif/verilator/run_library_sweep.sh  # Verilator screenshot gate
 #   REPARSE=1 ./verif/verilator/run_library_sweep.sh        # re-tabulate, no sim
 #
 # Sets run STRICTLY ONE AT A TIME.  Do not parallelise this: the global limit
 # is two Verilator processes across all sessions, and the first iteration also
 # pays for the build.
 #
-# This is a smoke sweep, not a correctness gate.  A row marked OK means the set
-# booted, took no unexpected exception, kept its PC moving and put pixels on
-# the screen.  It says nothing about whether those pixels are RIGHT -- that
-# needs the captured frame looked at, which is why every run keeps its PPM.
+# The default is a diagnostic smoke sweep.  ATTRACT=1 adds the executable
+# Verilator screenshot gate: the same full-core run must complete its requested
+# PPM and contain non-black pixels before ROMBOOT DONE can be reported.  The
+# retained frame still needs human review for game-specific attract semantics.
 #
 # Column meanings, because two of them are easy to misread:
 #   FRAMEPX  non-black pixels in the CAPTURED FRAME, counted from the PPM.
@@ -44,11 +45,23 @@ cd "$(dirname "$0")/../.."
 FRAMES="${FRAMES:-150}"
 DUMPAT="${DUMPAT:-80}"
 DUMPN="${DUMPN:-1}"
+if [[ "${ATTRACT:-0}" == "1" ]]; then
+  # The MAME-derived landmark windows are applied per parent below.  A single
+  # 420-frame default is too short for Slip Stream, Jurassic Park, Rad Mobile,
+  # Sonic, Spider-Man, and DBZ V.R. V.S.  Review the retained frame; this
+  # runner still reports diagnostics, it does not infer game semantics.
+  FRAMES="${FRAMES_ATTRACT:-420}"
+  DUMPAT="${DUMPAT_ATTRACT:-360}"
+fi
 REPARSE="${REPARSE:-0}"
 OUT="${OUT:-scratch/library-sweep}"
-# Every System 32 family with a shipped MRA.  Multi 32 left this repo in
-# a7e280f; as1 is out of scope (laserdisc); sonicp/kokoroj have no launcher.
-SETS="${SETS:-alien3 arabfgt arescue brival darkedge dbzvrvs f1en f1lap ga2 holo jpark radm radr slipstrm sonic spidman svf}"
+# Every media-present standard-profile parent in the current user-directed
+# acceptance scope.  Multi 32 left this repo in a7e280f; AS-1 is out of scope
+# (laserdisc).  jleague remains production-supported, but is excluded until
+# its private ROM media is supplied.  ga2 and arabfgt remain
+# production-supported by s32v25, but are explicitly excluded from this goal's
+# sweep because they are V25 games.
+SETS="${SETS:-brival darkedge dbzvrvs f1en f1lap holo jpark radm radr slipstrm sonic spidman svf}"
 
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.md"
@@ -61,6 +74,26 @@ ROW='%-9s %-9s %-6s %-9s %-6s %-4s %-5s %-6s %-8s %-8s %-10s %-10s %-8s %-7s %s\
 # shellcheck disable=SC2059
 printf "$ROW" SET DESC FRAMES PC PCUNIQ EXC SC STUCK FRAMEPX NB/F NB_CUM SPRPX TILE_OVR FB_UNDR VERDICT
 
+attract_frames_for() {
+  case "$1" in
+    # Leave one video interval after the requested capture so the PPM closes
+    # before the harness reaches ROMBOOT DONE.
+    slipstrm)              echo 960 ;;
+    jpark|sonic|spidman|dbzvrvs) echo 1260 ;;
+    radm)                  echo 660 ;;
+    *)                     echo "$FRAMES" ;;
+  esac
+}
+
+attract_dump_for() {
+  case "$1" in
+    slipstrm)              echo 900 ;;
+    jpark|sonic|spidman|dbzvrvs) echo 1200 ;;
+    radm)                  echo 600 ;;
+    *)                     echo "$DUMPAT" ;;
+  esac
+}
+
 for g in $SETS; do
   log="$OUT/$g.log"
 
@@ -71,14 +104,21 @@ for g in $SETS; do
       continue
     fi
     rm -rf "$OUT/$g"; mkdir -p "$OUT/$g"
-    rm -f scratch/vromboot_out/dump*.ppm
-    nice -n 19 ./verif/verilator/run_romboot.sh "$g" "$FRAMES" \
-        +DUMPAT="$DUMPAT" +DUMPN="$DUMPN" +OVLOG=1 > "$log" 2>&1
+    run_frames="$FRAMES"
+    run_dumpat="$DUMPAT"
+    if [[ "${ATTRACT:-0}" == "1" ]]; then
+      run_frames="${FRAMES_ATTRACT:-$(attract_frames_for "$g")}"
+      run_dumpat="${DUMPAT_ATTRACT:-$(attract_dump_for "$g")}"
+    fi
+    run_args=(+DUMPAT="$run_dumpat" +DUMPN="$DUMPN")
+    if [[ "${ATTRACT:-0}" == "1" ]]; then
+      run_args+=(+REQUIRE_VERILATOR_SCREENSHOT)
+    else
+      run_args+=(+OVLOG=1)
+    fi
+    ROMBOOT_OUT="$OUT/$g" nice -n 19 ./verif/verilator/run_romboot.sh "$g" "$run_frames" \
+        "${run_args[@]}" > "$log" 2>&1
     rc=$?
-    # Keep the captured frames beside the log; the next set would overwrite them.
-    for p in scratch/vromboot_out/dump*.ppm; do
-      [[ -e "$p" ]] && mv "$p" "$OUT/$g/"
-    done
   else
     [[ -f "$log" ]] || { printf '%-9s %s\n' "$g" "NO-LOG"; continue; }
     rc=0
@@ -104,6 +144,7 @@ for g in $SETS; do
       }
       /^\[desc\] .* -> /   { d = $(NF-3) $(NF-2) $(NF-1) $NF }
       /^\[FROZEN\]/        { frozen = 1 }
+      /^\[UNFROZEN\]/      { resumed = 1 }
       /ROMBOOT DONE/       { done = 1 }
       /^\[ov\] /           { ovline = $0 }
       /^frame [0-9]+:/     { prev = last; last = $0; seen_pc[field($0, "pc")] = 1; nframe++ }
@@ -129,7 +170,7 @@ for g in $SETS; do
         }
         v = "OK"
         if (rc != 0 || !done)                       v = "RUN-FAILED"
-        else if (frozen)                            v = "FROZEN"
+        else if (frozen && !resumed)                v = "FROZEN"
         else if (exc + 0 != 0)                      v = "EXCEPTION"
         else if (tovr != "?"  && tovr  + 0 != 0)    v = "TILE-OVERRUN"
         else if (fundr != "?" && fundr + 0 != 0)    v = "FB-UNDERRUN"

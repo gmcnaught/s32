@@ -5,10 +5,11 @@ name: verify-source
 # D:\Q17 Quartus Lite 17.0.2.602 installation:
 #
 #   set QUARTUS_ROOT=D:\Q17
-#   tools\build-goldenaxe.bat
+#   tools\build-s32.bat
+#   tools\build-s32v25.bat
 #
 # That path records an input manifest, qualifies fit and multicorner timing,
-# and stages a hash-verified per-game RBF. Community containers and the legacy
+# and stages hash-verified universal-profile RBFs. Community containers and the legacy
 # Linux qualifier cannot provide the same provenance and are fail-closed.
 on:
   push:
@@ -37,10 +38,11 @@ jobs:
         shell: pwsh
         run: python -B -m unittest discover -s verif -p "test_*.py" -v
 
-      - name: Check dedicated release profiles and MRAs
+      - name: Check release profiles and MRAs
         shell: pwsh
         run: |
           python -B verif/check_ga2_release.py
+          python -B verif/check_arabianfight_release.py
           python -B verif/check_holo_release.py
 
       - name: Check fail-closed shell entrypoint syntax
@@ -54,4 +56,4 @@ jobs:
           if ($unexpected.Count -ne 0) {
             throw "Source verification must not produce or publish an RBF."
           }
-          Write-Host "RBF generation remains on the locked tools\build-goldenaxe.bat path."
+          Write-Host "RBF generation remains on the locked tools\build-s32*.bat paths."

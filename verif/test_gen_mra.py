@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import BUTTONS, GAMES
+from tools.gen_mra import ANALOG, BUTTONS, DIGITAL, GAMES
 
 
 class BoardDescriptorTests(unittest.TestCase):
@@ -18,17 +18,51 @@ class BoardDescriptorTests(unittest.TestCase):
         self.assertEqual(descriptor[3], 0x81)         # 8 MiB sprites
 
     def test_gun_games_default_invert_aim(self) -> None:
-        # alien3/jpark carry gun_aim (b1 bit2) so their positional-gun analog
-        # aim defaults to inverted; the ADC (b0 bit3) stays set.
-        for game in ("alien3", "jpark"):
-            descriptor = bytearray(GAMES[game])
-            self.assertEqual(descriptor[0] & 0x08, 0x08, game)  # ADC present
-            self.assertEqual(descriptor[1] & 0x04, 0x04, game)  # gun_aim invert
+        # JPark carries gun_aim (b1 bit2), so its positional-gun analog aim
+        # defaults to inverted; the ADC (b0 bit3) stays set.
+        descriptor = bytearray(GAMES["jpark"])
+        self.assertEqual(descriptor[0] & 0x08, 0x08)  # ADC present
+        self.assertEqual(descriptor[1] & 0x04, 0x04)  # gun_aim invert
         # a non-gun analog board (radm steering) must NOT default-invert
         self.assertEqual(bytearray(GAMES["radm"])[1] & 0x04, 0x00)
 
+    def test_driving_games_select_wheel_and_pedal_adc_profile(self) -> None:
+        for game in ("radm", "radr", "slipstrm", "f1en", "f1lap"):
+            descriptor = bytearray(GAMES[game])
+            self.assertEqual(descriptor[0] & 0x08, 0x08, game)
+            self.assertEqual((descriptor[1] >> 4) & 0x03,
+                             ANALOG["DRIVING"], game)
+
+    def test_rad_mobile_selects_light_wiper_player_port_layout(self) -> None:
+        self.assertEqual(bytearray(GAMES["radm"])[4] & 0x03, DIGITAL["RADM"])
+
+    def test_rad_rally_selects_the_mame_epr14084_link_hle(self) -> None:
+        self.assertEqual(bytearray(GAMES["radr"])[2] & 0x80, 0x80)
+        self.assertEqual(bytearray(GAMES["radm"])[2] & 0x80, 0x00)
+
+    def test_two_state_gears_do_not_imply_a_link_board(self) -> None:
+        self.assertEqual(bytearray(GAMES["radr"])[1] & 0x80, 0x80)
+        self.assertEqual(bytearray(GAMES["slipstrm"])[1] & 0x80, 0x80)
+        self.assertEqual(bytearray(GAMES["slipstrm"])[2] & 0x80, 0x00)
+
+    def test_dual_pcb_comm_reset_matches_mame_board_initialization(self) -> None:
+        # F1 Exhaust Note explicitly fills the shared bridge RAM with 0xffff.
+        self.assertEqual(bytearray(GAMES["f1en"])[1] & 0x40, 0x40)
+
 
 class ButtonMetadataTests(unittest.TestCase):
+    def test_all_rad_mobile_mras_expose_light_and_wiper(self) -> None:
+        names, defaults = BUTTONS["radm"]
+        mra_dir = Path(__file__).parents[1] / "mra"
+        paths = sorted(mra_dir.glob("Rad Mobile*.mra"))
+        self.assertEqual(len(paths), 2)
+        for path in paths:
+            buttons = ElementTree.parse(path).getroot().find("buttons")
+            self.assertIsNotNone(buttons, path.name)
+            self.assertEqual(buttons.attrib["names"], names, path.name)
+            self.assertEqual(buttons.attrib["default"], defaults, path.name)
+            self.assertEqual(buttons.attrib["count"], "2", path.name)
+
     def test_spiderman_has_two_action_buttons_and_system_controls(self) -> None:
         names, defaults = BUTTONS["spidman"]
         self.assertEqual(names.split(","),
@@ -46,12 +80,28 @@ class ButtonMetadataTests(unittest.TestCase):
             self.assertEqual(buttons.attrib["default"], BUTTONS["spidman"][1])
             self.assertEqual(buttons.attrib["count"], "2")
 
+    def test_all_segasonic_mras_expose_three_player_controls(self) -> None:
+        names, defaults = BUTTONS["sonic"]
+        self.assertEqual(
+            names.split(","),
+            ["Action", "-", "-", "-", "-", "-", "Start", "Coin", "Test", "Service"],
+        )
+        mra_dir = Path(__file__).parents[1] / "mra"
+        paths = sorted(mra_dir.glob("SegaSonic The Hedgehog*.mra"))
+        self.assertEqual(len(paths), 1)
+        for path in paths:
+            buttons = ElementTree.parse(path).getroot().find("buttons")
+            self.assertIsNotNone(buttons, path.name)
+            self.assertEqual(buttons.attrib["names"], names, path.name)
+            self.assertEqual(buttons.attrib["default"], defaults, path.name)
+            self.assertEqual(buttons.attrib["count"], "1", path.name)
+
 
 class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        self.assertEqual(len(paths), 48)
+        self.assertEqual(len(paths), 38)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
