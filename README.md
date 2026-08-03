@@ -23,17 +23,10 @@ working on the target MiSTer setup; an X means it is not yet ready.
 | Holosseum | ✓ |
 | Spider-Man: The Videogame | ✓ |
 | Golden Axe: The Revenge of Death Adder | ✓ |
-| Super Visual Football / J.League | ✗ |
 | Arabian Fight | ✗ |
-| Burning Rival | ✗ |
-| Dark Edge | ✗ |
-| Dragon Ball Z V.R.V.S. | ✗ |
-| F1 Exhaust Note | ✗ |
-| F1 Super Lap | ✗ |
 | Jurassic Park | ✗ |
 | Rad Mobile | ✗ |
 | Rad Rally | ✗ |
-| Slip Stream | ✗ |
 | SegaSonic The Hedgehog | ✗ |
 | AS-1 Controller | ✗ |
 

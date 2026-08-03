@@ -3,10 +3,13 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import ANALOG, BUTTONS, DIGITAL, GAMES
+from tools.gen_mra import ANALOG, BUTTONS, DIGITAL, GAMES, IGNORED_PARENTS
 
 
 class BoardDescriptorTests(unittest.TestCase):
+    def test_ignored_parents_are_not_profile_descriptors(self) -> None:
+        self.assertTrue(IGNORED_PARENTS.isdisjoint(GAMES))
+
     def test_holosseum_is_regular_flipped_two_bank_sprite_board(self) -> None:
         descriptor = bytearray(GAMES["holo"])
         # Generator fills physical sprite metadata after parsing the ROM region.
@@ -26,8 +29,8 @@ class BoardDescriptorTests(unittest.TestCase):
         # a non-gun analog board (radm steering) must NOT default-invert
         self.assertEqual(bytearray(GAMES["radm"])[1] & 0x04, 0x00)
 
-    def test_driving_games_select_wheel_and_pedal_adc_profile(self) -> None:
-        for game in ("radm", "radr", "slipstrm", "f1en", "f1lap"):
+    def test_active_driving_games_select_wheel_and_pedal_adc_profile(self) -> None:
+        for game in ("radm", "radr"):
             descriptor = bytearray(GAMES[game])
             self.assertEqual(descriptor[0] & 0x08, 0x08, game)
             self.assertEqual((descriptor[1] >> 4) & 0x03,
@@ -40,14 +43,9 @@ class BoardDescriptorTests(unittest.TestCase):
         self.assertEqual(bytearray(GAMES["radr"])[2] & 0x80, 0x80)
         self.assertEqual(bytearray(GAMES["radm"])[2] & 0x80, 0x00)
 
-    def test_two_state_gears_do_not_imply_a_link_board(self) -> None:
+    def test_rad_rally_two_state_gear_does_not_imply_a_link_board(self) -> None:
         self.assertEqual(bytearray(GAMES["radr"])[1] & 0x80, 0x80)
-        self.assertEqual(bytearray(GAMES["slipstrm"])[1] & 0x80, 0x80)
-        self.assertEqual(bytearray(GAMES["slipstrm"])[2] & 0x80, 0x00)
-
-    def test_dual_pcb_comm_reset_matches_mame_board_initialization(self) -> None:
-        # F1 Exhaust Note explicitly fills the shared bridge RAM with 0xffff.
-        self.assertEqual(bytearray(GAMES["f1en"])[1] & 0x40, 0x40)
+        self.assertEqual(bytearray(GAMES["radr"])[2] & 0x80, 0x80)
 
 
 class ButtonMetadataTests(unittest.TestCase):
@@ -101,7 +99,7 @@ class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        self.assertEqual(len(paths), 38)
+        self.assertEqual(len(paths), 20)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")

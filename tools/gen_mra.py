@@ -66,21 +66,13 @@ def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0,
 GAMES = {
     # parent: (descriptor, per-set list built from clones automatically)
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
-    "brival":   desc(ppi=1, prot=PROT["BRIVAL"]),
-    "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
-    "dbzvrvs":  desc(adc=1, prot=PROT["DBZVRVS"], analog=ANALOG["ALL_FF"]),
-    "f1en":     desc(adc=1, dual=1, analog=ANALOG["DRIVING"], dual_ff=1),
-    "f1lap":    desc(adc=1, prot=PROT["F1LAP"], analog=ANALOG["DRIVING"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
     "holo":     desc(flip_y=1),
     "jpark":    desc(adc=1, gun=1),
     "radm":     desc(adc=1, analog=ANALOG["DRIVING"], digital=DIGITAL["RADM"]),
     "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1, gear_toggle=1),
-    "slipstrm": desc(adc=1, analog=ANALOG["DRIVING"], gear_toggle=1),
     "sonic":    desc(track=1, prot=PROT["SONIC"]),
     "spidman":  desc(ppi=1),
-    "svf":      desc(),
-    "jleague":  desc(prot=PROT["JLEAGUE"]),
     # NO MULTI 32 SETS.  harddunk/orunners/scross/titlef are Multi 32 boards and
     # this repository builds System 32 only: every shipped revision sets
     # S32_SYSTEM32_ONLY=1, which folds is_multi32 to a constant and removes the
@@ -88,6 +80,13 @@ GAMES = {
     # Emitting MRAs for them advertised games no RBF here can run.  Adding one
     # back means restoring a Multi 32 revision first, not just a line here --
     # Multi32ExclusionTests in verif/test_gen_mra.py fails if one reappears.
+}
+
+# These parent sets are intentionally no longer part of the production profile.
+# Keep the exclusion explicit so a future source refresh cannot re-emit them by
+# accident simply because MAME still contains their ROM definitions.
+IGNORED_PARENTS = {
+    "brival", "darkedge", "dbzvrvs", "f1en", "f1lap", "slipstrm", "svf", "jleague",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -108,22 +107,6 @@ BUTTONS = {
         "Attack,Magic,-,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,Start,Select,R,L,Y",
     ),
-    "brival": (
-        "Button 1,Button 2,Button 3,Button 4,Button 5,Button 6,Start,Coin,Test,Service",
-        "A,B,X,Y,R,L,Start,Select",
-    ),
-    "darkedge": (
-        "Button 1,Button 2,Button 3,Button 4,Button 5,-,Start,Coin,Test,Service",
-        "A,B,X,Y,R,Start,Select,L",
-    ),
-    "f1en": (
-        "Gear Up,Gear Down,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "f1lap": (
-        "Gear Up,Gear Down,Overtake,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
-    ),
     "jpark": (
         "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
         "A,Start,Select,R,L",
@@ -136,10 +119,6 @@ BUTTONS = {
         "Action,-,-,-,-,-,Start,Coin,Test,Service",
         "A,Start,Select,R,L",
     ),
-    "svf": (
-        "Button 1,Button 2,Button 3,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
-    ),
     "radm": (
         "Light,Wiper,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
@@ -148,26 +127,16 @@ BUTTONS = {
         "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
         "A,Start,Select,R,L",
     ),
-    "slipstrm": (
-        "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
 }
 
 BUTTON_COUNTS = {
     "arabfgt": 2,
-    "brival": 6,
-    "darkedge": 5,
-    "f1en": 2,
-    "f1lap": 3,
     "ga2": 3,
     "jpark": 1,
     "spidman": 2,
     "sonic": 1,
-    "svf": 3,
     "radm": 2,
     "radr": 1,
-    "slipstrm": 1,
 }
 RBF_BY_PARENT = {
     "ga2": "s32v25",
@@ -325,6 +294,8 @@ def interleave_parts(loads, region_size, ctx=""):
 
 def gen(setname, data, outdir):
     parent = data.get("parent") or setname
+    if setname in IGNORED_PARENTS or parent in IGNORED_PARENTS:
+        return False
     # A set-specific entry must override its parent's board descriptor when
     # MAME installs a different init/protection handler for the clone.  This
     # matters for the J.League handler; falling back to the parent is correct

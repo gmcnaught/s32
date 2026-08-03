@@ -5,8 +5,8 @@
 # sets boot, which fault, which render nothing, and whether the SDRAM/DDR paths
 # meet their per-scanline deadlines.
 #
-#   ./verif/verilator/run_library_sweep.sh                 # all 13 media-present standard parents
-#   SETS="radm radr slipstrm" ./verif/verilator/run_library_sweep.sh
+#   ./verif/verilator/run_library_sweep.sh                 # all 6 active standard parents
+#   SETS="radm radr" ./verif/verilator/run_library_sweep.sh
 #   FRAMES=420 DUMPAT=200 ./verif/verilator/run_library_sweep.sh
 #   ATTRACT=1 ./verif/verilator/run_library_sweep.sh  # Verilator screenshot gate
 #   REPARSE=1 ./verif/verilator/run_library_sweep.sh        # re-tabulate, no sim
@@ -47,21 +47,20 @@ DUMPAT="${DUMPAT:-80}"
 DUMPN="${DUMPN:-1}"
 if [[ "${ATTRACT:-0}" == "1" ]]; then
   # The MAME-derived landmark windows are applied per parent below.  A single
-  # 420-frame default is too short for Slip Stream, Jurassic Park, Rad Mobile,
-  # Sonic, Spider-Man, and DBZ V.R. V.S.  Review the retained frame; this
+  # 420-frame default is too short for Jurassic Park, Rad Mobile, Sonic, and
+  # Spider-Man. Review the retained frame; this
   # runner still reports diagnostics, it does not infer game semantics.
   FRAMES="${FRAMES_ATTRACT:-420}"
   DUMPAT="${DUMPAT_ATTRACT:-360}"
 fi
 REPARSE="${REPARSE:-0}"
 OUT="${OUT:-scratch/library-sweep}"
-# Every media-present standard-profile parent in the current user-directed
-# acceptance scope.  Multi 32 left this repo in a7e280f; AS-1 is out of scope
-# (laserdisc).  jleague remains production-supported, but is excluded until
-# its private ROM media is supplied.  ga2 and arabfgt remain
+# Every active standard-profile parent in the current user-directed acceptance
+# scope. Multi 32 left this repo in a7e280f; AS-1 is out of scope (laserdisc).
+# ga2 and arabfgt remain
 # production-supported by s32v25, but are explicitly excluded from this goal's
 # sweep because they are V25 games.
-SETS="${SETS:-brival darkedge dbzvrvs f1en f1lap holo jpark radm radr slipstrm sonic spidman svf}"
+SETS="${SETS:-holo jpark radm radr sonic spidman}"
 
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.md"
@@ -78,8 +77,7 @@ attract_frames_for() {
   case "$1" in
     # Leave one video interval after the requested capture so the PPM closes
     # before the harness reaches ROMBOOT DONE.
-    slipstrm)              echo 960 ;;
-    jpark|sonic|spidman|dbzvrvs) echo 1260 ;;
+    jpark|sonic|spidman)   echo 1260 ;;
     radm)                  echo 660 ;;
     *)                     echo "$FRAMES" ;;
   esac
@@ -87,8 +85,7 @@ attract_frames_for() {
 
 attract_dump_for() {
   case "$1" in
-    slipstrm)              echo 900 ;;
-    jpark|sonic|spidman|dbzvrvs) echo 1200 ;;
+    jpark|sonic|spidman)   echo 1200 ;;
     radm)                  echo 600 ;;
     *)                     echo "$DUMPAT" ;;
   esac

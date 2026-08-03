@@ -4,11 +4,19 @@ This is the persistent cross-chat routing record for the core.
 
 ## Outputs
 
-- `s32.rbf` / `s32.qsf`: standard universal System 32 image for every emitted
-  parent except `ga2` and `arabfgt`.
+- `s32.rbf` / `s32.qsf`: standard image for the active parents `holo`, `jpark`,
+  `radm`, `radr`, `sonic`, and `spidman`.
 - `s32v25.rbf` / `s32v25.qsf`: universal real-V25 image for `ga2` and
   `arabfgt`. The descriptor's `v25_table` bit selects the table and cadence.
 - No production image supports Multi 32 sets.
+
+## User-requested exclusions (2026-08-03)
+
+The following parents are intentionally ignored and must not be emitted as
+MRAs, staged by the active profile sweep, or treated as supported in future
+profile work: `brival`, `darkedge`, `dbzvrvs`, `f1en`, `f1lap`, `slipstrm`,
+`svf`, and `jleague`. Local ROMs and historical captures may remain on disk;
+they are outside the production profile.
 
 ## Source of truth
 
@@ -58,8 +66,9 @@ and never selects a game or RBF.
 
 The current user-directed gameplay/attract acceptance matrix covers true parent
 sets only. Clone and regional revisions, all Multi 32 parents, `holo`, and
-`spidman` are excluded from this audit. The remaining supported parents are
-the only titles eligible for promotion through this matrix.
+`spidman` are excluded from this audit. The remaining active Standard parents
+are `jpark`, `radm`, `radr`, and `sonic`; the two V25 parents remain `ga2` and
+`arabfgt`.
 
 ## Universal-profile attract evidence (2026-08-01, in progress)
 
@@ -85,29 +94,20 @@ The executable harness gate is `+REQUIRE_VERILATOR_SCREENSHOT` together with
 entirely black, and reports the captured frame's non-black pixel count before
 `ROMBOOT DONE`.
 
-Current matrix status: 7 of 13 media-present Standard parents have passed the
-full Verilator attract gate; the remaining Standard parents and both V25
-parents are still pending the combined attract/frame-diff gate. `holo` now
-has an exact scene-matched MAME image comparison, and `svf` has a provisional
-0.980748% scene-matched image comparison; neither changes the full matrix
-count until the corresponding gate evidence is consolidated.
+Current matrix status: the active Standard parents and both V25 parents remain
+subject to the combined attract/frame-diff gate. `holo` retains its exact
+scene-matched MAME image comparison, but is outside the current audit.
 
 | Parent | Profile | Evidence | Status |
 |---|---|---|---|
-| `svf` | standard | 85 frames; frame 80 shows the Super Visual Football logo and `INSERT COIN(S)`; `scratch/vromboot_out/svf_frame80.png`; provisional MAME scene match is 0.980748% differing pixels | proven |
 | `holo` | standard | 85 frames; frame 80 shows the FBI anti-drug attract screen; `scratch/vromboot_out/holo_frame80.png`; exact MAME RGB match after documented crop and -1 scanline alignment | proven |
-| `brival` | standard | 85 frames; frame 80 shows the Burning Rival demo scene with `Credit 0`; `scratch/vromboot_out/brival_frame80.png` | proven |
-| `darkedge` | standard | 85 frames; frame 80 shows the `FIGHTERS ON EDGE` high-score attract screen; zero non-IRQ exceptions and zero tile/FB overruns; `scratch/vromboot_out/darkedge_attract_20260731b/frame80.png` | proven; transient watchdog warning triaged |
-| `f1en` | standard | 150-frame deterministic sweep; frame 120 shows a rendered F1 Exhaust Note race demo with `Credit 0`; `ROMBOOT DONE`, zero non-IRQ exceptions, zero tile/FB overruns; `scratch/library-sweep/f1en/dump120.png` | proven |
-| `f1lap` | standard | 150-frame deterministic sweep; frame 120 shows a rendered F1 Super Lap race demo with `Credit 0`; `ROMBOOT DONE`, zero non-IRQ exceptions, zero tile/FB overruns; `scratch/library-sweep/f1lap/dump120.png` | proven |
 | `radr` | standard | 420-frame full-core Verilator run; frame 360 retained PPM/PNG shows the Rad Rally `Free Play`/SEGA attract screen; `ROMBOOT DONE`, `VERILATOR SCREENSHOT PASS` with 71,680 non-black pixels, IRQ-only vectors 40/41, zero freeze/tile/FB overruns; `scratch/radr_attract_win_20260801p/dump360.ppm` | proven |
 | `ga2` | v25 | staged parent image and MAME attract references; combined real-V25 Verilator attract/frame-diff gate pending | pending |
 | `arabfgt` | v25 | staged parent image and MAME attract references; combined real-V25 Verilator attract/frame-diff gate pending | pending |
 | all other in-scope media-present standard parents | standard | staged sweep or media/structural triage exists, but the attract gate is not yet closed | pending |
 
-`jleague` is outside the staged-media portion of the matrix because its parent
-media is unavailable. `ga2` and `arabfgt` remain separate V25-profile rows in
-the active matrix, not Standard-profile rows.
+`ga2` and `arabfgt` remain separate V25-profile rows in the active matrix, not
+Standard-profile rows.
 
 ## Per-parent progress (2026-08-01)
 
@@ -120,33 +120,24 @@ closed. Only 100% counts as proven attract mode.
 
 | Parent | Attract proven? | Progress | Current evidence / next gate |
 |---|---:|---:|---|
-| `brival` | yes | 100% | retained Burning Rival demo capture |
-| `darkedge` | yes | 100% | retained Fighters on Edge attract capture |
-| `dbzvrvs` | no | 50% | 150-frame Verilator smoke; run the corresponding 1200-frame Verilator window selected from MAME |
-| `f1en` | yes | 100% | retained F1 Exhaust Note race-demo capture |
-| `f1lap` | yes | 100% | retained F1 Super Lap race-demo capture |
 | `holo` | excluded | — | explicitly excluded from the current audit; production routing retained |
 | `ga2` | no | 50% | staged V25 parent image; real-V25 attract and MAME frame-diff gate pending |
 | `arabfgt` | no | 50% | staged V25 parent image; real-V25 attract and MAME frame-diff gate pending |
 | `jpark` | no | 50% | 150-frame Verilator smoke; run the corresponding 1200-frame Verilator title window selected from MAME |
 | `radm` | no | 50% | 150-frame Verilator smoke; prepared 660-frame full-core run with frame-600 capture selected from MAME, but the safe scheduler has not yet admitted it |
 | `radr` | yes | 100% | 420-frame full-core Verilator attract run passed; retained frame-360 Rad Rally capture, `ROMBOOT DONE`, screenshot gate, IRQ-only vectors 40/41, and zero freeze/tile/FB overruns; MAME-derived CN/FG plus EPR-14084 link-status HLE remains descriptor-routed and focused-tested |
-| `slipstrm` | no | 50% | 150-frame Verilator smoke; run the corresponding 900-frame Verilator window selected from MAME |
 | `sonic` | no | 75% | deterministic visible gameplay reached through frame 2200 with sprites/HUD closely aligned; NBG floor is absent because the post-clear low name-table writes diverge, now isolated below the renderer and under focused V60 caller-path analysis |
 | `spidman` | excluded | — | explicitly excluded from the current audit; production routing retained |
-| `svf` | yes | 100% | retained Super Visual Football attract capture |
 
 MAME-only timing leads (from the local 0.285 executable; not attract proof for
 the pinned source or RTL) are retained for deterministic run planning:
-`slipstrm` first rendered a car demo at frame 900 and a stable title/demo at
-1800; `jpark` showed its title at 1200; `radm` showed its title/road attract at
-600; and `sonic`, `spidman`, and
-`dbzvrvs` showed attract/title frames at 1200.
+`jpark` showed its title at 1200; `radm` showed its title/road attract at 600;
+and `sonic` and `spidman` showed attract/title frames at 1200.
 These windows replace the old 120/150-frame smoke assumptions when each parent
 is promoted through the full-core Verilator gate.
 
-An earlier local MAME 0.285 `-validate` sweep returned zero for all 13
-Standard parents, but that command does not prove that the ROM files are
+An earlier local MAME 0.285 `-validate` sweep returned zero for the previously
+routed Standard parents, but that command does not prove that the ROM files are
 available. A follow-up `-verifyroms radr` and runtime attempt on 2026-08-01
 reported `romset "radr" not found` in `D:\Arcade\AI\mame\roms`; therefore no
 MAME runtime/media audit is claimed here. The staged `roms/sim` images remain
