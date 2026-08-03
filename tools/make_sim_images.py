@@ -14,9 +14,10 @@ words / 128-bit sprite chunks in ascending-address byte order):
   multipcm.hex  2M   x 16-bit   (SDRAM p4, base 0xA00000)
   sprites.hex   1M   x 128-bit  (SDRAM p2, base 0x1000000)
   mcu.bin       64KB raw        (V25 program, loader-descrambled order)
+  eeprom.hex    64 x 16-bit      (index-2 93C46 default, when present)
   desc.txt      board descriptor bytes
 
-Usage: make_sim_images.py <file.mra> <romdir-or-zip> <outdir>
+Usage: make_sim_images.py <file.mra> <romdir-or-zip> [additional-romdir-or-zip ...] <outdir>
 """
 import sys, os, zlib, binascii, zipfile
 import xml.etree.ElementTree as ET
@@ -32,6 +33,12 @@ REGIONS = [  # (name, size)
 
 _crc_index = {}
 _zip_index = {}
+
+def normalize_romdirs(romdirs):
+    """Accept one ROM source for API compatibility or a source sequence."""
+    if isinstance(romdirs, (str, bytes, os.PathLike)):
+        return [romdirs]
+    return list(romdirs)
 
 def indexed_zip(path):
     if path not in _zip_index:
@@ -49,40 +56,50 @@ def indexed_zip(path):
         _zip_index[path] = (archive, by_name, by_stem, by_crc)
     return _zip_index[path]
 
-def load_part(romdir, name, crc):
-    if zipfile.is_zipfile(romdir):
-        archive, by_name, by_stem, by_crc = indexed_zip(romdir)
-        key = os.path.basename(name).lower()
-        info = by_name.get(key) or by_stem.get(key.rsplit(".", 1)[0])
-        if info is None and crc:
-            info = by_crc.get(crc.lower())
-        assert info is not None, f"no entry in {romdir} matches {name} (crc {crc})"
-        data = archive.read(info)
+def load_part(romdirs, name, crc):
+    """Load a part, trying clone media before any explicitly supplied parent media."""
+    sources = normalize_romdirs(romdirs)
+    for romdir in sources:
+        if zipfile.is_zipfile(romdir):
+            archive, by_name, by_stem, by_crc = indexed_zip(romdir)
+            key = os.path.basename(name).lower()
+            info = by_name.get(key) or by_stem.get(key.rsplit(".", 1)[0])
+            if info is None and crc:
+                info = by_crc.get(crc.lower())
+            if info is None:
+                continue
+            data = archive.read(info)
+            have = format(zlib.crc32(data) & 0xffffffff, "08x")
+            if crc and have != crc.lower():
+                print(f"  WARNING: {name} crc {have} != mra {crc}")
+            return data
+
+        path = os.path.join(romdir, name)
+        if not os.path.exists(path):
+            # sets from other sources drop extensions — try the stem, then CRC
+            stem = os.path.join(romdir, name.rsplit(".", 1)[0])
+            if os.path.exists(stem):
+                path = stem
+            elif crc:
+                if romdir not in _crc_index:
+                    _crc_index[romdir] = {}
+                    for f in os.listdir(romdir):
+                        fp = os.path.join(romdir, f)
+                        with open(fp, "rb") as handle:
+                            c = format(zlib.crc32(handle.read()) & 0xffffffff, "08x")
+                        _crc_index[romdir][c] = fp
+                path = _crc_index[romdir].get(crc.lower())
+                if path is None:
+                    continue
+        with open(path, "rb") as handle:
+            data = handle.read()
         have = format(zlib.crc32(data) & 0xffffffff, "08x")
         if crc and have != crc.lower():
             print(f"  WARNING: {name} crc {have} != mra {crc}")
         return data
 
-    path = os.path.join(romdir, name)
-    if not os.path.exists(path):
-        # sets from other sources drop extensions — try the stem, then CRC
-        stem = os.path.join(romdir, name.rsplit(".", 1)[0])
-        if os.path.exists(stem):
-            path = stem
-        elif crc:
-            if romdir not in _crc_index:
-                _crc_index[romdir] = {}
-                for f in os.listdir(romdir):
-                    fp = os.path.join(romdir, f)
-                    c = format(zlib.crc32(open(fp,"rb").read()) & 0xffffffff, "08x")
-                    _crc_index[romdir][c] = fp
-            path = _crc_index[romdir].get(crc.lower())
-            assert path, f"no file in {romdir} matches {name} (crc {crc})"
-    data = open(path, "rb").read()
-    have = format(zlib.crc32(data) & 0xffffffff, "08x")
-    if crc and have != crc.lower():
-        print(f"  WARNING: {name} crc {have} != mra {crc}")
-    return data
+    joined = ", ".join(os.fspath(source) for source in sources)
+    raise AssertionError(f"no entry in {joined} matches {name} (crc {crc})")
 
 def part_bytes(el, romdir):
     if el.get("name"):
@@ -176,11 +193,22 @@ def emit_hex(path, data, width_bytes):
             f.write(format(int.from_bytes(chunk, "little"), f"0{width_bytes*2}x") + "\n")
 
 def main():
-    mra_path, romdir, outdir = sys.argv[1], sys.argv[2], sys.argv[3]
+    mra_path, outdir = sys.argv[1], sys.argv[-1]
+    romdirs = sys.argv[2:-1]
+    assert romdirs, "at least one ROM source is required"
     os.makedirs(outdir, exist_ok=True)
-    desc, blobs = build_regions(mra_path, romdir)
+    desc, blobs = build_regions(mra_path, romdirs)
+    root = ET.parse(mra_path).getroot()
+    eeprom_rom = next(
+        (rom for rom in root.findall("rom") if rom.get("index") == "2"),
+        None,
+    )
+    eeprom = build_rom(eeprom_rom, romdirs) if eeprom_rom is not None else b"\xff" * 128
+    assert len(eeprom) <= 128, f"EEPROM default {len(eeprom):#x} exceeds 93C46"
+    eeprom = eeprom.ljust(128, b"\xff")
     with open(os.path.join(outdir, "desc.txt"), "w") as f:
         f.write(desc.hex() + "\n")
+    emit_hex(os.path.join(outdir, "eeprom.hex"), eeprom, 2)
     for (name, _), blob in zip(REGIONS, blobs):
         if name == "mcu":
             open(os.path.join(outdir, "mcu.bin"), "wb").write(blob)

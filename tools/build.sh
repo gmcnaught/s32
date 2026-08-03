@@ -7,9 +7,10 @@ printf '%s\n' \
   'This legacy Linux/CI path bypasses the locked, fingerprinted, per-game' \
   'release gates and must not produce or qualify a public RBF.' \
   '' \
-  'Use the supported Windows Golden Axe pipeline:' \
+  'Use one of the supported Windows universal-profile pipelines:' \
   '  set QUARTUS_ROOT=D:\Q17' \
-  '  tools\build-goldenaxe.bat' \
+  '  tools\build-s32.bat' \
+  '  tools\build-s32v25.bat' \
   '' \
   'The supported path validates Quartus Lite 17.0.2.602, performs a clean' \
   'synthesis, classifies fitter retries, runs STA before assembly, and stages' \

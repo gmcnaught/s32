@@ -1487,11 +1487,10 @@ reg  [39:0] PhaseInc;
 	wire vgas_hs, vgas_vs, vgas_cs, vgas_de;
 	wire [23:0] hdmi_data_vgas_in;
 	wire hdmi_hs_vgas_in, hdmi_vs_vgas_in, hdmi_cs_vgas_in, hdmi_de_vgas_in;
-	`ifdef S32_ARABFIGHT_ONLY
-		// The Arabian-only fit places the HDMI OSD and the VGA scaler shift
-		// RAM at opposite ends of the device. Preserve one matched pipeline
-		// stage at their boundary so Quartus can place it between the blocks
-		// instead of routing the OSD mux directly into the scaler M10K.
+	`ifdef S32_PROFILE_V25
+		// The real-V25 profile places the HDMI OSD and VGA scaler shift RAM
+		// at opposite ends of the device. Preserve one matched pipeline stage
+		// for both protected games so the global profile stays self-consistent.
 		(* preserve *) reg [23:0] hdmi_data_vgas_pipe;
 		(* preserve *) reg hdmi_hs_vgas_pipe, hdmi_vs_vgas_pipe;
 		(* preserve *) reg hdmi_cs_vgas_pipe, hdmi_de_vgas_pipe;

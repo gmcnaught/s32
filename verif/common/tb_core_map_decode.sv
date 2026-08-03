@@ -17,8 +17,10 @@ module tb_core_map_decode;
         assign dv[i]=0; assign dx[i]=0; assign dy[i]=0; assign tb[i]=8'hff;
     end
 
+    reg core_rst = 1'b1;
+
     s32_core core (
-        .clk_sys(clk), .clk_ram(clk), .rst(1'b1), .video_rst(1'b1), .board(bd),
+        .clk_sys(clk), .clk_ram(clk), .rst(core_rst), .video_rst(core_rst), .board(bd),
         .ce_cpu(1'b0), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0),
         .sdr_p0_dout(16'h0), .sdr_p0_ack(1'b0),
         .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b0),
@@ -65,6 +67,7 @@ module tb_core_map_decode;
     initial begin
         bd.has_ppi = 1'b1;
         bd.has_v25 = 1'b1;
+        bd.comm_link_hle = 1'b1;
         force core.A = probe;
 
         // 0x600000/0x610000 windows, including MAME's A19:A17 mirrors.
@@ -99,10 +102,98 @@ module tb_core_map_decode;
             errors = errors + 1;
         end
         probe = 24'h801000; #1;   // cn register: comm page, not share RAM
-        if (core.sel_comm !== 1'b1 || core.sel_comm_ram !== 1'b0) begin
-            $display("FAIL comm reg @801000 comm=%b ram=%b", core.sel_comm, core.sel_comm_ram);
+        if (core.sel_comm !== 1'b1 || core.sel_comm_ram !== 1'b0 ||
+            core.sel_comm_cn !== 1'b1 || core.sel_comm_fg !== 1'b0) begin
+            $display("FAIL comm CN @801000 comm=%b ram=%b cn=%b fg=%b",
+                core.sel_comm, core.sel_comm_ram, core.sel_comm_cn, core.sel_comm_fg);
             errors = errors + 1;
         end
+        probe = 24'h801002; #1;   // fg register
+        if (core.sel_comm !== 1'b1 || core.sel_comm_ram !== 1'b0 ||
+            core.sel_comm_cn !== 1'b0 || core.sel_comm_fg !== 1'b1) begin
+            $display("FAIL comm FG @801002 comm=%b ram=%b cn=%b fg=%b",
+                core.sel_comm, core.sel_comm_ram, core.sel_comm_cn, core.sel_comm_fg);
+            errors = errors + 1;
+        end
+        probe = 24'h801004; #1;   // rest of communication page stays open bus
+        if (core.sel_comm_cn !== 1'b0 || core.sel_comm_fg !== 1'b0) begin
+            $display("FAIL comm hole @801004 cn=%b fg=%b",
+                core.sel_comm_cn, core.sel_comm_fg);
+            errors = errors + 1;
+        end
+
+        // Exercise the MAME s32comm bit-0 write contract without starting a
+        // CPU: CN accepts a write, FG accepts one only while CN is set, and
+        // cn_w(0) resets FG before disabled-board writes are ignored.
+        core_rst = 1'b0;
+        force core.m_req = 1'b1;
+        force core.m_we = 1'b1;
+        force core.m_be = 2'b01;
+        force core.m_wdata = 16'h0001;
+        probe = 24'h801000; @(posedge clk); #1;
+        if (core.comm_cn !== 1'b1) begin
+            $display("FAIL comm CN write cn=%b", core.comm_cn);
+            errors = errors + 1;
+        end
+        probe = 24'h801002; @(posedge clk); #1;
+        if (core.comm_fg !== 1'b1) begin
+            $display("FAIL comm FG write while enabled fg=%b", core.comm_fg);
+            errors = errors + 1;
+        end
+        force core.m_wdata = 16'h0000;
+        probe = 24'h801000; @(posedge clk); #1;
+        if (core.comm_cn !== 1'b0 || core.comm_fg !== 1'b0) begin
+            $display("FAIL disabled comm reset cn=%b fg=%b", core.comm_cn, core.comm_fg);
+            errors = errors + 1;
+        end
+        force core.m_wdata = 16'h0001;
+        probe = 24'h801002; @(posedge clk); #1;
+        if (core.comm_fg !== 1'b0) begin
+            $display("FAIL disabled comm FG write changed fg=%b", core.comm_fg);
+            errors = errors + 1;
+        end
+        core_rst = 1'b1;
+        @(posedge clk); #1;
+        if (core.comm_cn !== 1'b0 || core.comm_fg !== 1'b0) begin
+            $display("FAIL comm reset cn=%b fg=%b", core.comm_cn, core.comm_fg);
+            errors = errors + 1;
+        end
+
+        // The EPR-14084 HLE publishes MAME's one-node online status after
+        // the link timer expires. Force the boundary for a short focused test.
+        core_rst = 1'b0;
+        force core.m_wdata = 16'h0001;
+        probe = 24'h801000; @(posedge clk); #1;
+        release core.m_req;
+        release core.m_we;
+        release core.m_be;
+        release core.m_wdata;
+        force core.comm_link_timer = 16'd1;
+        force core.vbl_start = 1'b1;
+        @(posedge clk); #1;
+        release core.vbl_start;
+        release core.comm_link_timer;
+        if (core.comm_link_status !== 1'b1 || core.comm_ram[4] !== 8'h01) begin
+            $display("FAIL comm link HLE status=%b shared4=%02x",
+                core.comm_link_status, core.comm_ram[4]);
+            errors = errors + 1;
+        end
+        core_rst = 1'b1;
+        @(posedge clk); #1;
+
+        // Sonic protection reads an exact word from the level-order table.
+        // 0x263a is deliberately not 8-byte aligned; the ROM arbiter must not
+        // turn it into the instruction-cache line base at 0x2638.
+        force core.prot_rom_grant = 1'b1;
+        force core.prot_rom_addr = 24'h00263a;
+        #1;
+        if (core.sdr_p0_addr !== (24'h00263a >> 1)) begin
+            $display("FAIL Sonic protection ROM word address=%06x expected=00131d",
+                core.sdr_p0_addr);
+            errors = errors + 1;
+        end
+        release core.prot_rom_addr;
+        release core.prot_rom_grant;
 
         if (errors == 0) $display("CORE MAP DECODE PASS");
         else $fatal(1, "CORE MAP DECODE FAIL (%0d errors)", errors);

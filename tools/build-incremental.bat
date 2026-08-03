@@ -8,9 +8,9 @@ if not defined S32_BUILD_LOCK_TOKEN goto :lock_missing
 
 cd /d "%~dp0.."
 if not "%ERRORLEVEL%"=="0" goto :err
-if not defined S32_PROJECT set "S32_PROJECT=Arcade-SegaSystem32"
-if not defined S32_REVISION set "S32_REVISION=Arcade-SegaSystem32"
-if not defined S32_RELEASE_NAME set "S32_RELEASE_NAME=SegaS32"
+if not defined S32_PROJECT set "S32_PROJECT=s32"
+if not defined S32_REVISION set "S32_REVISION=s32"
+if not defined S32_RELEASE_NAME set "S32_RELEASE_NAME=s32"
 if not defined S32_FIT_SEED set "S32_FIT_SEED=2"
 if not defined QUARTUS_ROOT goto :quartus_root_missing
 set "QBIN=%QUARTUS_ROOT%\quartus\bin64"

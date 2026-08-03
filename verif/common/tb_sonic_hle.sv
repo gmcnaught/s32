@@ -20,7 +20,8 @@ module tb_sonic_hle;
     wire wram_ack = wram_req;
     wire rom_req;
     wire [23:0] rom_addr;
-    wire [15:0] rom_data = 16'h1234;
+    // SDR image word for ascending ROM bytes 12 34.
+    wire [15:0] rom_data = 16'h3412;
     wire rom_ack = rom_req;
 
     s32_prot_hle dut (

@@ -1,9 +1,9 @@
 package require ::quartus::project
 package require ::quartus::sta
 
-set project_name "Arcade-SegaSystem32"
-set revision_name "Arcade-SegaSystem32"
-set report_file "output_files/Arcade-SegaSystem32.core-setup.rpt"
+set project_name "s32"
+set revision_name "s32"
+set report_file "output_files/s32.core-setup.rpt"
 
 project_open -revision $revision_name $project_name
 create_timing_netlist

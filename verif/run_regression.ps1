@@ -39,9 +39,11 @@ $Completed = $false
 $Summary = [Collections.Generic.List[string]]::new()
 
 function Write-RunLine {
-    param([Parameter(Mandatory = $true)][string]$Text)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
     Write-Host $Text
-    Add-Content -LiteralPath $script:LogPath -Value $Text
+    if ($Text.Length -gt 0) {
+        Add-Content -LiteralPath $script:LogPath -Value $Text
+    }
 }
 
 function Add-RawLog {

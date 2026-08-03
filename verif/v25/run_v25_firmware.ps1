@@ -3,13 +3,100 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$wslRoot = (& wsl wslpath -a ($repoRoot -replace '\\', '/')).Trim()
-if (-not $wslRoot) {
-    throw 'Could not translate the repository path for WSL.'
-}
+$msysBash = 'C:\msys64\usr\bin\bash.exe'
+if (Test-Path -LiteralPath $msysBash -PathType Leaf) {
+    $script = ($repoRoot -replace '\\', '/') + '/verif/v25/run_v25_firmware.sh'
+    $taskTemp = Join-Path $repoRoot 'scratch\tmp'
+    $buildDir = $null
+    $validatedBuildDir = $false
+    $savedPath = $env:PATH
+    $savedSafe = $env:S32_VERILATOR_SAFE
+    $savedSimSafe = $env:S32_VERILATOR_SIM_SAFE
+    $savedModelSim = $env:MODELSIM_BIN
+    $savedTmp = $env:TMP
+    $savedTemp = $env:TEMP
+    $savedBuildOnly = $env:S32_V25_BUILD_ONLY
+    $savedKeepBuild = $env:KEEP_BUILD
+    try {
+        New-Item -ItemType Directory -Force -Path $taskTemp | Out-Null
+        $env:TMP = $taskTemp
+        $env:TEMP = $taskTemp
+        $env:PATH = 'C:\msys64\ucrt64\bin;C:\msys64\usr\bin;C:\Users\meath\bin;' + $savedPath
+        $safeVerilator = (Get-Command verilator-safe -ErrorAction Stop).Source
+        $safeSimulator = (Get-Command verilator-sim-safe -ErrorAction Stop).Source
+        $env:S32_VERILATOR_SAFE = ($safeVerilator -replace '\\', '/')
+        $env:S32_VERILATOR_SIM_SAFE = ($safeSimulator -replace '\\', '/')
+        $env:MODELSIM_BIN = ((Split-Path -Parent (Get-Command vsim.exe -ErrorAction Stop).Source) -replace '\\', '/')
+        $env:S32_V25_BUILD_ONLY = '1'
+        $env:KEEP_BUILD = '1'
 
-& wsl bash "$wslRoot/verif/v25/run_v25_firmware.sh"
-if ($LASTEXITCODE -ne 0) {
-    throw "V25 firmware test failed with exit code $LASTEXITCODE."
+        [string[]]$buildOutput = & $msysBash -lc $script 2>&1
+        $buildExitCode = $LASTEXITCODE
+        $buildOutput | ForEach-Object { Write-Output $_ }
+        if ($buildExitCode -ne 0) {
+            throw "V25 firmware build failed with exit code $buildExitCode."
+        }
+
+        $exePrefix = 'V25_FIRMWARE EXE: '
+        $dirPrefix = 'V25_FIRMWARE BUILD DIR: '
+        $exeLine = $buildOutput | Where-Object { $_.StartsWith($exePrefix) } | Select-Object -Last 1
+        $dirLine = $buildOutput | Where-Object { $_.StartsWith($dirPrefix) } | Select-Object -Last 1
+        if (-not $exeLine -or -not $dirLine) {
+            throw 'V25 firmware build did not report its executable and build directory.'
+        }
+
+        $firmwareExe = $exeLine.Substring($exePrefix.Length).Trim()
+        $buildDir = $dirLine.Substring($dirPrefix.Length).Trim()
+        $scratchRoot = [IO.Path]::GetFullPath($taskTemp).TrimEnd('\')
+        $buildDir = [IO.Path]::GetFullPath($buildDir).TrimEnd('\')
+        $firmwareExe = [IO.Path]::GetFullPath($firmwareExe)
+        $expectedPrefix = $scratchRoot + '\'
+        $expectedExe = Join-Path $buildDir 'obj_dir\Vtb_v25_firmware.exe'
+        if (-not $buildDir.StartsWith($expectedPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Split-Path -Leaf $buildDir).StartsWith('s32-v25-firmware.', [StringComparison]::Ordinal) -or
+            -not $firmwareExe.Equals($expectedExe, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing an unexpected V25 firmware build path: $buildDir"
+        }
+        $validatedBuildDir = $true
+        if (-not (Test-Path -LiteralPath $firmwareExe -PathType Leaf)) {
+            throw "V25 firmware executable was not produced: $firmwareExe"
+        }
+
+        [string[]]$runOutput = & $safeSimulator -- $firmwareExe 2>&1
+        $runExitCode = $LASTEXITCODE
+        $runOutput | ForEach-Object { Write-Output $_ }
+        if ($runExitCode -ne 0) {
+            throw "V25 firmware simulation failed with exit code $runExitCode."
+        }
+        $passMarker = 'V25_FIRMWARE PASS: genuine GA2 firmware wrote wake-up, table, and stack state'
+        if (-not ($runOutput | Where-Object { $_.Contains($passMarker) })) {
+            throw 'V25 firmware simulation completion marker is missing.'
+        }
+
+        Write-Output 'V25_ROM_CACHE RUNNER: PASS'
+        Write-Output 'V25_INTERNAL_DATA RUNNER: PASS'
+        Write-Output 'V25_FIRMWARE WAKE: PASS'
+        Write-Output 'V25_FIRMWARE TABLE: PASS'
+        Write-Output 'V25_FIRMWARE RUNNER: PASS'
+    }
+    finally {
+        $env:PATH = $savedPath
+        $env:S32_VERILATOR_SAFE = $savedSafe
+        $env:S32_VERILATOR_SIM_SAFE = $savedSimSafe
+        $env:MODELSIM_BIN = $savedModelSim
+        $env:TMP = $savedTmp
+        $env:TEMP = $savedTemp
+        $env:S32_V25_BUILD_ONLY = $savedBuildOnly
+        $env:KEEP_BUILD = $savedKeepBuild
+        if ($validatedBuildDir -and (Test-Path -LiteralPath $buildDir)) {
+            Remove-Item -LiteralPath $buildDir -Recurse -Force
+        }
+        elseif ($buildDir -and (Test-Path -LiteralPath $buildDir)) {
+            Write-Warning "Retained unvalidated V25 firmware build directory: $buildDir"
+        }
+    }
+}
+else {
+    throw 'MSYS2 bash is required for the native Windows V25 firmware runner.'
 }
 

@@ -1,7 +1,7 @@
 package require ::quartus::project
 package require ::quartus::sta
 
-set revision "Arcade-SegaSystem32"
+set revision "s32"
 if {[llength $quartus(args)] > 0} {
     set revision [lindex $quartus(args) 0]
 }
@@ -53,7 +53,7 @@ create_timing_netlist
 read_sdc
 update_timing_netlist
 
-# These selectors intentionally mirror Arcade-SegaSystem32.sdc and name the
+# These selectors intentionally mirror s32.sdc and name the
 # dedicated game PLL hierarchy. Cardinality checks prevent a wildcard from
 # silently reporting an unrelated framework clock.
 set fast_clk [s32_exact_clock "game PLL outclk0 (clk_ram)" \

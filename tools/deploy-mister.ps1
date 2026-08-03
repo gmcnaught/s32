@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$MisterHost = $env:S32_MISTER_HOST,
-    [string]$Revision = "Arcade-SegaSystem32",
-    [string]$CoreName = "SegaS32",
+    [string]$Revision = "s32",
+    [string]$CoreName = "s32",
     [string]$RbfPath,
     [string]$MraPath,
     [string]$ReportRoot,

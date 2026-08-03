@@ -9,14 +9,26 @@ local mem = assert(cpu.spaces["program"])
 local svc = assert(machine.ioport.ports[":mainpcb:SERVICE12_A"])
 local coin = assert(svc.fields["Coin 1"])
 local start = assert(svc.fields["1 Player Start"])
-local coin3 = svc.fields["Coin 3"]
-local start3 = svc.fields["3 Players Start"]
 local video = machine.video
 
 local out = os.getenv("SONIC_TRACE_OUT") or
-  "/mnt/d/Arcade/AI/s32/scratch/mame_sonic/sonic_coin_start_trace.log"
+  "scratch/mame_sonic/sonic_coin_start_trace.log"
 local log = assert(io.open(out, "w"))
 local frame = 0
+local coin_at = tonumber(os.getenv("SONIC_COIN_AT")) or 900
+local coin_len = tonumber(os.getenv("SONIC_COIN_LEN")) or 30
+local start_at = tonumber(os.getenv("SONIC_START_AT")) or 960
+local start_len = tonumber(os.getenv("SONIC_START_LEN")) or 30
+local end_at = tonumber(os.getenv("SONIC_END_AT")) or 1400
+local landmarks = {
+  [coin_at - 50] = true,
+  [coin_at + coin_len] = true,
+  [start_at] = true,
+  [start_at + start_len] = true,
+  [1100] = true,
+  [1300] = true,
+  [end_at] = true,
+}
 
 local function pc()
   return cpu.state["PC"].value
@@ -47,17 +59,24 @@ end)
 
 _G.sonic_status_tap = mem:install_write_tap(
   0x20f06e, 0x20f0bf, "sonic_level_state", function(offset, data, mask)
-    emit("state-write", string.format("addr=%06x data=%04x mask=%04x", offset, data, mask))
+    if offset == 0x20f06e or offset == 0x20f0bc or offset == 0x20f0be then
+      emit("state-write", string.format(
+        "addr=%06x data=%04x mask=%04x", offset, data, mask))
+    end
 end)
 
 _G.sonic_credit_tap = mem:install_write_tap(
   0x20ac40, 0x20ac8f, "sonic_credit", function(offset, data, mask)
-    emit("credit-write", string.format("addr=%06x data=%04x mask=%04x", offset, data, mask))
+    if frame >= coin_at - 5 and frame <= start_at + start_len + 5 then
+      emit("credit-write", string.format(
+        "addr=%06x data=%04x mask=%04x", offset, data, mask))
+    end
 end)
 
 _G.sonic_input_tap = mem:install_read_tap(
   0xc00000, 0xc0001f, "sonic_io", function(offset, data, mask)
-    if data ~= 0xffff then
+    if data ~= 0xffff and
+        frame >= coin_at - 5 and frame <= start_at + start_len + 5 then
       emit("input-read", string.format("addr=%06x data=%04x mask=%04x", offset, data, mask))
     end
 end)
@@ -65,28 +84,24 @@ end)
 _G.sonic_driver = emu.add_machine_frame_notifier(function()
   frame = frame + 1
 
-  if frame >= 60 and frame < 90 then
+  if frame >= coin_at and frame < coin_at + coin_len then
     coin:set_value(1)
-    if coin3 then coin3:set_value(1) end
-  elseif frame == 90 then
+  elseif frame == coin_at + coin_len then
     coin:set_value(0)
-    if coin3 then coin3:set_value(0) end
   end
 
-  if frame >= 120 and frame < 150 then
+  if frame >= start_at and frame < start_at + start_len then
     start:set_value(1)
-    if start3 then start3:set_value(1) end
-  elseif frame == 150 then
+  elseif frame == start_at + start_len then
     start:set_value(0)
-    if start3 then start3:set_value(0) end
   end
 
-  if frame == 50 or frame == 90 or frame == 120 or frame == 150 or frame == 180 or frame == 220 then
+  if landmarks[frame] then
     emit("landmark", state_line())
     video:snapshot()
   end
 
-  if frame >= 220 then
+  if frame >= end_at then
     emit("done", state_line())
     manager.machine:exit()
   end

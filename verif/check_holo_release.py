@@ -6,14 +6,13 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
+qsf = (ROOT / "s32.qsf").read_text(encoding="utf-8")
 assert 'VERILOG_MACRO "S32_SYSTEM32_ONLY=1"' in qsf, "release is not System 32-only"
 # Per-game revisions own their feature macros. The shared QSF must not force
 # Golden Axe/V25 hardware into future Holo, Spider-Man, or other game builds.
-assert 'VERILOG_MACRO "S32_GA2_ONLY=1"' not in qsf, \
-    "shared QSF unexpectedly forces the Golden Axe profile"
 assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in qsf, \
     "shared QSF unexpectedly forces the V25 into every game core"
+assert 'VERILOG_MACRO "S32_PROFILE_STANDARD=1"' in qsf
 assert 'VERILOG_MACRO "S80X86_PSEUDO_286_INT=0"' in qsf, \
     "dormant V25 sources do not have a deterministic interrupt-mode parse option"
 
@@ -26,6 +25,7 @@ for path in (ROOT / "mra").glob("*.mra"):
 assert len(matches) == 1, f"expected exactly one Holo MRA, found {len(matches)}"
 path, tree = matches[0]
 root = tree.getroot()
+assert root.findtext("rbf") == "s32"
 assert root.findtext("name") == "Holosseum (US, Rev A)"
 rom = root.find("rom[@index='0']")
 assert rom is not None and rom.get("zip") is None

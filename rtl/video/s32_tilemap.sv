@@ -114,6 +114,15 @@ reg        [31:0] scale_xorigin, scale_yorigin;
 reg signed [33:0] scale_yprod, scale_xprod;
 reg               scale_flipx;
 
+// The reciprocal quotient is 23 bits, while the signed destination-center
+// offset is 11 bits.  Explicitly widen both operands before multiplying: an
+// unsized 11x23 expression is evaluated at the quotient width in some
+// simulators/synthesis front ends and drops the high 12.20 coordinate bits.
+wire signed [33:0] scale_xbase_ext = {{23{scale_xbase[10]}}, scale_xbase};
+wire signed [33:0] scale_ybase_ext = {{23{scale_ybase[10]}}, scale_ybase};
+wire signed [33:0] scale_xquot_ext = {11'b0, scale_xquot};
+wire signed [33:0] scale_yquot_ext = {11'b0, scale_yquot};
+
 s32_tilemap_scale_div scale_div (
     .clk(clk), .rst(rst), .start(scale_start),
     .yden(scale_zy), .xden(scale_zx),
@@ -284,8 +293,8 @@ always @(posedge clk) begin
         // Register the two DSP products before the final coordinate add so
         // neither operation spans the full 96 MHz cycle.
         T_SCALE: if (scale_done) begin
-            scale_yprod <= scale_ybase * $signed({1'b0, scale_yquot});
-            scale_xprod <= scale_xbase * $signed({1'b0, scale_xquot});
+            scale_yprod <= scale_ybase_ext * scale_yquot_ext;
+            scale_xprod <= scale_xbase_ext * scale_xquot_ext;
             xstep <= scale_flipx ? -$signed({9'b0, scale_xquot})
                                  :  $signed({9'b0, scale_xquot});
             tst <= T_SCALE_APPLY;
@@ -372,7 +381,15 @@ always @(posedge clk) begin
         T_EMIT: begin
             logic [3:0] col;
             logic [3:0] pen;
+            logic       opaque_tile;
             col = srcx[3:0] ^ {4{name[14]}};
+            // $1FF8E[8+bgnum] makes pen 0 opaque for the corresponding NBG.
+            // MAME carries this flag through both the zoom and rowscroll
+            // renderers; it is a tile property for the mixer, not a layer
+            // enable.  Keeping the name/palette bits even for pen 0 lets the
+            // priority mixer place the opaque tile above the backdrop while
+            // still leaving sprites/text to win by their normal ranks.
+            opaque_tile = (lay < 3'd4) && r1ff8e[8 + lay];
             // 4bpp packed msb-first per 16px row (bgcharlayout nibble order)
             // bgcharlayout x-offsets {0,4,16,20,8,12,24,28,...}: column ->
             // nibble index swaps the middle bits; even nibble = high half of
@@ -387,7 +404,7 @@ always @(posedge clk) begin
             lb_x     <= x[8:0];
             // clip window: $1FF02 bit (11+bg) enable / (6+bg) clip-out;
             // $1FF06 nibble bg selects rects 0-3
-            lb_pix   <= {(|pen) && clip_vis(x[8:0], line,
+            lb_pix   <= {(opaque_tile || (|pen)) && clip_vis(x[8:0], line,
                             r1ff02[4'd11 + {1'b0, lay}],
                             r1ff02[4'd6  + {1'b0, lay}],
                             {1'b0, r1ff06[{lay[1:0], 2'b00} +: 4]}),

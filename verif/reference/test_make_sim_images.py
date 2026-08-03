@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import zlib
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +43,28 @@ def write_split_mra(path: Path) -> None:
 
 
 class MakeSimImagesPatchTests(unittest.TestCase):
+
+    def test_additional_rom_source_supplies_parent_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            clone = temp / "clone"
+            parent = temp / "parent"
+            clone.mkdir()
+            parent.mkdir()
+            data = bytes.fromhex("DE AD BE EF")
+            (parent / "parent_sound.bin").write_bytes(data)
+            crc = format(zlib.crc32(data) & 0xffffffff, "08x")
+            mra = temp / "fallback.mra"
+            mra.write_text(
+                "<misterromdescription>"
+                f'<rom index="0"><part name="clone_sound.bin" crc="{crc}"/></rom>'
+                "</misterromdescription>",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                make_sim_images.build_stream(mra, [clone, parent]),
+                data,
+            )
 
     def test_patch_uses_complete_download_stream_offset(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

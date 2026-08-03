@@ -309,6 +309,44 @@ initial begin
     wait_done;
     cpu_write(16'hff98, 16'h0000);
 
+    // Fractional scroll changes the fixed-point sample before integer
+    // truncation.  At zoom 0x180, a 0.75-pixel X fraction makes destination
+    // x=1 sample source x=2 instead of source x=1.
+    cpu_write(16'hffa8, 16'h0180);
+    cpu_write(16'hff88, 16'hc000);
+    start_render;
+    expect_first_pixel(3'd1, 14'h2001);
+    expect_pixel(3'd1, 9'd1, 14'h2005);
+    wait_done;
+    cpu_write(16'hffa8, 16'h0200);
+    cpu_write(16'hff88, 16'h0000);
+
+    // A zoomed destination center uses the full signed 10-bit offset.  With
+    // offsx=$200, zoom 0x180, the correct center is -512 and x=0 reaches
+    // source x=682 (page 1, column 10 within the page), rather than source x=0 from a
+    // neutral-zoom 9-bit sign extension.
+    cpu_write(16'hff80, 16'h0000);
+    cpu_write(16'hffa8, 16'h0180);
+    cpu_write(16'hff98, 16'h0200);
+    cpu_write(16'hffa0, 16'h0100); // NBG0 low page 0, high page 1
+    cpu_write(16'h020a, 16'h0001); // page 1, row 0, column 10
+    start_render;
+    expect_first_request(19'h00010); // fetched tile code 1 from page 1
+    wait_done;
+    cpu_write(16'hffa8, 16'h0200);
+    cpu_write(16'hff98, 16'h0000);
+    cpu_write(16'hffa0, 16'h0000);
+
+    // $1FF8E[8] makes NBG0 pen 0 opaque without changing its tile data.
+    // The test tile's final pixel is pen 0, so the mixer-visible flag must be
+    // set while the palette/name payload remains present.
+    cpu_write(16'hffc7, 16'h0100);
+    start_render;
+    expect_first_pixel(3'd1, 14'h2001);
+    expect_pixel(3'd1, 9'd15, 14'h2000);
+    wait_done;
+    cpu_write(16'hffc7, 16'h0000);
+
     // TEXT name and glyph are two distinct synchronous VRAM reads. Reproduce
     // Golden Axe's captured $1FF5C=$01F7: page $1F and character bank 7.
     cpu_write(16'h7800, 16'h0401); // wrong page $0F name

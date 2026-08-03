@@ -78,7 +78,7 @@ def decode_json_output(output: str) -> dict[str, object]:
 class SyntheticQuartusProject:
     """Minimal report fixture accepted by tools/report-quartus.ps1."""
 
-    revision = "s32GoldenAxe"
+    revision = "s32v25"
     seed = 2
 
     def __init__(self) -> None:
@@ -339,41 +339,12 @@ class PreflightValidationTests(unittest.TestCase):
             result = run_powershell_file(
                 TOOLS / "build-preflight.ps1",
                 ("-ProjectRoot", str(root), "-QuartusRoot", str(quartus_root),
-                 "-Project", "s32GoldenAxe", "-Revision", "s32GoldenAxe",
-                 "-ReleaseName", "s32GoldenAxe", "-FitSeeds", "2 crash",
+                 "-Project", "s32v25", "-Revision", "s32v25",
+                 "-ReleaseName", "s32v25", "-FitSeeds", "2 crash",
                  "-MapRetries", "2", "-FitRetries", "2", "-ResumeFit", "0"),
             )
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn("Invalid fitter seed 'crash'", result.stdout)
-
-@unittest.skipUnless(POWERSHELL, "PowerShell is required")
-class GoldenAxeSyncTests(unittest.TestCase):
-    def test_existing_qsf_is_atomically_replaced_and_idempotent(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="s32-sync-") as temporary:
-            root = Path(temporary)
-            tools = root / "tools"
-            tools.mkdir()
-            script = tools / "sync-goldenaxe-qsf.ps1"
-            shutil.copy2(TOOLS / script.name, script)
-            common = root / "Arcade-SegaSystem32.qsf"
-            goldenaxe = root / "s32GoldenAxe.qsf"
-            common.write_text(
-                "set_global_assignment -name FAMILY CycloneV\n", encoding="utf-8"
-            )
-            goldenaxe.write_text("stale generated content\n", encoding="utf-8")
-
-            first = run_powershell_file(script)
-            self.assertEqual(first.returncode, 0, first.stdout)
-            generated = goldenaxe.read_text(encoding="utf-8")
-            self.assertTrue(generated.startswith(common.read_text(encoding="utf-8")))
-            self.assertIn("S32_JT12_MLAB_SHIFTS=1", generated)
-            self.assertIn("S32_V25_MLAB_FIFO=1", generated)
-            self.assertEqual(list(root.glob(".s32GoldenAxe.qsf.*")), [])
-
-            second = run_powershell_file(script)
-            self.assertEqual(second.returncode, 0, second.stdout)
-            self.assertEqual(goldenaxe.read_text(encoding="utf-8"), generated)
-            self.assertIn("is current", second.stdout)
 
 @unittest.skipUnless(POWERSHELL, "PowerShell is required")
 class PowerShellSyntaxTests(unittest.TestCase):
@@ -387,9 +358,9 @@ class PowerShellSyntaxTests(unittest.TestCase):
             "invoke-build-locked.ps1",
             "report-quartus.ps1",
             "sha256.ps1",
-            "sync-goldenaxe-qsf.ps1",
             "deploy-mister.ps1",
-            "deploy-goldenaxe.ps1",
+            "deploy-s32.ps1",
+            "deploy-s32v25.ps1",
         )
         for name in names:
             with self.subTest(script=name):
@@ -446,10 +417,12 @@ class BatchPipelineSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.build = (TOOLS / "build.bat").read_text(encoding="utf-8")
-        cls.goldenaxe = (TOOLS / "build-goldenaxe.bat").read_text(encoding="utf-8")
+        cls.standard = (TOOLS / "build-s32.bat").read_text(encoding="utf-8")
+        cls.v25 = (TOOLS / "build-s32v25.bat").read_text(encoding="utf-8")
 
     def test_windows_batch_files_use_crlf_for_reliable_label_scanning(self) -> None:
-        for path in (TOOLS / "build.bat", TOOLS / "build-goldenaxe.bat"):
+        for path in (TOOLS / "build.bat", TOOLS / "build-s32.bat",
+                     TOOLS / "build-s32v25.bat"):
             data = path.read_bytes()
             self.assertNotIn(b"\n", data.replace(b"\r\n", b""), path.name)
 
@@ -457,17 +430,16 @@ class BatchPipelineSafetyTests(unittest.TestCase):
     def test_negative_native_exit_codes_cannot_fall_through(self) -> None:
         for name, content in (
             ("build.bat", self.build),
-            ("build-goldenaxe.bat", self.goldenaxe),
+            ("build-s32.bat", self.standard),
+            ("build-s32v25.bat", self.v25),
         ):
             with self.subTest(script=name):
                 self.assertNotRegex(content, r"(?im)^\s*if\s+errorlevel\s+1\b")
 
-    def test_goldenaxe_takes_lock_before_syncing_generated_qsf(self) -> None:
-        lock = self.goldenaxe.lower().find("invoke-build-locked.ps1")
-        sync = self.goldenaxe.lower().find("sync-goldenaxe-qsf.ps1")
-        self.assertGreaterEqual(lock, 0)
-        self.assertGreater(sync, lock)
-        self.assertIn("s32_build_lock_token", self.goldenaxe.lower())
+    def test_profile_wrappers_take_the_build_lock(self) -> None:
+        for wrapper in (self.standard, self.v25):
+            self.assertIn("invoke-build-locked.ps1", wrapper.lower())
+            self.assertIn("s32_build_lock_token", wrapper.lower())
 
     def test_primary_seed_is_two_and_configuration_is_preflighted(self) -> None:
         self.assertRegex(
@@ -483,10 +455,10 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         self.assertIn("build-stage-release.ps1", lowered)
         self.assertIn("build-seed-state.ps1", lowered)
 
-    def test_goldenaxe_sync_enables_resource_saving_macros(self) -> None:
-        sync = (TOOLS / "sync-goldenaxe-qsf.ps1").read_text(encoding="utf-8")
-        self.assertIn("S32_JT12_MLAB_SHIFTS=1", sync)
-        self.assertIn("S32_V25_MLAB_FIFO=1", sync)
+    def test_v25_qsf_enables_resource_saving_macros(self) -> None:
+        qsf = (REPO_ROOT / "s32v25.qsf").read_text(encoding="utf-8")
+        self.assertIn("S32_JT12_MLAB_SHIFTS=1", qsf)
+        self.assertIn("S32_V25_MLAB_FIFO=1", qsf)
 
     def test_timing_qualification_precedes_assembly(self) -> None:
         seed_body = self.build.lower().split(":try_seed", maxsplit=1)[1]
@@ -498,23 +470,14 @@ class BatchPipelineSafetyTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt" and POWERSHELL, "Windows PowerShell required")
 class LockWrapperTests(unittest.TestCase):
-    def test_goldenaxe_wrapper_locks_then_syncs_and_preserves_build_exit(self) -> None:
+    def test_v25_wrapper_locks_and_preserves_build_exit(self) -> None:
         with tempfile.TemporaryDirectory(prefix="s32-ga-wrapper-") as temporary:
             root = Path(temporary)
             tools = root / "tools"
             tools.mkdir()
-            for name in ("build-goldenaxe.bat", "invoke-build-locked.ps1"):
+            for name in ("build-s32v25.bat", "invoke-build-locked.ps1"):
                 shutil.copy2(TOOLS / name, tools / name)
-
-            (tools / "sync-goldenaxe-qsf.ps1").write_text(
-                "$root = Split-Path -Parent $PSScriptRoot\n"
-                "$path = Join-Path $root 'order.txt'\n"
-                "[IO.File]::AppendAllText($path, 'sync' + [Environment]::NewLine, "
-                "[Text.UTF8Encoding]::new($false))\n"
-                "exit 0\n",
-                encoding="utf-8",
-            )
-            (tools / "build.bat").write_text(
+            (tools / "build-incremental.bat").write_text(
                 "@echo off\r\n"
                 ">>\"%~dp0..\\order.txt\" echo build\r\n"
                 "if /I not \"%S32_BUILD_LOCK_HELD%\"==\"1\" exit /b 88\r\n"
@@ -536,7 +499,7 @@ class LockWrapperTests(unittest.TestCase):
                 # stays on tools because the wrapper resolves its siblings
                 # relative to %~dp0 and writes ..\order.txt.
                 [env.get("ComSpec", "cmd.exe"), "/d", "/c",
-                 str(tools / "build-goldenaxe.bat")],
+                 str(tools / "build-s32v25.bat")],
                 cwd=tools,
                 env=env,
                 text=True,
@@ -547,7 +510,7 @@ class LockWrapperTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 73, result.stdout)
             order = (root / "order.txt").read_text(encoding="utf-8").splitlines()
-            self.assertEqual(order, ["sync", "build"])
+            self.assertEqual(order, ["build"])
 
     def test_lock_wrapper_preserves_child_exit_and_persistent_log(self) -> None:
         with tempfile.TemporaryDirectory(prefix="s32-lock-probe-") as temporary:
@@ -588,7 +551,8 @@ class CIWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("check_ga2_release.py", lowered)
         self.assertIn("check_holo_release.py", lowered)
         self.assertIn("bash -n tools/build.sh", lowered)
-        self.assertIn("build-goldenaxe.bat", lowered)
+        self.assertIn("build-s32.bat", lowered)
+        self.assertIn("build-s32v25.bat", lowered)
         self.assertNotIn("docker run", lowered)
         self.assertNotIn("bash tools/build.sh", lowered)
         self.assertNotIn("upload-artifact", lowered)
@@ -599,7 +563,7 @@ class DeprecatedEntrypointTests(unittest.TestCase):
     def assert_actionable_failure(result: subprocess.CompletedProcess[str]) -> None:
         assert result.returncode != 0, result.stdout
         output = result.stdout.lower()
-        assert "build-goldenaxe.bat" in output, result.stdout
+        assert "build-s32.bat" in output, result.stdout
         assert r"d:\q17" in output, result.stdout
 
     @unittest.skipUnless(POWERSHELL, "PowerShell is required")
@@ -621,6 +585,8 @@ class DeprecatedEntrypointTests(unittest.TestCase):
             timeout=15,
             check=False,
         )
+        if "access is denied" in result.stdout.replace("\x00", "").lower():
+            self.skipTest("the installed bash/WSL launcher is not usable")
         self.assert_actionable_failure(result)
 
     def test_legacy_python_qualifier_cannot_approve_an_rbf(self) -> None:

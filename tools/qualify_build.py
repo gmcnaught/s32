@@ -10,7 +10,7 @@ def main() -> int:
     print(
         "ERROR: tools/qualify_build.py is disabled. This legacy qualifier does "
         "not implement the locked input-manifest and exact stage-chain gates. "
-        r"Use set QUARTUS_ROOT=D:\Q17 then tools\build-goldenaxe.bat; "
+        r"Use set QUARTUS_ROOT=D:\Q17 then tools\build-s32.bat or tools\build-s32v25.bat; "
         "deployment rechecks tools/report-quartus.ps1.",
         file=sys.stderr,
     )

@@ -62,9 +62,10 @@ class MraDescriptorExtractionTests(unittest.TestCase):
             with self.subTest(set=setname):
                 desc = _mra_descriptor(path)
                 self.assertEqual(len(desc), 0x40, path.name)
-                # Bytes 4..63 are reserved and must stay zero: the loader only
-                # inspects the first 16 and a future field would land there.
-                self.assertEqual(desc[4:], bytes(0x3C), path.name)
+                # Byte 4 carries the player-port layout; bytes 5..63 remain
+                # reserved and must stay zero.
+                self.assertEqual(desc[4] & ~0x03, 0, path.name)
+                self.assertEqual(desc[5:], bytes(0x3B), path.name)
 
     def test_make_sim_images_reproduces_the_shipped_descriptor(self) -> None:
         """The staging tool must not transform the descriptor on its way in."""

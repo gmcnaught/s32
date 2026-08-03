@@ -43,15 +43,13 @@ module tb_core_lint;
         if (core.is_multi32 !== 1'b0)   $fatal(1, "System32 profile accepted Multi 32 mode");
         #1;
         if (core.rgb_b !== core.rgb_a)  $fatal(1, "System32 Screen B output does not mirror A");
-`ifdef S32_HOLO_ONLY
-        if (core.GAME_ONLY !== 1'b1) $fatal(1, "Holosseum release pruning not enabled");
-        $display("CORE HOLO PROFILE LINT PASS");
-`elsif S32_JPARK_ONLY
-        if (core.GAME_ONLY !== 1'b1) $fatal(1, "Jurassic Park release pruning not enabled");
-        $display("CORE JPARK PROFILE LINT PASS");
-`elsif S32_ALIEN3_ONLY
-        if (core.GAME_ONLY !== 1'b1) $fatal(1, "Alien 3 release pruning not enabled");
-        $display("CORE ALIEN3 PROFILE LINT PASS");
+`ifdef S32_PROFILE_V25
+        if (core.GAME_ONLY !== 1'b1) $fatal(1, "V25 profile pruning not enabled");
+        if (core.cfg_has_v25 !== 1'b1) $fatal(1, "V25 profile omitted V25 hardware");
+        $display("CORE V25 PROFILE LINT PASS");
+`elsif S32_PROFILE_STANDARD
+        if (core.cfg_has_v25 !== 1'b0) $fatal(1, "standard profile retained V25 hardware");
+        $display("CORE STANDARD PROFILE LINT PASS");
 `else
         $display("CORE S32-ONLY LINT PASS");
 `endif

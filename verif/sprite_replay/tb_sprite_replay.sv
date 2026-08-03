@@ -73,6 +73,7 @@ end
 
 s32_sprite #(.VERIFY_SROM(1'b1)) dut (
     .clk(clk), .rst(rst), .is_multi32(1'b0), .retain_previous(1'b0),
+    .verify_srom(1'b1),
     .srom_bank_mask(sprite_bank_mask[1:0]),
     .present(vblank), .vblank(vblank), .rendering(rendering),
     .debug_first_rom_desc(), .debug_first_rom_valid(),

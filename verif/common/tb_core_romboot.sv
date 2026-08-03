@@ -1417,15 +1417,13 @@ always @(posedge clk_sys) begin
             $display("[dual] f=%0d pc=%08x W A=%06x bus=%04x be=%b comm0=%04x written0=%0d phase=%0d heartbeat=%0d",
                 cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_wdata, core.m_be,
                 core.g_dualpcb.dual.comm[0], core.g_dualpcb.dual.comm_written[0],
-                core.g_dualpcb.dual.partner_phase,
-                core.g_dualpcb.dual.partner_heartbeat);
+                0, 0);
         else
             $display("[dual] f=%0d pc=%08x R A=%06x bus=%04x dualq=%04x rmux=%04x be=%b rdwait=%0d ack=%0d comm0=%04x written0=%0d phase=%0d heartbeat=%0d",
                 cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_rdata,
                 core.dual_q, core.rmux, core.m_be, core.rd_wait, core.ack_r,
                 core.g_dualpcb.dual.comm[0], core.g_dualpcb.dual.comm_written[0],
-                core.g_dualpcb.dual.partner_phase,
-                core.g_dualpcb.dual.partner_heartbeat);
+                0, 0);
     end
 end
 

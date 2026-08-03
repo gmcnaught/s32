@@ -34,9 +34,7 @@ wire signed [19:0] mp_r_w  = {{4{mp_r[15]}},  mp_r};
 // multipcm add_route(1,"sleft") / add_route(0,"sright") — stream 1 -> left,
 // stream 0 -> right — the same cross as the YM).  mp channels were previously
 // routed straight, mirroring the MultiPCM stereo image on Multi 32.
-`ifdef S32_V25_GAME_ONLY
-`define S32_FIXED_SYSTEM32_AUDIO
-`elsif S32_ALIEN3_ONLY
+`ifdef S32_SYSTEM32_ONLY
 `define S32_FIXED_SYSTEM32_AUDIO
 `endif
 `ifdef S32_FIXED_SYSTEM32_AUDIO

@@ -499,6 +499,11 @@ reg [15:0] tm_pages [0:7];
 reg [15:0] tm_zoomx [0:1], tm_zoomy [0:1];
 reg [15:0] tm_clips [0:19];
 reg [15:0] tm_clips_cdc [0:19];
+// The tile renderer snapshots controls for the line in the opposite parity
+// bank.  The mixer must use the matching snapshot for the line currently
+// being scanned; using tilemap.layer_off directly lets a mid-frame register
+// write gate the previous line with the next line's state.
+reg  [5:0] tm_layer_off_bank [0:1];
 reg  [8:0] mix_disp_x_cdc;
 reg [15:0] mix_bg_ctrl;
 integer tm_init_i;
@@ -525,6 +530,8 @@ initial begin
         tm_clips[tm_init_i] = 0;
         tm_clips_cdc[tm_init_i] = 0;
     end
+    tm_layer_off_bank[0] = 6'b111111;
+    tm_layer_off_bank[1] = 6'b111111;
     mix_disp_x_cdc = 0;
 end
 
@@ -589,6 +596,14 @@ always @(posedge clk_ram) begin
         tm_r1ff5c <= r1ff5c; tm_r1ff5e <= r1ff5e;
         tm_r1ff88 <= r1ff88; tm_r1ff8a <= r1ff8a;
         tm_r1ff8c <= r1ff8c; tm_r1ff8e <= r1ff8e;
+        tm_layer_off_bank[tm_lb_bank] <= {
+            r1ff02[5] | r1ff8e[5],
+            r1ff02[3] | r1ff8e[4] | r1ff00[13],
+            r1ff02[2] | r1ff8e[3] | r1ff00[12],
+            r1ff02[1] | r1ff8e[2],
+            r1ff02[0] | r1ff8e[1],
+            r1ff02[4] | r1ff8e[0]
+        };
         for (tm_cap_i = 0; tm_cap_i < 4; tm_cap_i = tm_cap_i + 1) begin
             tm_scrollx[tm_cap_i] <= w_scrollx[tm_cap_i];
             tm_scrolly[tm_cap_i] <= w_scrolly[tm_cap_i];
@@ -609,6 +624,7 @@ always @(posedge clk_ram) begin
 end
 
 wire [5:0] tm_layer_off;
+wire [5:0] tm_layer_off_disp = tm_layer_off_bank[vcnt[0]];
 wire [21:3] tile_rom_addr;
 s32_tilemap tilemap (
     .clk(clk_ram), .rst(rst),
@@ -826,7 +842,7 @@ s32_mixer mix0 (
     .reg_addr(A[6:1]), .reg_wdata(m_wdata), .reg_be(m_be),
     .reg_rdata(mix0_q), .reg_raddr(A[6:1]), .reg_r4e(mix0_r4e),
     .disp_x(mix_disp_x), .disp_y(vcnt), .disp_active(~hb & ~vb),
-    .display_en(io0_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off), .bg_ctrl(mix_bg_ctrl),
+    .display_en(io0_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off_disp), .bg_ctrl(mix_bg_ctrl),
     .px_text(mix_px_text), .px_nbg0(mix_px_nbg0),
     .px_nbg1(mix_px_nbg1), .px_nbg2(mix_px_nbg2),
     .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),
@@ -865,7 +881,7 @@ generate
             .reg_addr(A[6:1]), .reg_wdata(m_wdata), .reg_be(m_be),
             .reg_rdata(mix1_q), .reg_raddr(A[6:1]), .reg_r4e(mix1_r4e),
             .disp_x(mix_disp_x), .disp_y(vcnt), .disp_active(~hb & ~vb),
-            .display_en(io1_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off), .bg_ctrl(mix_bg_ctrl),
+            .display_en(io1_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off_disp), .bg_ctrl(mix_bg_ctrl),
             .px_text(mix_px_text), .px_nbg0(mix_px_nbg0),
             .px_nbg1(mix_px_nbg1), .px_nbg2(mix_px_nbg2),
             .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),

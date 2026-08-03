@@ -1,46 +1,40 @@
 #!/usr/bin/env python3
-"""Static contract for the dedicated Arabian Fight release profile."""
+"""Static contract for Arabian Fight in the universal V25 profile."""
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-common_qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
-arabian_qsf = (ROOT / "s32ArabianFight.qsf").read_text(encoding="utf-8")
-assert 'VERILOG_MACRO "S32_JPARK_ONLY=1"' not in arabian_qsf, \
-    "Arabian Fight revision inherited the unrelated gun-game profile"
+standard_qsf = (ROOT / "s32.qsf").read_text(encoding="utf-8")
+v25_qsf = (ROOT / "s32v25.qsf").read_text(encoding="utf-8")
 for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
     'FITTER_EFFORT "FAST FIT"',
-    "SEED 1",
+    "SEED 2",
     "ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF",
     "PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF",
-    "NUM_PARALLEL_PROCESSORS 6",
+    "NUM_PARALLEL_PROCESSORS 8",
 ):
-    assert f"set_global_assignment -name {assignment}" in arabian_qsf, \
-        f"Arabian Fight revision is missing required Quartus setting {assignment}"
-for macro in (
-    "S32_ARABFIGHT_ONLY=1",
-    "S32_V25_GAME_ONLY=1",
-    "S32_REAL_V25=1",
-    "S32_V60_NO_FP=1",
-    "S32_RELEASE_MINIMAL=1",
-    "S32_JT12_MLAB_SHIFTS=1",
-    "S32_V25_MLAB_FIFO=1",
-    "MISTER_DISABLE_SHADOWMASK=1",
-):
-    assert f'VERILOG_MACRO "{macro}"' in arabian_qsf, \
-        f"Arabian Fight revision is missing {macro}"
-    assert f'VERILOG_MACRO "{macro}"' not in common_qsf, \
-        f"shared QSF unexpectedly forces {macro}"
+    assert f"set_global_assignment -name {assignment}" in v25_qsf, \
+        f"V25 revision is missing required Quartus setting {assignment}"
+for macro in ("S32_PROFILE_V25=1", "S32_REAL_V25=1",
+              "S32_V60_NO_FP=1", "S32_V25_MLAB_FIFO=1",
+              "MISTER_DISABLE_SHADOWMASK=1"):
+    assert f'VERILOG_MACRO "{macro}"' in v25_qsf, \
+        f"V25 revision is missing {macro}"
+    assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
+        f"standard QSF unexpectedly forces {macro}"
+for macro in ("S32_RELEASE_MINIMAL=1", "S32_JT12_MLAB_SHIFTS=1"):
+    assert f'VERILOG_MACRO "{macro}"' in v25_qsf
+    assert f'VERILOG_MACRO "{macro}"' in standard_qsf
 
 top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
-assert "wire [15:0] cpu_ce_inc = 16'd32768;" in top, \
-    "Arabian Fight fixed clk_sys/2 V60 cadence is missing"
+assert "active_board.v25_table ? 16'd32768 : 16'd21848" in top, \
+    "descriptor-selected V25 game cadence is missing"
 
 matches = []
 for path in (ROOT / "mra").glob("Arabian Fight (*.mra"):
@@ -49,8 +43,8 @@ for path in (ROOT / "mra").glob("Arabian Fight (*.mra"):
 
 assert len(matches) == 3, f"expected three Arabian Fight MRAs, found {len(matches)}"
 for path, root in matches:
-    assert root.findtext("rbf") == "s32ArabianFight", \
-        f"{path.name} must load s32ArabianFight.rbf"
+    assert root.findtext("rbf") == "s32v25", \
+        f"{path.name} must load s32v25.rbf"
 
     rom = root.find("rom[@index='0']")
     assert rom is not None and rom.get("zip") is None

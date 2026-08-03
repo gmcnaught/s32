@@ -3,18 +3,29 @@
 set -eu
 
 cd "$(dirname "$0")/../.."
+VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
+VERILATOR_SIM_SAFE="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
+if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
+   [ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]; then
+  VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
+fi
+if ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
+   [ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]; then
+  VERILATOR_SIM_SAFE=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
+fi
 
 run_test() {
     top="$1"
     marker="$2"
     mdir="/tmp/${top}"
     rm -rf "$mdir"
-    verilator --binary --timing -Wno-fatal \
+    "$VERILATOR_SAFE" status
+    "$VERILATOR_SAFE" --binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4 -Wno-fatal \
         --top-module "$top" --Mdir "$mdir" \
         rtl/cpu/v60/s32_v60.sv \
         rtl/cpu/v60/s32_v60_bus.sv \
         "verif/v60/${top}.sv"
-    "$mdir/V${top}" | grep -q "$marker"
+    "$VERILATOR_SIM_SAFE" -- "$mdir/V${top}" | grep -q "$marker"
     echo "$top: PASS"
 }
 

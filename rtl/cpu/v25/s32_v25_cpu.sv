@@ -266,7 +266,7 @@ wire [15:3] cache_rom_addr;
 wire [63:0] cache_rom_data;
 wire        cache_rom_ack;
 
-`ifdef S32_V25_GAME_ONLY
+`ifdef S32_PROFILE_V25
 s32_v25_rom_line_buffer program_cache (
 `else
 s32_v25_rom_cache program_cache (

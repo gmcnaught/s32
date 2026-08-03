@@ -1,5 +1,25 @@
 # MAME reference captures
 
+## Generic frame captures and image comparison
+
+For a bounded no-input capture, use `capture_frames.lua` with MAME's native
+snapshot options. `S32_MAME_FRAMES` is a comma-separated emulated-frame list;
+the Lua script exits after the final requested frame. For example:
+
+```powershell
+$env:S32_MAME_FRAMES = "80,85,90"
+$env:S32_MAME_TRACE = "D:\\Arcade\\AI\\s32\\scratch\\mame_frames.log"
+mame svf -rompath D:\\Arcade\\AI\\s32\\roms -video none -sound none `
+  -autoboot_script D:\\Arcade\\AI\\s32\\verif\\mame\\capture_frames.lua `
+  -snapshot_directory D:\\Arcade\\AI\\s32\\scratch\\mame_frames `
+  -snapname svf-%i
+```
+
+`compare_sonic_frame.py` is also used for the generic 320x224 System 32
+captures. It accepts the Verilator 416-wide image when the rightmost 96 pixels
+are all black, and `--y-offset` records a measured vertical capture offset.
+The retained Holo comparison uses `--y-offset -1` and is an exact RGB match.
+
 ## Holosseum
 
 `capture_holo_reference.ps1` runs the verified local `holo` ROM set in stock

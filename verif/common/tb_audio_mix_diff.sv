@@ -123,7 +123,7 @@ initial begin
     ref_multi32 = 1'b0;
     set_all(16'sd0);
 
-`ifdef S32_GOLDENAXE_ONLY
+`ifdef S32_SYSTEM32_ONLY
     // Prove the RTL shift/add implementation against the language's signed
     // division semantics for every possible 20-bit input, including -2^19.
     begin : exhaustive_div10
@@ -146,7 +146,7 @@ initial begin
 
     for (mode = 0; mode < 2; mode = mode + 1) begin
         dut_multi32 = mode[0];
-`ifdef S32_GOLDENAXE_ONLY
+`ifdef S32_SYSTEM32_ONLY
         // The dedicated profile is physically System 32 and must have no
         // runtime Multi 32 route/divisor cone, even if this unused port toggles.
         ref_multi32 = 1'b0;

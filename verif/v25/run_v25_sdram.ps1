@@ -8,7 +8,9 @@ if (-not $wslRoot) {
     throw 'Could not translate the repository path for WSL.'
 }
 
-& wsl bash "$wslRoot/verif/v25/run_v25_sdram.sh"
+$safe = '/mnt/c/Users/meath/bin/verilator-safe.exe'
+$simSafe = '/mnt/c/Users/meath/bin/verilator-sim-safe.exe'
+& wsl env "S32_VERILATOR_SAFE=$safe" "S32_VERILATOR_SIM_SAFE=$simSafe" bash "$wslRoot/verif/v25/run_v25_sdram.sh"
 if ($LASTEXITCODE -ne 0) {
     throw "V25 real-SDRAM integration test failed with exit code $LASTEXITCODE."
 }

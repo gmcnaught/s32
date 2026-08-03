@@ -3,7 +3,8 @@
   <setname>radr</setname>
   <year>1991</year>
   <manufacturer>Sega</manufacturer>
-  <rbf>SegaS32</rbf>
+  <rbf>s32</rbf>
+  <buttons names="Gear Change,-,-,-,-,-,Start,Coin,Test,Service" default="A,Start,Select,R,L" count="1"/>
   <rom index="4" zip="radr.zip" md5="none">
     <part name="epr-14241.ic21" crc="59a5f63d"/>
     <part name="epr-14241.ic21" crc="59a5f63d"/>
@@ -59,6 +60,6 @@
   </rom>
   <nvram index="3" size="128"/>
   <rom index="0">
-    <part>08000081000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000</part>
+    <part>08908081000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000</part>
   </rom>
 </misterromdescription>

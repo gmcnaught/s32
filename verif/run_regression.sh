@@ -9,12 +9,12 @@ iverilog -g2012 -DSIMULATION -o /tmp/s32_lint \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
 vvp /tmp/s32_lint | grep -q "CORE UNIVERSAL LINT PASS" || { echo "CORE UNIVERSAL LINT: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_GA2_ONLY -o /tmp/s32_lint_s32 \
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING -o /tmp/s32_lint_s32 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
-vvp /tmp/s32_lint_s32 | grep -q "CORE S32-ONLY LINT PASS" && echo "CORE BUILD PROFILES: PASS" || { echo "CORE S32-ONLY LINT: FAIL"; exit 1; }
+vvp /tmp/s32_lint_s32 | grep -q "CORE STANDARD PROFILE LINT PASS" && echo "CORE BUILD PROFILES: PASS" || { echo "CORE STANDARD LINT: FAIL"; exit 1; }
 echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv
@@ -30,7 +30,7 @@ iverilog -g2012 -DSIMULATION -o /tmp/s32_boot \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_boot.sv
 vvp /tmp/s32_boot | grep -q "CORE BOOT PASS" || { echo "CORE UNIVERSAL BOOT: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_GA2_ONLY -o /tmp/s32_boot_s32 \
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING -o /tmp/s32_boot_s32 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
@@ -68,14 +68,14 @@ echo "[8/35] release contracts + exact dedicated-game profile boot/cache"
 python3 verif/check_holo_release.py | grep -q "HOLO RELEASE MRA PASS" || { echo "HOLO RELEASE MRA: FAIL"; exit 1; }
 python3 verif/check_ga2_release.py | grep -q "GA2 COMPAT MRA PASS" || { echo "GA2 COMPAT MRA: FAIL"; exit 1; }
 python3 verif/check_arabianfight_release.py | grep -q "ARABIAN FIGHT RELEASE PASS" || { echo "ARABIAN FIGHT RELEASE MRA: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -DS32_GOLDENAXE_ONLY -DS32_SYSTEM32_ONLY -DS32_GA2_ONLY \
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_V25 -DS32_PCB_TIMING \
   -DS32_V60_NO_FP -DS32_RELEASE_MINIMAL -o /tmp/s32_ga2 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_ga2path.sv
 vvp /tmp/s32_ga2 | grep -q "GA2 PATH PASS" && echo "GA2 PATH: PASS" || { echo "GA2 PATH: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -DS32_GOLDENAXE_ONLY -DS32_SYSTEM32_ONLY -DS32_GA2_ONLY \
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_V25 -DS32_PCB_TIMING \
   -DS32_V60_NO_FP -DS32_RELEASE_MINIMAL -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache \
   rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_ga_rom_cache.sv
 vvp /tmp/s32_ga_rom_cache | grep -q "PASS: Golden Axe ROM cache directed/reference tests passed" && \
@@ -113,13 +113,19 @@ echo "[17/35] ROM loader reset / mapping / completion gating"
 iverilog -g2012 -o /tmp/s32_rom_loader \
   rtl/s32_pkg.sv rtl/mem/s32_rom_loader.sv verif/common/tb_rom_loader.sv
 vvp /tmp/s32_rom_loader | grep -q "ROM LOADER PASS" && echo "ROM LOADER: PASS" || { echo "ROM LOADER: FAIL"; exit 1; }
-echo "[18/35] EEPROM persistence + radial analog-gun response"
+echo "[18/35] EEPROM persistence + radial analog-gun response + MAME 8255 direction/latch contract"
 iverilog -g2012 -o /tmp/s32_eeprom_nvram \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_eeprom_nvram.sv
 vvp /tmp/s32_eeprom_nvram | grep -q "EEPROM NVRAM PASS" && echo "EEPROM NVRAM: PASS" || { echo "EEPROM NVRAM: FAIL"; exit 1; }
 iverilog -g2012 -o /tmp/s32_gun_aim \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_gun_aim.sv
 vvp /tmp/s32_gun_aim | grep -q "GUN AIM PASS" && echo "GUN AIM: PASS" || { echo "GUN AIM: FAIL"; exit 1; }
+iverilog -g2012 -o /tmp/s32_i8255 \
+  rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_i8255.sv
+vvp /tmp/s32_i8255 | grep -q "I8255 MAME PASS" && echo "I8255 MAME: PASS" || { echo "I8255 MAME: FAIL"; exit 1; }
+iverilog -g2012 -s tb_brival_protection -o /tmp/s32_brival_protection \
+  rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_brival_protection.sv
+vvp /tmp/s32_brival_protection | grep -q "BRIVAL PROTECTION PASS" && echo "BRIVAL PROTECTION: PASS" || { echo "BRIVAL PROTECTION: FAIL"; exit 1; }
 echo "[19/35] V60 20-byte F1 / high fetch-buffer offset regression"
 iverilog -g2012 -o /tmp/s32_v60_long_ea \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_long_ea.sv
@@ -184,7 +190,7 @@ iverilog -g2012 -s tb_audio_mix_diff -o /tmp/s32_audio_mix_diff_generic \
   rtl/audio/s32_audio_mix.sv verif/common/tb_audio_mix_diff.sv
 vvp /tmp/s32_audio_mix_diff_generic | grep -q "PASS: audio mixer differential checks=20012" && \
   echo "AUDIO MIX DIFFERENTIAL (GENERIC): PASS" || { echo "AUDIO MIX DIFFERENTIAL (GENERIC): FAIL"; exit 1; }
-iverilog -g2012 -DS32_GOLDENAXE_ONLY -s tb_audio_mix_diff -o /tmp/s32_audio_mix_diff_ga \
+iverilog -g2012 -DS32_SYSTEM32_ONLY -s tb_audio_mix_diff -o /tmp/s32_audio_mix_diff_ga \
   rtl/audio/s32_audio_mix.sv verif/common/tb_audio_mix_diff.sv
 vvp /tmp/s32_audio_mix_diff_ga | grep -q "PASS: audio mixer differential checks=20012" && \
   echo "AUDIO MIX DIFFERENTIAL (GOLDEN AXE): PASS" || { echo "AUDIO MIX DIFFERENTIAL (GOLDEN AXE): FAIL"; exit 1; }
@@ -222,6 +228,16 @@ iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_map_decode.sv
 vvp /tmp/s32_core_map | grep -q "CORE MAP DECODE PASS" && echo "CORE MAP DECODE: PASS" || { echo "CORE MAP DECODE: FAIL"; exit 1; }
-echo "[35/35] real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
+echo "[35/37] MAME-backed uPD4701 trackball origin and per-byte latch semantics"
+iverilog -g2012 -s tb_upd4701_mame -o /tmp/s32_upd4701_mame \
+  rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_upd4701_mame.sv
+vvp /tmp/s32_upd4701_mame | grep -q "UPD4701 MAME PASS" && \
+  echo "UPD4701 MAME: PASS" || { echo "UPD4701 MAME: FAIL"; exit 1; }
+echo "[36/37] MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
+iverilog -g2012 -s tb_radm_msm6253 -o /tmp/s32_radm_msm6253 \
+  rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_radm_msm6253.sv
+vvp /tmp/s32_radm_msm6253 | grep -q "RAD MOBILE MSM6253 PASS" && \
+  echo "RAD MOBILE MSM6253: PASS" || { echo "RAD MOBILE MSM6253: FAIL"; exit 1; }
+echo "[37/37] real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
 bash verif/v25/run_v25_firmware.sh
-echo "SYSTEM 32 REGRESSION: PASS (35/35 tiers)"
+echo "SYSTEM 32 REGRESSION: PASS (37/37 tiers)"

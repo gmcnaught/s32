@@ -269,28 +269,6 @@ function automatic [4:0] seq_need(input [7:0] op);
     endcase
 endfunction
 
-// Bytes shifted out this step, capped at 4.  Kept at 4 for the same
-// timing-closure reason S_FILL is (see the note there): widening the fb[] input
-// mux from 5:1 to 9:1 risks the thin setup margin.
-wire [4:0] seq_s = (total_len >= 5'd4) ? 5'd4 : total_len;
-// The window may be shifted in place only when it is aligned on the retiring
-// instruction and still holds the successor's first byte -- the same condition
-// S_FILL uses to choose shifting over rebasing.  total_len==0 must not shift:
-// pc is unchanged, so S_FILL's aligned branch applies and clobbering fb_prev
-// would corrupt the loop cache.
-wire seq_shift_ok = SEQ_DISPATCH && (fb_base == pc)
-                    && (total_len != 5'd0) && (total_len < fb_valid);
-wire [4:0] seq_valid_after = fb_valid - total_len;   // decode-visible after shift
-// Dispatch straight to S_DECODE only when one 4-byte step aligns the window
-// (total_len<=4) AND the successor is already complete within it.
-wire seq_dispatch_now = seq_shift_ok && (total_len <= 5'd4)
-                        && (seq_valid_after >= seq_need(fb[total_len[2:0]]));
-// True in any cycle the main FSM shifts fb[] itself.  A prefetch ack landing in
-// such a cycle must be discarded: its append indexes off the pre-shift frontier
-// and would race the shift's own assignment to the same fb[] bytes.
-wire win_shift_now = (st == S_FILL && fb_base != pc)
-                     || (st == S_NEXT && seq_shift_ok);
-
 function automatic [31:0] fb32(input [4:0] o);
     fb32 = {fb[o+3], fb[o+2], fb[o+1], fb[o]};
 endfunction
@@ -443,6 +421,28 @@ typedef enum logic [6:0] {
 } st_t;
 
 st_t st, st_after_ea, st_after_fill;
+
+// Bytes shifted out this step, capped at 4.  Kept at 4 for the same
+// timing-closure reason S_FILL is (see the note there): widening the fb[] input
+// mux from 5:1 to 9:1 risks the thin setup margin.
+wire [4:0] seq_s = (total_len >= 5'd4) ? 5'd4 : total_len;
+// The window may be shifted in place only when it is aligned on the retiring
+// instruction and still holds the successor's first byte -- the same condition
+// S_FILL uses to choose shifting over rebasing.  total_len==0 must not shift:
+// pc is unchanged, so S_FILL's aligned branch applies and clobbering fb_prev
+// would corrupt the loop cache.
+wire seq_shift_ok = SEQ_DISPATCH && (fb_base == pc)
+                    && (total_len != 5'd0) && (total_len < fb_valid);
+wire [4:0] seq_valid_after = fb_valid - total_len;   // decode-visible after shift
+// Dispatch straight to S_DECODE only when one 4-byte step aligns the window
+// (total_len<=4) AND the successor is already complete within it.
+wire seq_dispatch_now = seq_shift_ok && (total_len <= 5'd4)
+                        && (seq_valid_after >= seq_need(fb[total_len[2:0]]));
+// True in any cycle the main FSM shifts fb[] itself.  A prefetch ack landing in
+// such a cycle must be discarded: its append indexes off the pre-shift frontier
+// and would race the shift's own assignment to the same fb[] bytes.
+wire win_shift_now = (st == S_FILL && fb_base != pc)
+                     || (st == S_NEXT && seq_shift_ok);
 
 // One restoring-division bit per enabled CPU clock.  The 33-bit trial value
 // is the only compare/subtract datapath used for all 64 dividend bits.

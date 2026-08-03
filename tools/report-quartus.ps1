@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$ProjectRoot = "",
-    [string]$Revision = "Arcade-SegaSystem32",
+    [string]$Revision = "s32",
     [int]$ExpectedSeed = -1,
     [string]$QuartusRoot = $env:QUARTUS_ROOT,
     [switch]$AsJson,

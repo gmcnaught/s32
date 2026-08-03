@@ -18,14 +18,24 @@ warnings=(
   -Wno-BLKANDNBLK -Wno-CASEINCOMPLETE -Wno-MULTIDRIVEN
   -Wno-INITIALDLY -Wno-DECLFILENAME -Wno-SYNCASYNCNET
 )
+verilator_safe="${VERILATOR_SAFE:-verilator-safe}"
+verilator_sim_safe="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
+if ! command -v "$verilator_safe" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
+  verilator_safe=/mnt/c/Users/meath/bin/verilator-safe.exe
+fi
+if ! command -v "$verilator_sim_safe" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
+  verilator_sim_safe=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
+fi
 
-# -j/--build-jobs are capped at 6, matching the Quartus NUM_PARALLEL_PROCESSORS
-# limit.  This was -j 0, which forks one compiler per core: 32 on this machine,
-# at up to ~1 GB each, and two concurrent builds exhaust the 64 GB.
-verilator --binary --timing -j 6 --build-jobs 6 --threads 1 "${warnings[@]}" \
+# The machine-wide safe launcher serializes model builds and limits both
+# Verilator generation and the C++ build.  This runner is part of the V25 gate.
+"$verilator_safe" status
+"$verilator_safe" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 "${warnings[@]}" \
   +define+SIMULATION +define+S32_REAL_FB_SIM \
-  +define+S32_SYSTEM32_ONLY +define+S32_GA2_ONLY \
-  +define+S32_GOLDENAXE_ONLY +define+S32_RELEASE_MINIMAL \
+  +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_V25 \
+  +define+S32_RELEASE_MINIMAL \
   +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
   "-DMICROCODE_ROM_PATH=\"$microcode\"" \
   --top-module tb_core_romboot --Mdir "$build_dir" -o romboot \
@@ -35,6 +45,6 @@ verilator --binary --timing -j 6 --build-jobs 6 --threads 1 "${warnings[@]}" \
 
 mkdir -p "$output_dir"
 cd "$output_dir"
-"$repo_root/$build_dir/romboot" \
+"$verilator_sim_safe" -- "$repo_root/$build_dir/romboot" \
   +IMG="$repo_root/roms/sim/ga2" +DESC="$repo_root/roms/sim/ga2/desc.txt" \
   +FRAMES="$frames" "$@"

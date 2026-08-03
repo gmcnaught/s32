@@ -23,7 +23,10 @@ for required in \
     fi
 done
 
-build_dir="$(mktemp -d "${TMPDIR:-/tmp}/s32-v25sdr.XXXXXX")"
+tmp_root="$repo_root/scratch/tmp"
+mkdir -p -- "$tmp_root"
+export TMP="$tmp_root" TEMP="$tmp_root" TMPDIR="$tmp_root"
+build_dir="$(mktemp -d "$tmp_root/s32-v25sdr.XXXXXX")"
 cleanup() {
     if [[ "${KEEP_BUILD:-0}" == "1" ]]; then
         echo "V25_SDRAM build retained at $build_dir"
@@ -36,15 +39,27 @@ trap cleanup EXIT
 start_seconds=$SECONDS
 mc="$repo_root/rtl/cpu/v25/s80x86/generated"
 video=$(ls rtl/video/*.sv | sort)
+safe_verilator="${S32_VERILATOR_SAFE:-verilator-safe}"
+safe_sim="${S32_VERILATOR_SIM_SAFE:-verilator-sim-safe}"
+if ! command -v "$safe_verilator" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
+  safe_verilator=/mnt/c/Users/meath/bin/verilator-safe.exe
+fi
+if ! command -v "$safe_sim" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
+  safe_sim=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
+fi
+"$safe_verilator" status
 
-verilator \
-    --binary --timing -Wall -Wno-fatal \
+"$safe_verilator" \
+    --binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4 \
+    -Wall -Wno-fatal \
     -Wno-WIDTH -Wno-UNSIGNED -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-UNDRIVEN \
     -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE -Wno-IMPLICIT \
     -Wno-SYNCASYNCNET -Wno-MULTIDRIVEN -Wno-BLKANDNBLK -Wno-CASEOVERLAP \
     -Wno-LATCH -Wno-COMBDLY \
-    +define+SIMULATION +define+S32_SYSTEM32_ONLY +define+S32_GA2_ONLY \
-    +define+S32_GOLDENAXE_ONLY +define+S32_RELEASE_MINIMAL \
+    +define+SIMULATION +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_V25 \
+    +define+S32_RELEASE_MINIMAL \
     +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
     "-DMICROCODE_ROM_PATH=\"$mc\"" \
     --top-module tb_core_v25sdram --Mdir "$build_dir/obj_dir" -o Vtb_core_v25sdram \
@@ -58,7 +73,7 @@ verilator \
     rtl/s32_core.sv verif/common/tb_core_v25sdram.sv \
     2>&1 | tee "$build_dir/compile.log"
 
-"$build_dir/obj_dir/Vtb_core_v25sdram" 2>&1 | tee "$build_dir/run.log"
+"$safe_sim" -- "$build_dir/obj_dir/Vtb_core_v25sdram" 2>&1 | tee "$build_dir/run.log"
 
 if ! grep -Fq "V25 SDRAM INTEGRATION PASS" "$build_dir/run.log"; then
     echo "V25_SDRAM RUNNER FAIL: integration marker missing" >&2

@@ -3,11 +3,17 @@
 # Boots real ROMs through s32_core (HLE protection), renders RGB video, dumps
 # frames as PPM.  Requires WSL verilator 5.x.  Run from repo root.
 #   ./run_romboot.sh <game> [FRAMES] [extra +plusargs...]
+# Set ROMBOOT_SKIP_BUILD=1 when only runtime arguments changed.
 # e.g. ./run_romboot.sh ga2 135 +COINAT=64 +COINLEN=6 +STARTAT=84 +DUMPAT=104 +DUMPN=16
-set -u
+set -euo pipefail
 cd "$(dirname "$0")/../.."
 GAME="${1:-ga2}"; FRAMES="${2:-90}"; shift 2 2>/dev/null || shift $# 
-MDIR=/tmp/vromboot
+VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
+if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
+  VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
+fi
+MDIR=scratch/vromboot_obj_wsl
 WARN="-Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT -Wno-BLKANDNBLK -Wno-CASEINCOMPLETE -Wno-MULTIDRIVEN -Wno-INITIALDLY -Wno-DECLFILENAME"
 # The board descriptor comes from the image's own desc.txt, which
 # make_sim_images.py copies verbatim out of the MRA's ioctl index-0 stream.
@@ -22,12 +28,25 @@ if [[ ! -f "$DESC" ]]; then
   echo "  build the image first: python tools/make_sim_images.py <mra> roms/$GAME.zip roms/sim/$GAME" >&2
   exit 1
 fi
-# -j/--build-jobs capped at 6, matching the Quartus NUM_PARALLEL_PROCESSORS
-# limit.  This was -j 0, which forks one compiler per core: 32 on this machine
-# at up to ~1 GB each, and two concurrent builds exhaust the 64 GB.
-verilator --binary --timing -j 6 --build-jobs 6 --threads 1 $WARN \
-  +define+SIMULATION +define+S32_REAL_FB_SIM \
-  --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f scratch/romboot.f 2>&1 | grep -E "%Error" && exit 1
-mkdir -p scratch/vromboot_out && cd scratch/vromboot_out
-nice -n 19 "$MDIR/romboot" +IMG="$(cd ../.. && pwd)/roms/sim/$GAME" \
+# The machine-wide safe launcher serializes model builds and enforces the
+# account resource policy.  Keep both Verilator generation and C++ build
+# parallelism explicitly bounded; generated models are always single-threaded.
+"$VERILATOR_SAFE" status
+if [[ "${ROMBOOT_SKIP_BUILD:-0}" != 1 ]]; then
+  "$VERILATOR_SAFE" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 $WARN \
+    +define+SIMULATION +define+S32_REAL_FB_SIM \
+    --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f scratch/romboot.f
+fi
+SIM="$PWD/$MDIR/romboot"
+IMG="$PWD/roms/sim/$GAME"
+if [[ ! -x "$SIM" ]]; then
+  echo "run_romboot: no model executable at $SIM (unset ROMBOOT_SKIP_BUILD)" >&2
+  exit 1
+fi
+# Keep captures isolated when a queued run outlives its terminal caller.  The
+# default preserves the historical location; callers doing a matrix sweep can
+# set ROMBOOT_OUT to a game-specific directory.
+OUTDIR="${ROMBOOT_OUT:-$PWD/scratch/vromboot_out}"
+mkdir -p "$OUTDIR" && cd "$OUTDIR"
+"$VERILATOR_SAFE" sim -- "$SIM" +IMG="$IMG" \
   +DESC="$DESC" +FRAMES=$FRAMES "$@"

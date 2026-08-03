@@ -17,9 +17,9 @@ set "CD_RESULT=%ERRORLEVEL%"
 if not "%CD_RESULT%"=="0" goto :err
 echo Working directory: "%CD%"
 
-if not defined S32_PROJECT set S32_PROJECT=Arcade-SegaSystem32
-if not defined S32_REVISION set S32_REVISION=Arcade-SegaSystem32
-if not defined S32_RELEASE_NAME set S32_RELEASE_NAME=SegaS32
+if not defined S32_PROJECT set S32_PROJECT=s32
+if not defined S32_REVISION set S32_REVISION=s32
+if not defined S32_RELEASE_NAME set S32_RELEASE_NAME=s32
 if not defined S32_RESUME_FIT set S32_RESUME_FIT=0
 if not defined S32_MAP_RETRIES set S32_MAP_RETRIES=2
 if not defined S32_FIT_RETRIES set S32_FIT_RETRIES=2

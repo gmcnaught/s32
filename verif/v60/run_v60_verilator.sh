@@ -8,7 +8,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT="$PWD"
 PKG="rtl/s32_pkg.sv"
 CPU="rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv"
-VFLAGS="--binary --timing -j 6 --build-jobs 6 -Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT -Wno-CASEINCOMPLETE -Wno-BLKANDNBLK -Wno-MULTIDRIVEN -Wno-INITIALDLY -Wno-DECLFILENAME -Wno-PINMISSING -Wno-UNSIGNED -Wno-WIDTH +define+SIMULATION"
+VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
+VERILATOR_SIM_SAFE="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
+if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
+  VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
+fi
+if ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
+   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
+  VERILATOR_SIM_SAFE=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
+fi
+VFLAGS=(--binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4
+  -Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT
+  -Wno-CASEINCOMPLETE -Wno-BLKANDNBLK -Wno-MULTIDRIVEN -Wno-INITIALDLY
+  -Wno-DECLFILENAME -Wno-PINMISSING -Wno-UNSIGNED -Wno-WIDTH
+  +define+SIMULATION)
 
 # tb : expected-marker (marker is a grep -F fixed string)
 declare -A TB=(
@@ -62,10 +76,11 @@ for tb in $ORDER; do
     fi
     out="$(cd "$bdir" && timeout 300 vvp "$tb.vvp" 2>&1)"
   else
-    if ! verilator $VFLAGS --top-module "$tb" --Mdir "$bdir" -o "$tb" $PKG $CPU "$src" > "$bdir.log" 2>&1; then
+    "$VERILATOR_SAFE" status
+    if ! "$VERILATOR_SAFE" "${VFLAGS[@]}" --top-module "$tb" --Mdir "$bdir" -o "$tb" $PKG $CPU "$src" > "$bdir.log" 2>&1; then
       echo "BUILDFAIL $tb  (see $bdir.log)"; fail=$((fail+1)); failed="$failed $tb"; continue
     fi
-    out="$("$bdir/$tb" 2>&1)"
+    out="$("$VERILATOR_SIM_SAFE" -- "$bdir/$tb" 2>&1)"
   fi
   if echo "$out" | grep -qF "${TB[$tb]}"; then
     extra="$(echo "$out" | grep -E 'FETCH PERF:|LANES|cycles=' | head -1)"
