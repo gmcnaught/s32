@@ -269,12 +269,12 @@ always @(posedge clk_sys) begin
         s = acc_cpu + {1'b0, cpu_ce_inc};  // base increment * turbo mult (capped)
         ce_cpu <= s[16];
         acc_cpu <= s[15:0];
-        // z80: 8.053975/48.317307 (System 32); 8.0/48.317307 (Multi 32)
-        s = acc_z80 + (is_multi32 ? 16'd10851 : 16'd10924);
+        // Z80/YM3438: 32.2159 MHz / 4 on the standard board.
+        s = acc_z80 + (is_multi32 ? 16'd10851 : PCB_Z80_CE_INC);
         ce_z80 <= s[16];
         acc_z80 <= s[15:0];
-        // pcm: 12.5/48.317307 (System 32); 10/48.317307 (Multi 32)
-        s = acc_pcm + (is_multi32 ? 16'd13564 : 16'd16955);
+        // RF5C68-family PCM: separate 50 MHz source / 4 = 12.5 MHz.
+        s = acc_pcm + (is_multi32 ? 16'd13564 : PCB_PCM_CE_INC);
         ce_pcm <= s[16];
         acc_pcm <= s[15:0];
     end
@@ -292,7 +292,7 @@ always @(posedge clk_sys) begin
         acc_fm <= 16'd0;
     end
     else begin
-        s = acc_fm + (is_multi32 ? 16'd10851 : 16'd10924);
+        s = acc_fm + (is_multi32 ? 16'd10851 : PCB_Z80_CE_INC);
         ce_fm <= s[16];
         acc_fm <= s[15:0];
     end

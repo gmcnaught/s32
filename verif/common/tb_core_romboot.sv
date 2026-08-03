@@ -446,6 +446,7 @@ end
 // P1A is C00000; MAME system32_generic puts start on port E bit 4 and P1 coin
 // on bit 2.
 integer p1a_rd_cnt = 0, coin_rd_cnt = 0, start_rd_cnt = 0;
+localparam integer p1_coin_bit = 2;
 integer p1a_active_samples = 0;
 integer coin_active_samples = 0, start_active_samples = 0;
 always @(posedge clk_sys) begin
@@ -484,6 +485,12 @@ integer p1_at [0:3];
 integer p1_len [0:3];
 integer p1_mask [0:3];
 integer p1_event_count;
+// Optional live input bridge used by the native visual viewer. The low byte
+// is the active-low P1A mask; bit 8 is coin and bit 9 is start. The viewer
+// atomically replaces this one-line file between frame boundaries, so the
+// simulation never samples a partially written control word.
+string input_path;
+integer input_fd, input_scan, input_mask_value;
 integer trk_at, trk_len, trk_dx_arg, trk_dy_arg;
 reg trk0_dv = 1'b0;
 reg signed [8:0] trk0_dx = 9'sd0;
@@ -509,6 +516,9 @@ initial begin
     if (!$value$plusargs("TRKLEN=%d", trk_len)) trk_len = 1;
     if (!$value$plusargs("TRKDX=%d", trk_dx_arg)) trk_dx_arg = 0;
     if (!$value$plusargs("TRKDY=%d", trk_dy_arg)) trk_dy_arg = 0;
+    if (!$value$plusargs("INPUTFILE=%s", input_path)) input_path = "";
+    if (input_path != "")
+        $display("[input] live keyboard bridge: %0s", input_path);
     p1_event_count = (p1_at[0] >= 0) + (p1_at[1] >= 0) +
                      (p1_at[2] >= 0) + (p1_at[3] >= 0);
 end
@@ -730,6 +740,11 @@ integer dump_at, dump_n, dump_fd = 0, dump_x, dump_y, dump_every;
 reg dumping = 0;
 integer dump_nonblack = 0;
 integer dump_frame = -1;
+string live_ppm_path;
+string live_ready_path;
+string live_work_path;
+reg live_ppm = 1'b0;
+integer live_slot = 0, live_write_slot = 0, live_meta_fd = 0;
 reg dump_complete = 0;
 reg dump_nonblack_seen = 0;
 reg require_verilator_screenshot = 0;
@@ -739,6 +754,9 @@ initial begin
     if (!$value$plusargs("DUMPN=%d", dump_n)) dump_n = 1;
     // +DUMPEVERY=<n>: dump every n-th frame (stride) — maps the attract cycle
     if (!$value$plusargs("DUMPEVERY=%d", dump_every)) dump_every = 1;
+    if (!$value$plusargs("LIVEPPM=%s", live_ppm_path)) live_ppm_path = "";
+    live_ppm = (live_ppm_path != "");
+    if (live_ppm) live_ready_path = {live_ppm_path, ".ready"};
 end
 
 // +DUMPSPRAT=<frame>: dump the V60-written sprite command RAM (0x400000, the
@@ -956,17 +974,34 @@ always @(posedge clk_sys) begin
                 dump_y = dump_y + 1;
             end
             $fclose(dump_fd);
+            if (live_ppm) begin
+                // Publish only after the completed file is closed. The
+                // double-buffered paths let the viewer consume the previous
+                // frame while the simulator writes the next one.
+                live_meta_fd = $fopen(live_ready_path, "w");
+                if (live_meta_fd != 0) begin
+                    $fwrite(live_meta_fd, "%0d %0d\n", cur_frame - 1, live_write_slot);
+                    $fclose(live_meta_fd);
+                end
+                live_slot = live_slot ^ 1;
+            end
             dumping = 0;
             dump_complete = 1'b1;
             if (dump_nonblack != 0) dump_nonblack_seen = 1'b1;
             $display("[dump] wrote frame %0d nonblack=%0d", cur_frame-1, dump_nonblack);
         end
-        if (dump_at >= 0 && cur_frame >= dump_at &&
+        if (live_ppm || (dump_at >= 0 && cur_frame >= dump_at &&
             ((cur_frame - dump_at) % dump_every == 0) &&
-            ((cur_frame - dump_at) / dump_every < dump_n)) begin
-            dump_fd = $fopen($sformatf("dump%0d.ppm", cur_frame), "w");
+            ((cur_frame - dump_at) / dump_every < dump_n))) begin
+            if (live_ppm) begin
+                live_write_slot = live_slot;
+                live_work_path = $sformatf("%0s.%0d", live_ppm_path, live_write_slot);
+                dump_fd = $fopen(live_work_path, "w");
+            end
+            else
+                dump_fd = $fopen($sformatf("dump%0d.ppm", cur_frame), "w");
             if (dump_fd == 0)
-                $fatal(1, "VERILATOR SCREENSHOT FAIL: cannot create dump%0d.ppm", cur_frame);
+                $fatal(1, "VERILATOR SCREENSHOT FAIL: cannot create live/frame PPM at frame %0d", cur_frame);
             // 52*8=416 wide, 224 high fixed header (PPM allows trailing slack)
             $fwrite(dump_fd, "P3\n416 224\n255\n");
             // Every capture owns a fresh raster cursor.  Without these resets,
@@ -1586,6 +1621,19 @@ initial begin
         in_p1a_r = 8'hff;
         in_portc_r = 8'hff;
         in_svc12_r = 8'hff;
+        if (input_path != "") begin
+            input_mask_value = 0;
+            input_fd = $fopen(input_path, "r");
+            if (input_fd != 0) begin
+                input_scan = $fscanf(input_fd, "%h", input_mask_value);
+                $fclose(input_fd);
+                if (input_scan == 1) begin
+                    in_p1a_r = in_p1a_r & ~input_mask_value[7:0];
+                    if (input_mask_value[8]) in_svc12_r[p1_coin_bit] = 1'b0;
+                    if (input_mask_value[9]) in_svc12_r[4] = 1'b0;
+                end
+            end
+        end
         for (p1_ev = 0; p1_ev < 4; p1_ev = p1_ev + 1) begin
             if (p1_at[p1_ev] >= 0 && p1_len[p1_ev] > 0 &&
                 f >= p1_at[p1_ev] && f < p1_at[p1_ev] + p1_len[p1_ev]) begin

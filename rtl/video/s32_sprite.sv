@@ -1,5 +1,6 @@
 //============================================================================
-//  System 32 sprite engine — 315-5386A (DESIGN.md §6.3/§6.4, Appendix C.6/C.7)
+//  System 32 object/sprite engine — 315-5386A
+//  (DESIGN.md §6.3/§6.4, Appendix C.6/C.7)
 //  Walks the sprite command list in sprite RAM, renders scaled sprites into
 //  the off-chip framebuffer via s32_fb_if. Double-buffered; swap/erase per
 //  control regs, latched at swap exactly like m_sprite_control_latched.

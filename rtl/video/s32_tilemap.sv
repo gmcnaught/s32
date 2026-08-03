@@ -1,5 +1,6 @@
 //============================================================================
-//  System 32 tilemap engine (DESIGN.md §6.2, Appendix C)
+//  System 32 scroll/tilemap engine — 315-5387
+//  (DESIGN.md §6.2, Appendix C)
 //  Renders one scanline of each enabled layer into per-layer line buffers:
 //    NBG0/1: MAME-exact 12.20 X/Y zoom and fractional scroll
 //            ($1FF10-1E, $1FF50-56, 0x200=1.0)

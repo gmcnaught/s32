@@ -7,6 +7,65 @@
 package s32_pkg;
 
     // ------------------------------------------------------------------
+    // Public System 32 board timing contract
+    // ------------------------------------------------------------------
+    // The standard 837-7428 / 171-5964E board is documented with a
+    // 32.2159 MHz master oscillator. The FPGA clock tree exposes the
+    // corresponding 48.317307 MHz system clock; these fractional-enable
+    // increments express the board-domain rates in one shared location.
+    //
+    // These are board facts, not a claim that the public schematics reveal
+    // every custom-ASIC wait state. Unknown ASIC latency remains an explicit
+    // verification item in docs/pcb/system32_evidence.json.
+    localparam integer PCB_OSC_HZ       = 32_215_900;
+    localparam integer PCB_CLK_SYS_HZ   = 48_317_307;
+    localparam integer PCB_V60_HZ       = 16_107_950; // PCB_OSC_HZ / 2
+    localparam integer PCB_Z80_HZ       =  8_053_975; // PCB_OSC_HZ / 4
+    localparam integer PCB_PCM_HZ       = 12_500_000; // separate 50 MHz / 4
+
+    // CE numerators use a 16-bit phase accumulator. Keep the rounded values
+    // in one place so Standard and Real-V25 profiles cannot drift silently.
+    localparam [15:0] PCB_V60_CE_INC   = 16'd21848;
+    localparam [15:0] PCB_Z80_CE_INC   = 16'd10924;
+    localparam [15:0] PCB_PCM_CE_INC   = 16'd16955;
+
+    // Main-bus target classes are used by diagnostics and by the future
+    // measured-wait-state model. They describe board resources, not games.
+    localparam [3:0] PCB_TARGET_ROM    = 4'd0;
+    localparam [3:0] PCB_TARGET_WRAM   = 4'd1;
+    localparam [3:0] PCB_TARGET_VRAM   = 4'd2;
+    localparam [3:0] PCB_TARGET_SPRRAM = 4'd3;
+    localparam [3:0] PCB_TARGET_VIDEO  = 4'd4;
+    localparam [3:0] PCB_TARGET_IO     = 4'd5;
+    localparam [3:0] PCB_TARGET_SHARED = 4'd6;
+    localparam [3:0] PCB_TARGET_PROT   = 4'd7;
+    localparam [3:0] PCB_TARGET_OTHER  = 4'd15;
+
+    function automatic [3:0] pcb_target_for_address(input logic [23:0] address);
+        begin
+            if (address < 24'h200000 || address[23:20] == 4'hf)
+                pcb_target_for_address = PCB_TARGET_ROM;
+            else if (address[23:20] == 4'h2)
+                pcb_target_for_address = PCB_TARGET_WRAM;
+            else if (address[23:20] == 4'h3)
+                pcb_target_for_address = PCB_TARGET_VRAM;
+            else if (address[23:20] == 4'h4)
+                pcb_target_for_address = PCB_TARGET_SPRRAM;
+            else if (address[23:20] == 4'h5 || address[23:20] == 4'h6)
+                pcb_target_for_address = PCB_TARGET_VIDEO;
+            else if (address[23:20] == 4'h7 || address[23:20] == 4'h8 ||
+                     address[23:20] == 4'h9)
+                pcb_target_for_address = PCB_TARGET_SHARED;
+            else if (address[23:20] == 4'ha)
+                pcb_target_for_address = PCB_TARGET_PROT;
+            else if (address[23:20] == 4'hc || address[23:20] == 4'hd)
+                pcb_target_for_address = PCB_TARGET_IO;
+            else
+                pcb_target_for_address = PCB_TARGET_OTHER;
+        end
+    endfunction
+
+    // ------------------------------------------------------------------
     // SDRAM region bases (byte addresses) — DESIGN.md §4.2
     // ------------------------------------------------------------------
     localparam [24:0] SDR_MAINCPU_BASE  = 25'h000_0000; // 2 MB

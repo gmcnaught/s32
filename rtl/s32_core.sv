@@ -249,10 +249,18 @@ reg         if_served;
 wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU never
                                     // misses it between its enable ticks
 
-// FAST_IFETCH defaults on; override at build time (+define+FAST_IFETCH_EN=1'b0)
-// to A/B-test the wide fetch path against the legacy ce-gated adapter fetch.
+// The production board contract keeps instruction fetches on the same
+// ce-gated 16-bit bus as data accesses. The V60's internal prefetch queue is
+// still modelled in s32_v60; the wide cache port is retained as an explicit
+// diagnostic/performance override only. This prevents a synthetic, uncapped
+// fetch path from making a production bitstream run faster than the PCB.
+// Override at build time (+define+FAST_IFETCH_EN=1'b0/1'b1) for A/B tests.
 `ifndef FAST_IFETCH_EN
- `define FAST_IFETCH_EN 1'b1
+ `ifdef S32_PCB_TIMING
+  `define FAST_IFETCH_EN 1'b0
+ `else
+  `define FAST_IFETCH_EN 1'b1
+ `endif
 `endif
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(ce_cpu), .rst(rst),

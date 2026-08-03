@@ -1,5 +1,6 @@
 //============================================================================
-//  System 32 mixer — 315-5387 (DESIGN.md §6.6, Appendix C.8)
+//  System 32 mixer / priority-color stage — 315-5388
+//  (DESIGN.md §6.6, Appendix C.8)
 //  Per-pixel priority resolution across TEXT/NBG0-3/BITMAP/SPRITE/BACKGROUND
 //  with sprite grouping, palette lookup, blending, color offsets and shadow.
 //  One instance per screen (Multi 32 = two).
