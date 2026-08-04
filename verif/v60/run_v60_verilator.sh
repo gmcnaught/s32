@@ -19,6 +19,7 @@ if ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
   VERILATOR_SIM_SAFE=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
 fi
 VFLAGS=(--binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4
+  -CFLAGS "-D_GLIBCXX_USE_CXX11_ABI=0"
   -Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT
   -Wno-CASEINCOMPLETE -Wno-BLKANDNBLK -Wno-MULTIDRIVEN -Wno-INITIALDLY
   -Wno-DECLFILENAME -Wno-PINMISSING -Wno-UNSIGNED -Wno-WIDTH
@@ -54,13 +55,14 @@ declare -A TB=(
   [tb_v60_spidman_xchh]="SPIDMAN XCH.H PASS"
   [tb_v60_spidman_window]="SPIDMAN WINDOW PASS"
   [tb_v60_spidman_gate]="SPIDMAN GATE PASS"
+  [tb_v60_ea_overlap_disp]="V60 EA_OVERLAP DISP PASS"
 )
 
 # Verilator can't elaborate testbenches that poke internal enum FSM state
 # (EnumItemRef can't deref back to an Enum). Route those through Icarus.
 ICARUS_ONLY="tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp"
 
-ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_smc tb_v60_long_ea tb_v60_fetch_wide tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate"
+ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_smc tb_v60_long_ea tb_v60_fetch_wide tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate tb_v60_ea_overlap_disp"
 
 is_icarus() { case " $ICARUS_ONLY " in *" $1 "*) return 0;; *) return 1;; esac; }
 
@@ -80,7 +82,7 @@ for tb in $ORDER; do
     if ! "$VERILATOR_SAFE" "${VFLAGS[@]}" --top-module "$tb" --Mdir "$bdir" -o "$tb" $PKG $CPU "$src" > "$bdir.log" 2>&1; then
       echo "BUILDFAIL $tb  (see $bdir.log)"; fail=$((fail+1)); failed="$failed $tb"; continue
     fi
-    out="$("$VERILATOR_SIM_SAFE" -- "$bdir/$tb" 2>&1)"
+    out="$("$VERILATOR_SIM_SAFE" -- "$bdir/$tb.exe" 2>&1)"
   fi
   if echo "$out" | grep -qF "${TB[$tb]}"; then
     extra="$(echo "$out" | grep -E 'FETCH PERF:|LANES|cycles=' | head -1)"

@@ -10,7 +10,12 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_core.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60_bus.sv
-set_global_assignment -name QIP_FILE rtl/cpu/v25/v25.qip
+# The real NEC V25 (rtl/cpu/v25/v25.qip: s80x86 + s32_v25_cpu +
+# s32_v25_rom_cache) belongs to the s32v25 revision only -- it is hardware for
+# Golden Axe: The Revenge of Death Adder and Arabian Fight alone.  Every other
+# System 32 title uses the HLE responder s32_v25 in rtl/prot/s32_prot.sv, which
+# is listed below.  s32v25.qsf sources this file and then adds v25.qip itself,
+# so the standard revision never compiles the s80x86 core at all.
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_big_dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_vram.sv

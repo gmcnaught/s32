@@ -430,7 +430,8 @@ endfunction
 //   P0: present the second palette index; the first address has already been
 //       registered for a full clk_ram edge, so its data is in flight
 //   P2: capture the first pixel before the earliest second result can replace it
-//   P4: apply both color-offset banks
+//   P4: apply both color-offset banks (entered directly from P2; the former P3
+//       bubble cost the 416-mode picture one pixel of horizontal alignment)
 //   P5: blend and apply shadow
 //   P6: clamp and register rgb
 // ---------------------------------------------------------------------------
@@ -595,6 +596,16 @@ always @(posedge clk) begin
         end
         else if (ph == 4'd2) begin
             first_pal <= pal_data_r;
+            // Skip the former P3 bubble.  pal_data_r already holds the second
+            // lookup on the next edge, and first_pal is captured here, so P4
+            // has every input it needs one clock earlier.  With the bubble a
+            // pixel took 13 clk_ram edges from the display-X change — one more
+            // than the 12-edge 416-wide pixel period — so the display sampled
+            // the previous pixel and the whole 416-wide picture came out one
+            // column right of MAME.  320-wide mode (15 edges) had slack and
+            // never showed it.  No combinational path grows; only this phase
+            // decode moves.  tb_mixer_pixel_latency pins the 12-edge budget.
+            ph <= 4'd4;
         end
         else if (ph == 4'd4) begin
             // Keep the offset-bank muxes out of the DSP/clamp path.

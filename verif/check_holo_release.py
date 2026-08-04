@@ -13,8 +13,24 @@ assert 'VERILOG_MACRO "S32_SYSTEM32_ONLY=1"' in qsf, "release is not System 32-o
 assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in qsf, \
     "shared QSF unexpectedly forces the V25 into every game core"
 assert 'VERILOG_MACRO "S32_PROFILE_STANDARD=1"' in qsf
-assert 'VERILOG_MACRO "S80X86_PSEUDO_286_INT=0"' in qsf, \
-    "dormant V25 sources do not have a deterministic interrupt-mode parse option"
+
+# The real NEC V25 is hardware for Golden Axe: The Revenge of Death Adder and
+# Arabian Fight only, so the standard revision does not merely leave it
+# switched off -- it does not compile it.  The sources are listed by
+# s32v25.qsf, not by the shared files.qip, and S80X86_PSEUDO_286_INT (a
+# required parse option for the upstream s80x86 Flags module) is therefore
+# meaningless here.  Assert both halves: gone from the standard revision, and
+# still present for the two games that need the CPU.
+files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
+v25_qsf = (ROOT / "s32v25.qsf").read_text(encoding="utf-8")
+assert "QIP_FILE rtl/cpu/v25/v25.qip" not in files_qip, \
+    "shared file list still compiles the real V25 into every game core"
+assert 'VERILOG_MACRO "S80X86_PSEUDO_286_INT' not in qsf, \
+    "standard revision defines an s80x86 parse option but has no s80x86 sources"
+assert "QIP_FILE rtl/cpu/v25/v25.qip" in v25_qsf, \
+    "the V25 revision lost the real V25 sources"
+assert 'VERILOG_MACRO "S80X86_PSEUDO_286_INT=0"' in v25_qsf, \
+    "the V25 revision lost the s80x86 interrupt-mode parse option"
 
 matches = []
 for path in (ROOT / "mra").glob("*.mra"):

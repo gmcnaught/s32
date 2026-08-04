@@ -929,10 +929,23 @@ always @(posedge clk_ram) begin
     if (core.sprite.fb_wr_start) spr_draw_seen <= spr_draw_seen + 1'd1;
 end
 integer cur_frame = 0;
+// Scoped, one-off diagnostic for the SegaSonic floor-palette write-both
+// investigation: n_pal_wr/n_vram_wr are running totals (never reset), so
+// print their per-frame delta alongside mixer $4E only across the narrow
+// window the level-load burst falls in.  Safe to leave in: dead weight
+// outside that frame range, and the harness has no other +BURSTLOG use.
+integer burst_pal_prev = 0, burst_vram_prev = 0;
 always @(posedge clk_sys) begin
     vb_d <= vb;
     if (vb & ~vb_d) begin              // end of visible field
         cur_frame = cur_frame + 1;
+        if ($test$plusargs("BURSTLOG") && cur_frame >= 940 && cur_frame <= 965) begin
+            $display("[burst] f=%0d dpal=%0d dvram=%0d mreg27=%04x",
+                cur_frame, n_pal_wr - burst_pal_prev, n_vram_wr - burst_vram_prev,
+                core.mix0.mreg[6'h27]);
+            burst_pal_prev = n_pal_wr;
+            burst_vram_prev = n_vram_wr;
+        end
         // +OVLOG=1: per-frame tilemap line-overrun + sprite-fb underrun telemetry
         if (ovlog) $display("[ov] f=%0d tile_overrun sticky=%b cnt=%0d  fb_underrun sticky=%b cnt=%0d",
             cur_frame, core.tm_line_overrun_sticky, core.tm_line_overrun_count,
@@ -1202,6 +1215,59 @@ always @(posedge clk_sys) begin
         {core.A[23:1],1'b0} == watch_a[23:0])
         $display("[watch] pc=%08x wr [%06x] = %04x be=%b",
             core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+end
+
+// DIAGNOSTIC (radm/radr goal): has the CPU ever reached a specific PC?
+// docs/radm-radr-bringup.md: confirm/deny whether radm's demo-object
+// allocator (MAME PC 0x070dbc/0x070dfc, first hit at MAME frame 897) ever
+// executes in the RTL.
+integer pcwatch_a;
+integer pcwatch_n = 0;
+integer pcwatch_max;
+initial if (!$value$plusargs("PCWATCH=%h", pcwatch_a)) pcwatch_a = -1;
+initial if (!$value$plusargs("PCWATCHMAX=%d", pcwatch_max)) pcwatch_max = 20;
+integer pcwatch_last_frame = -1;
+always @(posedge clk_sys) if (ce_cpu) begin
+    if (pcwatch_a >= 0 && core.v60.dbg_pc == pcwatch_a[31:0] &&
+        cur_frame != pcwatch_last_frame && pcwatch_n < pcwatch_max) begin
+        $display("[pcwatch] HIT f=%0d pc=%08x", cur_frame, core.v60.dbg_pc);
+        pcwatch_n = pcwatch_n + 1;
+        pcwatch_last_frame = cur_frame;
+    end
+end
+
+// DIAGNOSTIC (radm/radr goal): does the V60 ever actually take an interrupt?
+// Logs psw_ie's first 0->1 edge and every irq_n toggle, bounded by IRQPROBE.
+integer irqprobe_max;
+initial if (!$value$plusargs("IRQPROBE=%d", irqprobe_max)) irqprobe_max = 0;
+integer irqprobe_n = 0;
+reg irq_n_d = 1'b1;
+reg psw_ie_d = 1'b0;
+reg psw_ie_seen = 1'b0;
+reg exc_is_interrupt_d = 1'b0;
+always @(posedge clk_sys) begin
+    if (irqprobe_max > 0 && irqprobe_n < irqprobe_max) begin
+        irq_n_d  <= core.irq_n;
+        psw_ie_d <= core.v60.psw_ie;
+        if (core.irq_n !== irq_n_d) begin
+            $display("[irqp] f=%0d pc=%08x irq_n: %b->%b psw_ie=%b vec=%02x st=%0d",
+                cur_frame, core.v60.dbg_pc, irq_n_d, core.irq_n, core.v60.psw_ie,
+                core.irq_vector, core.v60.st);
+            irqprobe_n = irqprobe_n + 1;
+        end
+        if (core.v60.psw_ie && !psw_ie_seen) begin
+            psw_ie_seen <= 1'b1;
+            $display("[irqp] f=%0d pc=%08x psw_ie first-set irq_n=%b",
+                cur_frame, core.v60.dbg_pc, core.irq_n);
+            irqprobe_n = irqprobe_n + 1;
+        end
+        if (core.v60.exc_is_interrupt && !exc_is_interrupt_d) begin
+            $display("[irqp] f=%0d pc=%08x ENTERING EXC/IRQ frame vec=%02x",
+                cur_frame, core.v60.dbg_pc, core.v60.exc_vector);
+            irqprobe_n = irqprobe_n + 1;
+        end
+        exc_is_interrupt_d <= core.v60.exc_is_interrupt;
+    end
 end
 
 // Optional write-range trace for semantic comparisons against MAME.  Frames

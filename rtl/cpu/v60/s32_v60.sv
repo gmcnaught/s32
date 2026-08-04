@@ -677,6 +677,73 @@ always @* begin
     endcase
 end
 
+// Third read port (docs/v60-pipelining-plan.md Stage B): dedicated to the
+// F2-format "AM operand" fast-path peek in S_IF2 below.  Its index is a pure
+// function of already-fetched fb[] bytes (never of rf_raddr_a/b's owner
+// state), so it never contends with the a/b ports' existing uses within the
+// same cycle.  Same explicit-case-mux pattern as a/b for the same Icarus/
+// synthesis reasons noted above.
+wire [4:0] rf_raddr_c = fb[5'd2][4:0];
+reg [31:0] rf_rdata_c;
+always @* begin
+    case (rf_raddr_c)
+        5'd0:  rf_rdata_c = r[0];   5'd1:  rf_rdata_c = r[1];
+        5'd2:  rf_rdata_c = r[2];   5'd3:  rf_rdata_c = r[3];
+        5'd4:  rf_rdata_c = r[4];   5'd5:  rf_rdata_c = r[5];
+        5'd6:  rf_rdata_c = r[6];   5'd7:  rf_rdata_c = r[7];
+        5'd8:  rf_rdata_c = r[8];   5'd9:  rf_rdata_c = r[9];
+        5'd10: rf_rdata_c = r[10];  5'd11: rf_rdata_c = r[11];
+        5'd12: rf_rdata_c = r[12];  5'd13: rf_rdata_c = r[13];
+        5'd14: rf_rdata_c = r[14];  5'd15: rf_rdata_c = r[15];
+        5'd16: rf_rdata_c = r[16];  5'd17: rf_rdata_c = r[17];
+        5'd18: rf_rdata_c = r[18];  5'd19: rf_rdata_c = r[19];
+        5'd20: rf_rdata_c = r[20];  5'd21: rf_rdata_c = r[21];
+        5'd22: rf_rdata_c = r[22];  5'd23: rf_rdata_c = r[23];
+        5'd24: rf_rdata_c = r[24];  5'd25: rf_rdata_c = r[25];
+        5'd26: rf_rdata_c = r[26];  5'd27: rf_rdata_c = r[27];
+        5'd28: rf_rdata_c = r[28];  5'd29: rf_rdata_c = r[29];
+        5'd30: rf_rdata_c = r[30];  default: rf_rdata_c = r[31];
+    endcase
+end
+
+// EA_OVERLAP=1 (docs/v60-pipelining-plan.md Stage B): when the F2-format
+// instruction's "AM operand" (op1 for D=1, op2 for D=0) resolves to register
+// direct, non-deferred addressing, S_IF2 already has every byte it needs to
+// know that -- F2 always places that operand's mode byte at offset 2, so
+// fb[2] is valid the moment S_IF2 begins, before ea_ofs is even assigned for
+// this instruction.  This is read-only on architectural state exactly like
+// Stage A's predecode (it only inspects fb[] and, for the value case, reads
+// a register through the dedicated port c above -- never op1/op2/ea_* of an
+// in-flight instruction), so unlike a genuine cross-instruction overlap it
+// carries no RAW hazard at all: the register being read belongs to the SAME
+// instruction that is about to consume it, not a different in-flight one.
+// Taking the fast path skips S_EA_MODE and S_EA_DONE entirely (2 of the 3
+// cycles this operand shape costs today), landing directly in S_EXEC (or
+// S_IF2's own S_EA_MODE dispatch when the shape does not qualify -- fully
+// today's exact sequential behaviour, unconditionally correct fallback).
+// Build with +define+V60_NO_EA_OVERLAP to A/B against the baseline.
+`ifdef V60_NO_EA_OVERLAP
+    localparam        EA_OVERLAP = 1'b0;
+`else
+    localparam        EA_OVERLAP = 1'b1;
+`endif
+wire        eaf_reg_direct  = EA_OVERLAP && (fb[5'd2][7:5] == 3'd3); // modtop==3
+wire [4:0]  eaf_reg         = fb[5'd2][4:0];
+
+// EA_OVERLAP fast path, part 2: simple base+displacement addressing
+// (modtop==0/1/2, "Displacement" -- S_EA_MODE's !ea_modm arm, i.e.
+// instflags[6]==0, distinct from the register-direct arm above which is
+// ea_modm==1).  Still same-instruction, same-cycle, zero cross-instruction
+// hazard: the register read is of THIS instruction's own base register via
+// port c, one cycle earlier than S_EA_MODE would read it.  Scoped to the
+// address case only (F2 D=0's op2, always ea_want_addr=1) -- the value case
+// would need an extra S_EA_VAL bus read that cannot be folded away, so it is
+// deliberately left on the sequential path.
+wire [1:0]  eaf_disp_sz     = fb[5'd2][6:5];
+wire        eaf_disp_direct = EA_OVERLAP && (fb[5'd2][7:5] < 3'd3);  // modtop==0/1/2
+wire [31:0] eaf_disp        = disp_of(5'd3, eaf_disp_sz);
+wire [4:0]  eaf_disp_len    = 5'd1 + disp_len(eaf_disp_sz);
+
 always @* begin
     rf_raddr_a = 5'd0;
     rf_raddr_b = 5'd0;
@@ -1348,8 +1415,39 @@ else if (ce) begin
                 ea_want_addr <= f12_op1_is_addr(cur_op);
                 ea_dim  <= f12_dim1(cur_op);
                 ea_ret  <= 3'd0;
-                st <= S_EA_MODE;
-                st_after_ea <= S_EXEC;
+                // EA_OVERLAP fast path: op1 (the AM operand here) is register
+                // direct.  modtop==3 under ea_modm==1 is "Register direct" in
+                // S_EA_MODE (ea_modm==0 is "Register INDIRECT" -- a memory
+                // dereference, never fast-pathed here); instflags[6] is
+                // exactly the value ea_modm is being set to on this same
+                // edge, so it is the correct guard for the state this
+                // instruction is about to enter, not a stale one.
+                if (eaf_reg_direct && instflags[6]) begin
+                    if (f12_op1_is_addr(cur_op)) begin
+                        op1   <= {27'b0, eaf_reg};
+                        flag1 <= 1'b1;
+                    end
+                    else begin
+                        op1   <= dimext(rf_rdata_c, f12_dim1(cur_op));
+                        flag1 <= 1'b0;
+                    end
+                    len1 <= 5'd1;
+                    st   <= S_EXEC;
+                end
+                // Part 2: simple base+displacement, address case only
+                // (f12_op1_is_addr) -- MOVEA/XCH/MOVD/CALL/LDTASK.  The value
+                // case (the common ALU-op path) needs an extra S_EA_VAL bus
+                // read that cannot be folded away, so it stays sequential.
+                else if (eaf_disp_direct && !instflags[6] && f12_op1_is_addr(cur_op)) begin
+                    op1   <= rf_rdata_c + eaf_disp;
+                    flag1 <= 1'b0;
+                    len1  <= eaf_disp_len;
+                    st    <= S_EXEC;
+                end
+                else begin
+                    st <= S_EA_MODE;
+                    st_after_ea <= S_EXEC;
+                end
             end
             else begin
                 // F2 D=0: op1 = reg value, op2 = AM(write)
@@ -1378,8 +1476,31 @@ else if (ce) begin
                 ea_want_addr <= 1'b1;   // op2 as address for write
                 ea_dim  <= f12_dim2(cur_op);
                 ea_ret  <= 3'd0;
-                st <= S_EA_MODE;
-                st_after_ea <= S_EXEC;
+                // EA_OVERLAP fast path: op2 (the AM operand here) is register
+                // direct.  op2 is always the "address" case (ea_want_addr=1
+                // above), so the fast result is always {27'b0,eaf_reg}/flag2
+                // -- no register-value read needed, matching S_EA_MODE's own
+                // register-direct + ea_want_addr arm exactly.
+                if (eaf_reg_direct && instflags[6]) begin
+                    op2   <= {27'b0, eaf_reg};
+                    flag2 <= 1'b1;
+                    len2  <= 5'd1;
+                    st    <= S_EXEC;
+                end
+                // Part 2: simple base+displacement.  op2 is again always the
+                // address case here, so this matches S_EA_MODE's
+                // Displacement arm (rf_rdata_a + d1t, ea_flag stays 0) with
+                // no extra bus access.
+                else if (eaf_disp_direct && !instflags[6]) begin
+                    op2   <= rf_rdata_c + eaf_disp;
+                    flag2 <= 1'b0;
+                    len2  <= eaf_disp_len;
+                    st    <= S_EXEC;
+                end
+                else begin
+                    st <= S_EA_MODE;
+                    st_after_ea <= S_EXEC;
+                end
             end
         end
     end

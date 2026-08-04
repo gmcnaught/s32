@@ -469,8 +469,12 @@ try {
     Write-Tier 9 "framebuffer interface directed test (runs / shadow RMW / erase / read)"
     Run-HdlTest "t09_fb_if" "tb_fb_if" @("rtl/mem/s32_fb_if.sv", "verif/common/tb_fb_if.sv") "FB IF PASS"
 
-    Write-Tier 10 "mixer directed + 512-case independent differential test"
+    Write-Tier 10 "mixer directed + pixel latency + 512-case independent differential test"
     Run-HdlTest "t10_mixer" "tb_mixer" @("rtl/video/s32_linebuf.sv", "rtl/video/s32_mixer.sv", "rtl/video/s32_palette.sv", "verif/common/tb_mixer.sv") "MIXER PASS"
+    # The mixer must finish a pixel inside one 416-wide pixel period (12
+    # clk_ram edges).  At 13 the picture is displayed one column right of
+    # MAME in 416-wide mode only; see docs/segasonic-bringup.md.
+    Run-HdlTest "t10_mixer_latency" "tb_mixer_pixel_latency" @("rtl/video/s32_linebuf.sv", "rtl/video/s32_mixer.sv", "rtl/video/s32_palette.sv", "verif/common/tb_mixer_pixel_latency.sv") "MIXER PIXEL LATENCY PASS"
     $mixerDiffOutput = @(Invoke-NativeCapture $PythonExe @(
         "-m", "verif.mixer_diff.run",
         "--modelsim-bin", $ModelSimDirectory,

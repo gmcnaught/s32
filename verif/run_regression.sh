@@ -83,10 +83,16 @@ vvp /tmp/s32_ga_rom_cache | grep -q "PASS: Golden Axe ROM cache directed/referen
 echo "[9/35] framebuffer interface directed test (runs / shadow RMW / erase / read)"
 iverilog -g2012 -o /tmp/s32_fbif rtl/mem/s32_fb_if.sv verif/common/tb_fb_if.sv
 vvp /tmp/s32_fbif | grep -q "FB IF PASS" && echo "FB IF: PASS" || { echo "FB IF: FAIL"; exit 1; }
-echo "[10/35] mixer directed + 512-case independent differential test"
+echo "[10/35] mixer directed + pixel latency + 512-case independent differential test"
 iverilog -g2012 -o /tmp/s32_mix rtl/video/s32_linebuf.sv rtl/video/s32_mixer.sv \
   rtl/video/s32_palette.sv verif/common/tb_mixer.sv
 vvp /tmp/s32_mix | grep -q "MIXER PASS" && echo "MIXER: PASS" || { echo "MIXER: FAIL"; exit 1; }
+# The mixer must finish a pixel inside one 416-wide pixel period (12 clk_ram
+# edges).  At 13 the picture is displayed one column right of MAME in
+# 416-wide mode only; see docs/segasonic-bringup.md.
+iverilog -g2012 -o /tmp/s32_mixlat rtl/video/s32_linebuf.sv rtl/video/s32_mixer.sv \
+  rtl/video/s32_palette.sv verif/common/tb_mixer_pixel_latency.sv
+vvp /tmp/s32_mixlat | grep -q "MIXER PIXEL LATENCY PASS" && echo "MIXER PIXEL LATENCY: PASS" || { echo "MIXER PIXEL LATENCY: FAIL"; exit 1; }
 python3 -m verif.mixer_diff.generate_vectors /tmp/s32_mixer_vectors.hex --seed 5387 --count 512
 iverilog -g2012 -o /tmp/s32_mixdiff rtl/video/s32_mixer.sv verif/mixer_diff/tb_mixer_diff.sv
 vvp /tmp/s32_mixdiff +VECTORS=/tmp/s32_mixer_vectors.hex | grep -q "MIXER DIFF PASS cases=512" && echo "MIXER DIFFERENTIAL: PASS (512 cases)" || { echo "MIXER DIFFERENTIAL: FAIL"; exit 1; }

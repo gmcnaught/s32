@@ -45,7 +45,14 @@ function automatic [15:0] palette_of(input [13:0] index);
     end
 endfunction
 
-always @(posedge clk_sys)
+// The mixer's palette read port is registered on the mixer clock, not on
+// clk_sys: s32_palette drives both mix_bank_q and the RAM's q_b_r from
+// "always @(posedge mix_clk)", and s32_core wires mix_clk to clk_ram — the
+// same clock this bench calls clk.  Responding on clk_sys modelled a two-
+// clk_ram palette instead of the one-clk_ram port the core actually builds,
+// which let the bench pass a mixer that depends on latency the hardware does
+// not have.  Model the real port.
+always @(posedge clk)
     pal_data <= palette_of(pal_addr);
 
 reg [VECTOR_BITS-1:0] vector;

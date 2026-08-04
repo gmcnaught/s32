@@ -114,6 +114,13 @@ source sys/sys.tcl
 source sys/sys_analog.tcl
 source files.qip
 
+# The real NEC V25 is hardware for these two games only, so its sources live
+# with this revision rather than in the shared file list.  s32_core
+# instantiates s32_v25_cpu only under S32_REAL_V25 below; every other revision
+# instantiates the HLE responder s32_v25 from rtl/prot/s32_prot.sv instead and
+# must not compile the s80x86 core.
+set_global_assignment -name QIP_FILE rtl/cpu/v25/v25.qip
+
 # Universal real-V25 System 32 profile for Golden Axe: The Revenge of
 # Death Adder and Arabian Fight. Their descriptor selects the protection
 # table and measured V60 cadence at runtime.
