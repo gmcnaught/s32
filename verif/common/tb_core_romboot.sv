@@ -1217,6 +1217,105 @@ always @(posedge clk_sys) begin
             core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
 end
 
+// DIAGNOSTIC (radm/radr goal): find the caller of 0x070dca (the object-walk
+// entry reached right after the 511-iter clear loop returns) by reading the
+// stack the moment it's entered, same technique as before -- to trace one
+// level further up the call chain toward whatever never reaches 0x070492.
+integer callerstack2_n = 0;
+reg [31:0] callerstack2_prev_pc = 0;
+always @(posedge clk_sys) if (ce_cpu) begin
+    if (core.v60.dbg_pc == 32'h070dca && callerstack2_prev_pc != 32'h070dca && callerstack2_n < 20) begin
+        $display("[callerstack2] f=%0d pc=070dca sp=%08x ret_hi=%04x ret_lo=%04x",
+            cur_frame, core.v60.r[31],
+            core.work_ram.mem[core.v60.r[31][15:1] + 1],
+            core.work_ram.mem[core.v60.r[31][15:1]]);
+        callerstack2_n = callerstack2_n + 1;
+    end
+    callerstack2_prev_pc <= core.v60.dbg_pc;
+end
+
+// DIAGNOSTIC (radm/radr goal): the REAL master init sequence at ROM 0x0661c0
+// calls 7f8c0,67ee5,7f6df,66256,67c10,67cc8,71092,7046e,705cd,6814a,70dc4,
+// 75fa7,702aa(x3),... -- supersedes the earlier (wrong) assumption that
+// 0x070492 was next after 0x0705cd. Bisect these instead.
+localparam int NUM_BISECT2 = 8;
+localparam logic [31:0] BISECT2_ADDR [0:NUM_BISECT2-1] = '{
+    32'h07f8c0, 32'h067ee5, 32'h07f6df, 32'h06814a, 32'h070dc4,
+    32'h075fa7, 32'h0702aa, 32'h066217
+};
+reg bisect2_seen [0:NUM_BISECT2-1];
+initial for (int bj = 0; bj < NUM_BISECT2; bj++) bisect2_seen[bj] = 1'b0;
+always @(posedge clk_sys) if (ce_cpu) begin
+    for (int bj = 0; bj < NUM_BISECT2; bj++) begin
+        if (!bisect2_seen[bj] && core.v60.dbg_pc == BISECT2_ADDR[bj]) begin
+            bisect2_seen[bj] <= 1'b1;
+            $display("[bisect2] f=%0d REACHED pc=%08x", cur_frame, BISECT2_ADDR[bj]);
+        end
+    end
+end
+
+// DIAGNOSTIC (radm/radr goal): 0x066253 is an indirect jsr through a 4-entry
+// jump table indexed by work-RAM 0x20f515 & 3 (0x066245-24d). Log the index,
+// the resolved target, and whether/where it lands, to see if this is where
+// progress actually stops after the (now-confirmed-complete) 0x0661c0 init
+// chain.
+integer jt515_n = 0;
+reg [31:0] jt515_prev_pc = 0;
+reg jt515_armed = 1'b0;
+always @(posedge clk_sys) if (ce_cpu) begin
+    if (core.v60.dbg_pc == 32'h066253 && jt515_prev_pc != 32'h066253 && jt515_n < 20) begin
+        $display("[jt515] f=%0d AT pc=066253 r0=%08x", cur_frame, core.v60.r[0]);
+        jt515_armed <= 1'b1;
+        jt515_n = jt515_n + 1;
+    end
+    else if (jt515_armed && core.v60.dbg_pc != jt515_prev_pc) begin
+        $display("[jt515] f=%0d LANDED pc=%08x", cur_frame, core.v60.dbg_pc);
+        jt515_armed <= 1'b0;
+    end
+    jt515_prev_pc <= core.v60.dbg_pc;
+end
+
+// DIAGNOSTIC (radm/radr goal): the outer retry loop at 0x068205-068243 has
+// several branch targets (68279, 682a0, 68236->681f6 loop-back, 068243
+// fall-through-to-success). Bisect all of them plus a few instructions
+// downstream of the "success" path to see which one the RTL actually takes,
+// and whether it ever reaches the success path at all.
+localparam int NUM_BISECT3 = 9;
+localparam logic [31:0] BISECT3_ADDR [0:NUM_BISECT3-1] = '{
+    32'h068217, 32'h068236, 32'h068243, 32'h068279, 32'h0682a0, 32'h068251,
+    32'h068219, 32'h0707f4, 32'h070a6b
+};
+reg bisect3_seen [0:NUM_BISECT3-1];
+initial for (int bk = 0; bk < NUM_BISECT3; bk++) bisect3_seen[bk] = 1'b0;
+always @(posedge clk_sys) if (ce_cpu) begin
+    for (int bk = 0; bk < NUM_BISECT3; bk++) begin
+        if (!bisect3_seen[bk] && core.v60.dbg_pc == BISECT3_ADDR[bk]) begin
+            bisect3_seen[bk] <= 1'b1;
+            $display("[bisect3] f=%0d REACHED pc=%08x", cur_frame, BISECT3_ADDR[bk]);
+        end
+    end
+end
+
+// DIAGNOSTIC (radm/radr goal): count total (not one-shot) visits to the
+// retry-loop re-entry point 0x068236, printing every 200th, to see the
+// long-run retry rate and whether it ever reaches the success path 0x068243
+// (also counted) instead.
+integer retrycnt_236 = 0;
+integer retrycnt_243 = 0;
+reg [31:0] retry_prev_pc = 0;
+always @(posedge clk_sys) if (ce_cpu) begin
+    if (core.v60.dbg_pc == 32'h068236 && retry_prev_pc != 32'h068236) begin
+        retrycnt_236 = retrycnt_236 + 1;
+        if (retrycnt_236 % 200 == 1)
+            $display("[retrycnt] f=%0d visits236=%0d visits243=%0d", cur_frame, retrycnt_236, retrycnt_243);
+    end
+    if (core.v60.dbg_pc == 32'h068243 && retry_prev_pc != 32'h068243) begin
+        retrycnt_243 = retrycnt_243 + 1;
+        $display("[retrycnt] f=%0d SUCCESS pc=068243 count=%0d", cur_frame, retrycnt_243);
+    end
+    retry_prev_pc <= core.v60.dbg_pc;
+end
+
 // DIAGNOSTIC (radm/radr goal): has the CPU ever reached a specific PC?
 // docs/radm-radr-bringup.md: confirm/deny whether radm's demo-object
 // allocator (MAME PC 0x070dbc/0x070dfc, first hit at MAME frame 897) ever
