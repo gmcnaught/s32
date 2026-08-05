@@ -360,7 +360,6 @@ class PowerShellSyntaxTests(unittest.TestCase):
             "sha256.ps1",
             "deploy-mister.ps1",
             "deploy-s32.ps1",
-            "deploy-s32v25.ps1",
         )
         for name in names:
             with self.subTest(script=name):
@@ -418,11 +417,9 @@ class BatchPipelineSafetyTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.build = (TOOLS / "build.bat").read_text(encoding="utf-8")
         cls.standard = (TOOLS / "build-s32.bat").read_text(encoding="utf-8")
-        cls.v25 = (TOOLS / "build-s32v25.bat").read_text(encoding="utf-8")
 
     def test_windows_batch_files_use_crlf_for_reliable_label_scanning(self) -> None:
-        for path in (TOOLS / "build.bat", TOOLS / "build-s32.bat",
-                     TOOLS / "build-s32v25.bat"):
+        for path in (TOOLS / "build.bat", TOOLS / "build-s32.bat"):
             data = path.read_bytes()
             self.assertNotIn(b"\n", data.replace(b"\r\n", b""), path.name)
 
@@ -431,13 +428,12 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         for name, content in (
             ("build.bat", self.build),
             ("build-s32.bat", self.standard),
-            ("build-s32v25.bat", self.v25),
         ):
             with self.subTest(script=name):
                 self.assertNotRegex(content, r"(?im)^\s*if\s+errorlevel\s+1\b")
 
     def test_profile_wrappers_take_the_build_lock(self) -> None:
-        for wrapper in (self.standard, self.v25):
+        for wrapper in (self.standard,):
             self.assertIn("invoke-build-locked.ps1", wrapper.lower())
             self.assertIn("s32_build_lock_token", wrapper.lower())
 
@@ -455,8 +451,8 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         self.assertIn("build-stage-release.ps1", lowered)
         self.assertIn("build-seed-state.ps1", lowered)
 
-    def test_v25_qsf_enables_resource_saving_macros(self) -> None:
-        qsf = (REPO_ROOT / "s32v25.qsf").read_text(encoding="utf-8")
+    def test_merged_qsf_enables_resource_saving_macros(self) -> None:
+        qsf = (REPO_ROOT / "s32.qsf").read_text(encoding="utf-8")
         self.assertIn("S32_JT12_MLAB_SHIFTS=1", qsf)
         self.assertIn("S32_V25_MLAB_FIFO=1", qsf)
 
@@ -470,12 +466,12 @@ class BatchPipelineSafetyTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt" and POWERSHELL, "Windows PowerShell required")
 class LockWrapperTests(unittest.TestCase):
-    def test_v25_wrapper_locks_and_preserves_build_exit(self) -> None:
+    def test_profile_wrapper_locks_and_preserves_build_exit(self) -> None:
         with tempfile.TemporaryDirectory(prefix="s32-ga-wrapper-") as temporary:
             root = Path(temporary)
             tools = root / "tools"
             tools.mkdir()
-            for name in ("build-s32v25.bat", "invoke-build-locked.ps1"):
+            for name in ("build-s32.bat", "invoke-build-locked.ps1"):
                 shutil.copy2(TOOLS / name, tools / name)
             (tools / "build-incremental.bat").write_text(
                 "@echo off\r\n"
@@ -499,7 +495,7 @@ class LockWrapperTests(unittest.TestCase):
                 # stays on tools because the wrapper resolves its siblings
                 # relative to %~dp0 and writes ..\order.txt.
                 [env.get("ComSpec", "cmd.exe"), "/d", "/c",
-                 str(tools / "build-s32v25.bat")],
+                 str(tools / "build-s32.bat")],
                 cwd=tools,
                 env=env,
                 text=True,
@@ -552,7 +548,7 @@ class CIWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("check_holo_release.py", lowered)
         self.assertIn("bash -n tools/build.sh", lowered)
         self.assertIn("build-s32.bat", lowered)
-        self.assertIn("build-s32v25.bat", lowered)
+        self.assertNotIn("build-s32v25.bat", lowered)
         self.assertNotIn("docker run", lowered)
         self.assertNotIn("bash tools/build.sh", lowered)
         self.assertNotIn("upload-artifact", lowered)

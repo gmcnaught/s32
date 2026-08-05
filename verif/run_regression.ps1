@@ -405,7 +405,6 @@ try {
     Write-Tier 1 "full-core lint compile (universal + System32-only profile)"
     Run-HdlTest "t01_lint_universal" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE UNIVERSAL LINT PASS" @("SIMULATION")
     Run-HdlTest "t01_lint_standard" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE STANDARD PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING")
-    Run-HdlTest "t01_lint_v25" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE V25 PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_V25", "S32_PCB_TIMING")
     Write-RunLine "CORE BUILD PROFILES: PASS"
 
     Write-Tier 2 "V60 smoke test"
@@ -456,14 +455,14 @@ try {
     $arabMraOutput = @(Invoke-NativeCapture $PythonExe @("verif/check_arabianfight_release.py") "Arabian Fight release MRA check")
     Assert-Marker $arabMraOutput "ARABIAN FIGHT RELEASE PASS" "Arabian Fight release MRA check"
     Run-HdlTest "t08_ga2_path" "tb_core_ga2path" ($FullCoreSources + "verif/common/tb_core_ga2path.sv") "GA2 PATH PASS" @(
-        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_V25", "S32_PCB_TIMING",
-        "S32_V60_NO_FP", "S32_RELEASE_MINIMAL"
+        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING",
+        "S32_RELEASE_MINIMAL"
     ) @("-novopt")
     Run-HdlTest "t08_ga_rom_cache" "tb_ga_rom_cache" @(
         "rtl/s32_pkg.sv", "rtl/s32_core.sv", "verif/common/tb_ga_rom_cache.sv"
     ) "PASS: Golden Axe ROM cache directed/reference tests passed" @(
-        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_V25", "S32_PCB_TIMING",
-        "S32_V60_NO_FP", "S32_RELEASE_MINIMAL"
+        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING",
+        "S32_RELEASE_MINIMAL"
     )
 
     Write-Tier 9 "framebuffer interface directed test (runs / shadow RMW / erase / read)"

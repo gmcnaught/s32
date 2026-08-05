@@ -34,7 +34,7 @@ fi
 "$verilator_safe" status
 "$verilator_safe" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 "${warnings[@]}" \
   +define+SIMULATION +define+S32_REAL_FB_SIM \
-  +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_V25 \
+  +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_STANDARD \
   +define+S32_RELEASE_MINIMAL \
   +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
   "-DMICROCODE_ROM_PATH=\"$microcode\"" \

@@ -68,15 +68,15 @@ echo "[8/35] release contracts + exact dedicated-game profile boot/cache"
 python3 verif/check_holo_release.py | grep -q "HOLO RELEASE MRA PASS" || { echo "HOLO RELEASE MRA: FAIL"; exit 1; }
 python3 verif/check_ga2_release.py | grep -q "GA2 COMPAT MRA PASS" || { echo "GA2 COMPAT MRA: FAIL"; exit 1; }
 python3 verif/check_arabianfight_release.py | grep -q "ARABIAN FIGHT RELEASE PASS" || { echo "ARABIAN FIGHT RELEASE MRA: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_V25 -DS32_PCB_TIMING \
-  -DS32_V60_NO_FP -DS32_RELEASE_MINIMAL -o /tmp/s32_ga2 \
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING \
+  -DS32_RELEASE_MINIMAL -o /tmp/s32_ga2 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_ga2path.sv
 vvp /tmp/s32_ga2 | grep -q "GA2 PATH PASS" && echo "GA2 PATH: PASS" || { echo "GA2 PATH: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_V25 -DS32_PCB_TIMING \
-  -DS32_V60_NO_FP -DS32_RELEASE_MINIMAL -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache \
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING \
+  -DS32_RELEASE_MINIMAL -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache \
   rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_ga_rom_cache.sv
 vvp /tmp/s32_ga_rom_cache | grep -q "PASS: Golden Axe ROM cache directed/reference tests passed" && \
   echo "GOLDEN AXE ROM CACHE: PASS" || { echo "GOLDEN AXE ROM CACHE: FAIL"; exit 1; }

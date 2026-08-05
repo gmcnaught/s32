@@ -351,47 +351,96 @@ module s32_dualpcb (
 // fabric.  A written bitmap lazily overlays the board-specific reset value;
 // the externally visible contents and synchronous read/write timing are the
 // same, while untouched words do not need to be physically cleared.
+//
+// Inference note: an earlier version blended the array read with the cs_id
+// side-path and the reset values into a single shared `rdata` register
+// driven from three branches (the array's own read only executed inside the
+// `cs_ram && enable` branch).  Quartus 17 never classified `comm` as a RAM
+// candidate under that shape -- no "uninferred due to" diagnostic at all, it
+// silently fell to ~32,784 registers, ~44% of the whole design.
+//
+// `comm_rdata` is `comm[]`'s *only* read reference anywhere in this module
+// -- a dedicated, always-executing, unconditional read, touching nothing
+// else, so Quartus has exactly one clean single-read-port candidate to
+// infer as M10K.  A version that additionally read `comm[addr]` a second
+// time (directly, inside `rdata`'s mux) measurably shrank the design
+// (~11K ALMs, `docs/compat.md`-class investigation) but left this array's
+// own footprint completely unchanged -- Quartus was still not even
+// attempting to classify it as a RAM candidate (no "uninferred due to"
+// diagnostic, same as the original shape). A second read site anywhere,
+// even in a different always block, appears to be what disqualifies it.
+//
+// Consequence: `comm_written[addr]`, `cs_ram`, and `cs_id` (all address-
+// dependent decisions that must pair with the SAME cycle's `comm_rdata`)
+// are captured into `_d` registers in lockstep, in this same block, off the
+// same pre-edge `addr`.  `rdata`'s mux then consumes only registers, never
+// `comm[]` or `comm_written[]` directly, in the second block below.  This
+// adds one clock of read latency versus the original (2 cycles from
+// address+cs_ram to valid `rdata` instead of 1) -- a real, deliberate
+// change, not a side effect.  Verified safe: `cs_ram`/`addr` come from a
+// single-cycle bus pulse (`m_req`) with no wait-state contract today, and
+// no shipped game has ever driven `enable`/`cfg_dual_pcb` (`dual=0` for
+// every entry in tools/gen_mra.py:GAMES), so this changes zero observed
+// behaviour on any current build -- only the not-yet-implemented dual-PCB
+// bridge for a future game gets the extra cycle, and that consumer does not
+// exist yet.
+//
+// Write side: the original 3-way `case` (first-write-with-default-overlay)
+// plus a separate byte-enable branch (already-written) is two different
+// write shapes selected by a runtime condition -- not a write port Quartus
+// can map to an M10K's fixed byte-enable write port. Collapsed below into a
+// single per-byte write-enable pair: on a lazily-reset word, both byte
+// enables are forced on (baking the board default into the untouched lane,
+// same as the original case arms) so every future read of that lane -- now
+// bypassing `comm_default` since `comm_written[addr]` is set -- returns a
+// defined value instead of X.
 reg [15:0] comm [0:2047];
 reg [2047:0] comm_written;
 reg [15:0] comm_default;
+reg [15:0] comm_rdata;
+reg        comm_written_d, cs_ram_d, cs_id_d;
+wire       comm_wr    = cs_ram && enable && we && (be != 2'b00);
+wire       comm_first  = comm_wr && !comm_written[addr];
+wire       comm_wr_lo  = comm_wr && (be[0] || comm_first);
+wire       comm_wr_hi  = comm_wr && (be[1] || comm_first);
+wire [7:0] comm_wdata_lo = be[0] ? wdata[7:0]  : comm_default[7:0];
+wire [7:0] comm_wdata_hi = be[1] ? wdata[15:8] : comm_default[15:8];
+
+// `comm[]` gets its own minimal block: exactly one conditional write, one
+// unconditional read, nothing else -- not even the reset that gates the
+// surrounding book-keeping registers, matching the module's original
+// "keep the communication store reset-free" intent.
+always @(posedge clk) begin
+    if (comm_wr_lo) comm[addr][7:0]  <= comm_wdata_lo;
+    if (comm_wr_hi) comm[addr][15:8] <= comm_wdata_hi;
+    comm_rdata <= comm[addr];
+end
+
+// comm_written's only two drivers (its reset and its per-word set) live
+// here, entirely separate from comm[] -- splitting them across two always
+// blocks is an illegal multi-driver net, not merely an inference concern.
+always @(posedge clk) begin
+    if (rst) comm_written <= 2048'b0;
+    else if (comm_wr) comm_written[addr] <= 1'b1;
+end
+
 always @(posedge clk) begin
     if (rst) begin
         // F1 Exhaust Note explicitly memsets the bridge RAM to 0xffff.
         // The descriptor selects that board-specific power-up contract while
         // reset is still held during the final loader commit.
-        comm_default <= init_ff ? 16'hffff : 16'h0000;
-        comm_written <= 2048'b0;
+        comm_default   <= init_ff ? 16'hffff : 16'h0000;
+        comm_written_d <= 1'b0;
+        cs_ram_d       <= 1'b0;
+        cs_id_d        <= 1'b0;
         rdata <= init_ff ? 16'hffff : 16'h0000;
     end
-    else if (cs_ram && enable) begin
-        if (we) begin
-            // MAME's dual_pcb_comms_w uses COMBINE_DATA: a byte write
-            // updates only the selected lane and preserves the other lane.
-            // Partial writes preserve the unselected lane from the board's
-            // reset value.
-            if (be != 2'b00) begin
-                if (!comm_written[addr]) begin
-                    // A lazily reset word has no physical array contents
-                    // yet. Seed the unselected lane from the board default
-                    // before applying this first partial write.
-                    case (be)
-                        2'b01: comm[addr] <= {comm_default[15:8], wdata[7:0]};
-                        2'b10: comm[addr] <= {wdata[15:8], comm_default[7:0]};
-                        default: comm[addr] <= wdata;
-                    endcase
-                end
-                else begin
-                    if (be[0]) comm[addr][7:0]  <= wdata[7:0];
-                    if (be[1]) comm[addr][15:8] <= wdata[15:8];
-                end
-                comm_written[addr] <= 1'b1;
-            end
-        end
-        rdata <= comm_written[addr] ? comm[addr] : comm_default;
-    end
-    else if (cs_id && enable) begin
-        // Main-board identity (dual_pcb_mainsub).
-        rdata <= 16'h0000;
+    else begin
+        comm_written_d <= comm_written[addr];
+        cs_ram_d       <= cs_ram && enable;
+        cs_id_d        <= cs_id && enable;
+        if (cs_ram_d) rdata <= comm_written_d ? comm_rdata : comm_default;
+        else if (cs_id_d) rdata <= 16'h0000;   // main-board identity (dual_pcb_mainsub)
     end
 end
 

@@ -3,103 +3,30 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import ANALOG, BUTTONS, DIGITAL, GAMES, IGNORED_PARENTS
+from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS
 
 
 class BoardDescriptorTests(unittest.TestCase):
+    # 2026-08-05: holo/jpark/radm/radr/spidman moved to IGNORED_PARENTS (see
+    # memory s32-single-profile-roadmap) -- descriptor tests specific to those
+    # games (ADC/gun/digital-profile/gear-toggle/comm-link-HLE encoding) were
+    # removed here, not adapted, since the games themselves are out of scope
+    # for this RBF. Restore alongside whichever game returns first.
     def test_ignored_parents_are_not_profile_descriptors(self) -> None:
         self.assertTrue(IGNORED_PARENTS.isdisjoint(GAMES))
 
-    def test_holosseum_is_regular_flipped_two_bank_sprite_board(self) -> None:
-        descriptor = bytearray(GAMES["holo"])
-        # Generator fills physical sprite metadata after parsing the ROM region.
-        descriptor[3] = 0x81
-        self.assertEqual(descriptor[0], 0x00)
-        self.assertEqual(descriptor[1] & 0x01, 0x00)  # no dual PCB
-        self.assertEqual(descriptor[1] & 0x02, 0x02)  # ORIENTATION_FLIP_Y
-        self.assertEqual(descriptor[2], 0x00)         # no protection HLE
-        self.assertEqual(descriptor[3], 0x81)         # 8 MiB sprites
-
-    def test_gun_games_default_invert_aim(self) -> None:
-        # JPark carries gun_aim (b1 bit2), so its positional-gun analog aim
-        # defaults to inverted; the ADC (b0 bit3) stays set.
-        descriptor = bytearray(GAMES["jpark"])
-        self.assertEqual(descriptor[0] & 0x08, 0x08)  # ADC present
-        self.assertEqual(descriptor[1] & 0x04, 0x04)  # gun_aim invert
-        # a non-gun analog board (radm steering) must NOT default-invert
-        self.assertEqual(bytearray(GAMES["radm"])[1] & 0x04, 0x00)
-
-    def test_active_driving_games_select_wheel_and_pedal_adc_profile(self) -> None:
-        for game in ("radm", "radr"):
-            descriptor = bytearray(GAMES[game])
-            self.assertEqual(descriptor[0] & 0x08, 0x08, game)
-            self.assertEqual((descriptor[1] >> 4) & 0x03,
-                             ANALOG["DRIVING"], game)
-
-    def test_rad_mobile_selects_light_wiper_player_port_layout(self) -> None:
-        self.assertEqual(bytearray(GAMES["radm"])[4] & 0x03, DIGITAL["RADM"])
-
-    def test_rad_rally_selects_the_mame_epr14084_link_hle(self) -> None:
-        self.assertEqual(bytearray(GAMES["radr"])[2] & 0x80, 0x80)
-        self.assertEqual(bytearray(GAMES["radm"])[2] & 0x80, 0x00)
-
-    def test_rad_rally_two_state_gear_does_not_imply_a_link_board(self) -> None:
-        self.assertEqual(bytearray(GAMES["radr"])[1] & 0x80, 0x80)
-        self.assertEqual(bytearray(GAMES["radr"])[2] & 0x80, 0x80)
-
 
 class ButtonMetadataTests(unittest.TestCase):
-    def test_all_rad_mobile_mras_expose_light_and_wiper(self) -> None:
-        names, defaults = BUTTONS["radm"]
-        mra_dir = Path(__file__).parents[1] / "mra"
-        paths = sorted(mra_dir.glob("Rad Mobile*.mra"))
-        self.assertEqual(len(paths), 2)
-        for path in paths:
-            buttons = ElementTree.parse(path).getroot().find("buttons")
-            self.assertIsNotNone(buttons, path.name)
-            self.assertEqual(buttons.attrib["names"], names, path.name)
-            self.assertEqual(buttons.attrib["default"], defaults, path.name)
-            self.assertEqual(buttons.attrib["count"], "2", path.name)
-
-    def test_spiderman_has_two_action_buttons_and_system_controls(self) -> None:
-        names, defaults = BUTTONS["spidman"]
-        self.assertEqual(names.split(","),
-                         ["Attack", "Jump", "-", "-", "-", "-", "Start", "Coin", "Test", "Service"])
-        self.assertEqual(defaults.split(","),
-                         ["A", "B", "Start", "Select", "R", "L"])
-
-    def test_all_spiderman_mras_expose_button_metadata(self) -> None:
-        mra_dir = Path(__file__).parents[1] / "mra"
-        for path in sorted(mra_dir.glob("Spider-Man The Videogame*.mra")):
-            root = ElementTree.parse(path).getroot()
-            buttons = root.find("buttons")
-            self.assertIsNotNone(buttons, path.name)
-            self.assertEqual(buttons.attrib["names"], BUTTONS["spidman"][0])
-            self.assertEqual(buttons.attrib["default"], BUTTONS["spidman"][1])
-            self.assertEqual(buttons.attrib["count"], "2")
-
-    def test_all_segasonic_mras_expose_three_player_controls(self) -> None:
-        names, defaults = BUTTONS["sonic"]
-        self.assertEqual(
-            names.split(","),
-            ["Action", "-", "-", "-", "-", "-", "Start", "Coin", "Test", "Service"],
-        )
-        mra_dir = Path(__file__).parents[1] / "mra"
-        paths = sorted(mra_dir.glob("SegaSonic The Hedgehog*.mra"))
-        self.assertEqual(len(paths), 1)
-        for path in paths:
-            buttons = ElementTree.parse(path).getroot().find("buttons")
-            self.assertIsNotNone(buttons, path.name)
-            self.assertEqual(buttons.attrib["names"], names, path.name)
-            self.assertEqual(buttons.attrib["default"], defaults, path.name)
-            self.assertEqual(buttons.attrib["count"], "1", path.name)
+    # 2026-08-05: radm/spidman/sonic button-metadata tests removed alongside
+    # the games themselves (see BoardDescriptorTests note above).
+    pass
 
 
 class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        self.assertEqual(len(paths), 20)
+        self.assertEqual(len(paths), 6)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")

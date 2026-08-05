@@ -1316,6 +1316,22 @@ always @(posedge clk_sys) if (ce_cpu) begin
     retry_prev_pc <= core.v60.dbg_pc;
 end
 
+// DIAGNOSTIC (radm/radr goal): the table-gen write at 0x067faa
+// ("mov.h R0,[R11+]") stores a byte-swapped value (0x5345 vs MAME's
+// 0x4553) into work-RAM 0x20f500. Capture R0's value the instant PC
+// reaches 0x067fa8 (the instruction immediately before the write) to see
+// whether R0 itself is already wrong (ALU/register bug upstream) or only
+// the write to memory swaps it (bus/write-path bug).
+integer r0check_n = 0;
+reg [31:0] r0check_prev_pc = 0;
+always @(posedge clk_sys) if (ce_cpu) begin
+    if (core.v60.dbg_pc == 32'h067fa8 && r0check_prev_pc != 32'h067fa8 && r0check_n < 5) begin
+        $display("[r0check] f=%0d pc=067fa8 r0=%08x r11=%08x", cur_frame, core.v60.r[0], core.v60.r[11]);
+        r0check_n = r0check_n + 1;
+    end
+    r0check_prev_pc <= core.v60.dbg_pc;
+end
+
 // DIAGNOSTIC (radm/radr goal): has the CPU ever reached a specific PC?
 // docs/radm-radr-bringup.md: confirm/deny whether radm's demo-object
 // allocator (MAME PC 0x070dbc/0x070dfc, first hit at MAME frame 897) ever

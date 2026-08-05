@@ -13,7 +13,6 @@ Use a supported Windows build with the pinned local toolchain:
 
     set QUARTUS_ROOT=D:\Q17
     tools\build-s32.bat
-    tools\build-s32v25.bat
 
 D:\Q17 is validated as Quartus Lite 17.0.2.602 before any compiler starts.
 The Image and SkipPull parameters are retained only so old invocations fail

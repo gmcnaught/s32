@@ -119,7 +119,7 @@ try {
             "-sv", "-work", $Work,
             "+define+SIMULATION",
             "+define+S32_SYSTEM32_ONLY",
-            "+define+S32_PROFILE_V25",
+            "+define+S32_PROFILE_STANDARD",
             "+define+S32_REAL_FB_SIM"
         ) + $Sources
     ) "vlog"

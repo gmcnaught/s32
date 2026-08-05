@@ -2,12 +2,32 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-05: merged into a single profile
+
+The separate `s32v25` universal real-V25 revision was retired. One RBF now
+supports every non-Multi-32 System 32 game, including `ga2` and `arabfgt`;
+games are added to it one at a time going forward rather than staged across
+parallel profiles (see memory `s32-single-profile-roadmap`). This closed a
+real, previously-unmeasured resource blocker: the universal build had never
+actually fit the device (`docs/compat.md`), because `s32_dualpcb`'s 4 KiB
+comm-RAM array failed Quartus 17 block-RAM inference and cost ~45,746
+combinational ALUTs (~44% of the whole design) as unconditionally-compiled
+registers. That inference failure is fixed (`rtl/prot/s32_prot.sv`) as part
+of this same merge. CPU Turbo was also removed from the profile so its V60
+multicycle timing relaxation (`s32.sdc`) can apply unconditionally instead of
+being keyed to which Quartus revision was selected.
+
+Sections below that still say "`s32v25`" or "V25 profile" as a *routing*
+target are historical (dated) and superseded by this note; the underlying
+attract/gameplay evidence they record remains valid regardless of which RBF
+file the game now loads from.
+
 ## Outputs
 
-- `s32.rbf` / `s32.qsf`: standard image for the active parents `holo`, `jpark`,
-  `radm`, `radr`, `sonic`, and `spidman`.
-- `s32v25.rbf` / `s32v25.qsf`: universal real-V25 image for `ga2` and
-  `arabfgt`. The descriptor's `v25_table` bit selects the table and cadence.
+- `s32.rbf` / `s32.qsf`: the single production image for every supported
+  parent (`holo`, `jpark`, `radm`, `radr`, `sonic`, `spidman`, `ga2`,
+  `arabfgt`). The board descriptor's `has_v25`/`v25_table` bits select
+  whether the real V25 core is enabled and which table/cadence it uses.
 - No production image supports Multi 32 sets.
 
 ## User-requested exclusions (2026-08-03)
@@ -20,23 +40,24 @@ they are outside the production profile.
 
 ## Source of truth
 
-`tools/gen_mra.py:RBF_BY_PARENT` is authoritative for MRA-to-RBF routing.
-`s32.qsf` and `s32v25.qsf` are the only production Quartus revisions.
-`S32_PROFILE_STANDARD` and `S32_PROFILE_V25` are the only production profile
-macros. Any other game-named macro is a test legacy and must not be used to
-route a shipped game. `S32_PCB_TIMING` is a common, profile-independent
-behavior flag in both QSFs; it selects the shared ce-gated V60 fetch boundary
-and never selects a game or RBF.
+`tools/gen_mra.py:RBF_BY_PARENT` is empty by design (every game routes to the
+default `"s32"`) and is authoritative for MRA-to-RBF routing. `s32.qsf` is the
+only production Quartus revision. `S32_PROFILE_STANDARD` is the only
+production profile macro; `S32_PROFILE_V25` must never be defined again. Any
+other game-named macro is a test legacy and must not be used to route a
+shipped game. `S32_PCB_TIMING` is a common behavior flag that selects the
+shared ce-gated V60 fetch boundary and never selects a game or RBF.
 
-## Feature placement
+## Feature placement (single profile)
 
-| Feature/change | `s32` | `s32v25` |
-|---|---:|---:|
-| Shared V60, video, sprite, audio, I/O, loader, and HLE protection fixes | yes | yes |
-| Descriptor-driven ADC/trackball/gun/PPI/dual-PCB/link-HLE paths | yes | profile-pruned where physically absent |
-| Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | **not compiled** — `rtl/cpu/v25/v25.qip` is listed by `s32v25.qsf`, not by the shared `files.qip`; `s32` instantiates the HLE `s32_v25` from `rtl/prot/s32_prot.sv` | yes |
-| V25 table/cadence selection | no | descriptor-driven GA2/Arabian |
-| Multi 32 second screen/peripheral hardware | no | no |
+| Feature/change | `s32` |
+|---|---:|
+| Shared V60, video, sprite, audio, I/O, loader, and HLE protection fixes | yes |
+| Descriptor-driven ADC/trackball/gun/PPI/dual-PCB/link-HLE paths | yes |
+| Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (shared, `S32_REAL_V25=1`); enabled per-game by the descriptor's `has_v25` bit, otherwise idle |
+| V25 table/cadence selection | descriptor-driven (`v25_table`), same fixed per-board constants as the retired dedicated profile |
+| CPU Turbo | removed (V60 timing relies on fixed CE spacing for every game now — see `s32.sdc`) |
+| Multi 32 second screen/peripheral hardware | no |
 
 ## Evidence status (2026-08-01)
 

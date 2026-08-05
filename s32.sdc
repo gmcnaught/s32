@@ -1,6 +1,39 @@
 derive_pll_clocks
 derive_clock_uncertainty
 
+# sys/sys_top.sdc (vendored, not modified here) already relaxes several
+# sys/osd.v internal counters this way -- e.g.
+# `set_multicycle_path -to {*_osd|osd_vcnt*} -setup 2` -- and false-paths the
+# rarely-changing sources that feed them (`rot`, `dsp_width`). `pixsz`/
+# `pixcnt` (the OSD's pixel-scaling reload counter) are the same class of
+# signal but are not in that list: pixsz is a configuration value reloaded
+# only on a mode/rotation change and held stable for many clk_video cycles
+# afterward, while pixcnt's comparison against it happens continuously: by
+# the time pixcnt actually reaches pixsz's value, pixsz has been stable for
+# a long time, so this path never needs single-cycle timing to be correct.
+# 2026-08-05: this RBF's resource/placement profile (see memory
+# s32-single-profile-roadmap) pushed pixsz->pixcnt to -0.299 ns setup slack,
+# the only remaining timing failure once the game-logic clock domain
+# (rtl/s32_core.sv's mixer pixel/display-X pipeline fix) was closed. Adding
+# the missing sibling exception here, not in the vendored sys/osd.v/
+# sys_top.sdc, since s32.sdc is this project's own file.
+set_multicycle_path -to {*_osd|pixcnt*} -setup 2
+set_multicycle_path -to {*_osd|pixcnt*} -hold 1
+
+# 2026-08-05 (same sweep): fixing pixcnt above exposed `multiscan` as the new
+# worst path (-0.379 ns), fed both by osd.v's own h_cnt-derived per-frame
+# selector logic and, via sys_top.v's shared clk_video composition, by
+# HDMI_shadowmask's RAM output. `multiscan` (sys/osd.v ~line 158/211-234) is
+# updated only once per frame, inside the same rare
+# `if(h_cnt > {dsp_width,2'b00})`-gated block that already justifies the
+# osd_vcnt exception above, and is compared every pixel against `osd_div`
+# (`if(osd_div == multiscan)`) the same way pixsz/pixcnt are -- by the time
+# osd_div reaches multiscan's value, multiscan has been stable for a whole
+# frame. Same class of signal, same justification; the multicycle relax is
+# on the destination register so it covers both incoming sources.
+set_multicycle_path -to {*_osd|multiscan*} -setup 2
+set_multicycle_path -to {*_osd|multiscan*} -hold 1
+
 # core specific constraints
 
 # The forwarded SDRAM clock, the CPU clock-enable exception, and the sprite
@@ -51,34 +84,28 @@ set_multicycle_path -hold -end -from [get_clocks SDRAM_CLK] \
 
 }
 
-# The universal V25 profile compiles out CPU Turbo. Both descriptor-selected
-# cadences leave at least one idle clk_sys edge between V60 updates, so its
-# internal register paths have a real two-cycle requirement. The standard
-# profile retains Turbo and remains single-cycle.
-set s32_revision ""
-if {[llength [info commands get_current_revision]] > 0} {
-    set s32_revision [get_current_revision]
-}
-set s32_game_fixed_ce [string equal $s32_revision "s32v25"]
+# 2026-08-05: CPU Turbo was retired from the single merged s32 profile (see
+# memory s32-single-profile-roadmap) specifically so this fixed-CE assumption
+# can apply unconditionally. Every board now runs a fixed per-game cadence
+# (Arcade-SegaSystem32.sv's cpu_ce_inc) with no Turbo multiplier, so every
+# board leaves at least one idle clk_sys edge between V60 updates and this
+# revision's internal V60 register paths have a real two-cycle requirement
+# universally -- there is no longer a second, single-cycle-timed revision.
+set v60_regs [get_registers -nowarn {*|s32_v60:v60|*}]
+if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for the fixed-CE constraint"]} {
+    set_multicycle_path -setup 2 -from $v60_regs -to $v60_regs
+    set_multicycle_path -hold 1 -from $v60_regs -to $v60_regs
 
-if {$s32_game_fixed_ce} {
-    set v60_regs [get_registers -nowarn {*|s32_v60:v60|*}]
-    if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for the dedicated-game fixed-CE constraint"]} {
-        set_multicycle_path -setup 2 -from $v60_regs -to $v60_regs
-        set_multicycle_path -hold 1 -from $v60_regs -to $v60_regs
-
-        # Generic V60 builds retain the optional FP state machine. Dedicated
-        # no-FP profiles normally have no fp_a registers; absence is expected.
-        set v60_fp_a [get_registers -nowarn {*|s32_v60:v60|fp_a[*]}]
-        if {[get_collection_size $v60_fp_a] > 0} {
-            set_multicycle_path -setup 3 -from $v60_fp_a -to $v60_regs
-            set_multicycle_path -hold 2 -from $v60_fp_a -to $v60_regs
-        } else {
-            post_message -type info "s32 SDC: dedicated no-FP profile has no fp_a registers"
-        }
+    # Every merged-profile build retains the optional FP state machine now
+    # (S32_V60_NO_FP is no longer defined anywhere), so fp_a registers are
+    # always expected; absence would indicate that macro reappeared.
+    set v60_fp_a [get_registers -nowarn {*|s32_v60:v60|fp_a[*]}]
+    if {[get_collection_size $v60_fp_a] > 0} {
+        set_multicycle_path -setup 3 -from $v60_fp_a -to $v60_regs
+        set_multicycle_path -hold 2 -from $v60_fp_a -to $v60_regs
+    } else {
+        post_message -type info "s32 SDC: no fp_a registers found (unexpected unless S32_V60_NO_FP is defined)"
     }
-} else {
-    post_message -type info "s32 SDC: revision '$s32_revision' retains single-cycle V60 timing"
 }
 # Sprite words 0..6 are loaded at least two fetch clocks before decode; word 7
 # is intentionally excluded because clip commands consume it on the very next

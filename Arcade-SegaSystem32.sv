@@ -143,8 +143,8 @@ always @(*) begin
     active_board.digital_profile  = DIGITAL_GENERIC;
 `elsif S32_PROFILE_STANDARD
     active_board.multi32          = 1'b0;
-    active_board.has_v25          = 1'b0;
-    active_board.v25_table        = 1'b0;
+    active_board.has_v25          = board_desc.has_v25;
+    active_board.v25_table        = board_desc.v25_table;
 `endif
 end
 
@@ -179,12 +179,11 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
 `endif
     "O[7],Service Mode,Off,On;",
-`ifndef S32_PROFILE_V25
-    "O[16:15],CPU Turbo,Normal,x2,x3,x4;",
-`endif
     "O[12],Pause,Off,On;",
-`ifndef S32_PROFILE_V25
     "O[14:13],Analog Aim Invert,Off,X,Y,XY;",
+`ifndef S32_RELEASE_MINIMAL
+    "-;",
+    "O[11:8],Debug Video,Off,PC,Bus Status,First ROM,P1 Word,Sprite Post-mortem,Coin/Start/Service,Framebuffer,Palette,FB Underrun,Camera,V25,Sprite Health;",
 `endif
     "-;",
     "R[0],Reset;",
@@ -234,27 +233,19 @@ reg ce_cpu, ce_z80, ce_fm, ce_pcm;
 reg [15:0] acc_cpu, acc_z80, acc_fm, acc_pcm;
 wire is_multi32 = active_board.multi32;
 wire pause = status[12];
-`ifdef S32_PROFILE_V25
-// Both protected games have fixed CE spacing, so the V60 timing exception is
-// valid for the whole image. Arabian Fight selects its measured clk_sys/2
-// cadence through the descriptor; Golden Axe retains the authentic cadence.
-wire [15:0] cpu_ce_inc = active_board.v25_table ? 16'd32768 : 16'd21848;
-`else
-// Universal profiles retain the optional V60/V70 multiplier. They receive no
-// blanket CPU multicycle timing exception because Turbo can assert CE on
-// consecutive clk_sys edges.
-wire [1:0]  cpu_turbo   = status[16:15];             // 0=Normal,1=x2,2=x3,3=x4
-wire [2:0]  cpu_mult    = {1'b0, cpu_turbo} + 3'd1;  // 1..4
-wire [20:0] cpu_ce_base = is_multi32 ? 21'd27127 : 21'd21848;
-// Arabian Fight overruns its per-field object work because this non-pipelined
-// V60 model retires the attract loop at 12.49 clocks/instruction.  Give only
-// that board a measured 3/2 Normal-rate compensation; explicit Turbo choices
-// and every other title retain their existing behavior.
-wire [20:0] cpu_ce_full = cpu_ce_base * cpu_mult +
-                         ((active_board.v25_table && cpu_turbo == 2'd0)
-                          ? (cpu_ce_base >> 1) : 21'd0);
-wire [15:0] cpu_ce_inc  = (cpu_ce_full > 21'd65535) ? 16'd65535 : cpu_ce_full[15:0];
-`endif
+// CPU Turbo is retired in the single merged profile: s32.sdc's V60 register-
+// to-register multicycle relaxation now applies unconditionally, and that
+// relaxation is only sound with fixed, single-cycle-safe CE spacing (no
+// back-to-back clk_sys edges) for every game, not just the two V25 titles --
+// see s32.sdc's s32_game_fixed_ce comment. Every board therefore runs at a
+// fixed per-board cadence: arabfgt/ga2 keep the exact measured constants
+// carried over from the dedicated V25 profile this replaces (real-hardware
+// timing, including Arabian Fight's clk_sys/2 cadence for its 12.49
+// clocks/instruction non-pipelined V60 attract-loop overrun); every other
+// board keeps its existing base rate with the multiplier locked at 1x.
+wire [15:0] cpu_ce_inc = active_board.has_v25
+                         ? (active_board.v25_table ? 16'd32768 : 16'd21848)
+                         : (is_multi32 ? 16'd27127 : 16'd21848);
 always @(posedge clk_sys) begin
     logic [16:0] s;
     if (reset) begin
@@ -787,6 +778,15 @@ wire  [23:0] core_debug_fb_underrun; // PF-6: sprite line-fetch overrun telemetr
 wire  [15:0] core_debug_cam;         // spidman world-camera {page, display_lo}
 wire  [23:0] core_debug_v25;         // V25 bring-up flags/mailbox snoop
 wire  [89:0] core_debug_v25_img;     // MCU image hash sweep + first fetched line
+// In-game debug OSD: sprite pipeline health (debug page 12).
+wire  [31:0] core_debug_spr_list;
+wire  [31:0] core_debug_spr_draw;
+wire  [31:0] core_debug_spr_sprwr;
+wire  [31:0] core_debug_spr_latency;
+wire  [31:0] core_debug_spr_health;
+wire  [15:0] core_debug_spr_publish;
+wire  [23:0] core_debug_tile_overrun;  // PF-6: tile-fetch line overrun telemetry
+wire  [15:0] core_debug_mixer_sprpx;
 `endif
 
 s32_core core (
@@ -840,7 +840,10 @@ s32_core core (
     .debug_sprite_last_draw_desc(), .debug_sprite_activity(),
     .debug_sprite_state(), .debug_sprite_counts(), .debug_sprite_rendering(),
     .debug_sprram_cpu(), .debug_pal_rd(), .debug_fb_underrun(),
-    .debug_cam(), .debug_v25(), .debug_v25_img()
+    .debug_cam(), .debug_v25(), .debug_v25_img(),
+    .debug_spr_list(), .debug_spr_draw(), .debug_spr_sprwr(),
+    .debug_spr_latency(), .debug_spr_health(), .debug_spr_publish(),
+    .debug_tile_overrun(), .debug_mixer_sprpx()
 `else
     .debug_pc(core_debug_pc), .debug_halted(core_debug_halted),
     .debug_status(core_debug_status), .debug_first_rom(core_debug_first_rom),
@@ -858,7 +861,15 @@ s32_core core (
     .debug_fb_underrun(core_debug_fb_underrun),
     .debug_cam(core_debug_cam),
     .debug_v25(core_debug_v25),
-    .debug_v25_img(core_debug_v25_img)
+    .debug_v25_img(core_debug_v25_img),
+    .debug_spr_list(core_debug_spr_list),
+    .debug_spr_draw(core_debug_spr_draw),
+    .debug_spr_sprwr(core_debug_spr_sprwr),
+    .debug_spr_latency(core_debug_spr_latency),
+    .debug_spr_health(core_debug_spr_health),
+    .debug_spr_publish(core_debug_spr_publish),
+    .debug_tile_overrun(core_debug_tile_overrun),
+    .debug_mixer_sprpx(core_debug_mixer_sprpx)
 `endif
 );
 
@@ -1048,6 +1059,55 @@ always @(posedge clk_sys) debug_v25_rgb <=
                                   v25_wake  ? 8'hff : 8'h00,
                                   v25_mb_nz ? 8'hff : 8'h00};
 
+// Debug page 12: sprite-pipeline health (in-game debug OSD). Eight 28-line
+// horizontal bands top to bottom. Each band's left half (hcnt<160) and
+// right half (hcnt>=160) show two related counters as {8'h00,value16} RGB
+// (R always 0, G:B = the 16-bit value big-endian, so a screenshot pixel
+// probe reads it directly as one 16-bit number). See docs/ for the
+// decode legend; brief summary:
+//   band 0: list-walk entries this field   | L=even field  R=odd field
+//   band 1: draw commands this field       | L=even field  R=odd field
+//   band 2: CPU sprite-RAM writes/field     | L=even field  R=odd field
+//   band 3: vblank->write latency (clk_ram) | L=first write R=last write
+//   band 4: R=frames-since-publish G=overrun-count(sticky-class) B=render-passes-this-field;
+//           a solid magenta 16px marker at the far left means
+//           buffer_collision_sticky has fired at least once (arabfgt-floor-
+//           flicker-class bug: renderer wrote into a buffer being scanned)
+//   band 5: cumulative buffer-publish count (saturating)
+//   band 6: tile-fetch line overrun (PF-6): R=sticky "ever overran" (0xff/0x00), G:B=count
+//   band 7: opaque sprite pixels reaching the mixer this field (general
+//           "is content reaching the screen at all" check)
+wire [15:0] dbg12_list_l  = core_debug_spr_list[15:0];
+wire [15:0] dbg12_list_r  = core_debug_spr_list[31:16];
+wire [15:0] dbg12_draw_l  = core_debug_spr_draw[15:0];
+wire [15:0] dbg12_draw_r  = core_debug_spr_draw[31:16];
+wire [15:0] dbg12_sprwr_l = core_debug_spr_sprwr[15:0];
+wire [15:0] dbg12_sprwr_r = core_debug_spr_sprwr[31:16];
+wire [15:0] dbg12_w0lat   = core_debug_spr_latency[15:0];
+wire [15:0] dbg12_w1lat   = core_debug_spr_latency[31:16];
+wire        dbg12_collision = core_debug_spr_health[0];
+wire [23:0] dbg12_health_rgb = {core_debug_spr_health[31:8]};
+reg [23:0] debug_p12_rgb;
+always @(*) begin
+    if (core_debug_vcnt < 9'd28)
+        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_list_l : dbg12_list_r};
+    else if (core_debug_vcnt < 9'd56)
+        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_draw_l : dbg12_draw_r};
+    else if (core_debug_vcnt < 9'd84)
+        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_sprwr_l : dbg12_sprwr_r};
+    else if (core_debug_vcnt < 9'd112)
+        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_w0lat : dbg12_w1lat};
+    else if (core_debug_vcnt < 9'd140)
+        debug_p12_rgb = (core_debug_hcnt < 9'd16 && dbg12_collision) ? 24'hff00ff
+                                                                      : dbg12_health_rgb;
+    else if (core_debug_vcnt < 9'd168)
+        debug_p12_rgb = {8'h00, core_debug_spr_publish};
+    else if (core_debug_vcnt < 9'd196)
+        debug_p12_rgb = core_debug_tile_overrun;
+    else
+        debug_p12_rgb = {8'h00, core_debug_mixer_sprpx};
+end
+
 wire [23:0] debug_rgb = status[11:8] == 4'd1 ? core_debug_pc[23:0] :
                         status[11:8] == 4'd2 ? core_debug_status :
                         status[11:8] == 4'd3 ? {8'h00, core_debug_first_rom} :
@@ -1061,14 +1121,26 @@ wire [23:0] debug_rgb = status[11:8] == 4'd1 ? core_debug_pc[23:0] :
                         status[11:8] == 4'd9 ? core_debug_fb_underrun :
                         status[11:8] == 4'd10 ? debug_cam_rgb :
                         status[11:8] == 4'd11 ? debug_v25_rgb :
+                        status[11:8] == 4'd12 ? debug_p12_rgb :
                                                    game_rgb;
 `endif
 // Valid sync continues throughout startup. The solid colour identifies the
 // exact gate holding game logic: blue=download, red=ROM completion,
 // yellow=external/OSD reset. Normal game RGB takes over after boot.
+// debug_rgb (compiled only outside S32_RELEASE_MINIMAL) already falls back
+// to game_rgb when status[11:8]==0, so this substitution is transparent
+// when no debug page is selected. Previously debug_rgb was computed but
+// never actually reached the video output -- none of the debug pages,
+// including the ones added here, were ever visible on real hardware.
+`ifndef S32_RELEASE_MINIMAL
+wire [23:0] rgb_out = ioctl_download ? 24'h0000C0 :
+                        ~rom_loaded   ? 24'hC00000 :
+                        video_reset   ? 24'hC0C000 : debug_rgb;
+`else
 wire [23:0] rgb_out = ioctl_download ? 24'h0000C0 :
                         ~rom_loaded   ? 24'hC00000 :
                         video_reset   ? 24'hC0C000 : game_rgb;
+`endif
 
 assign CE_PIXEL = ce_pix_core;
 assign VGA_R  = rgb_out[23:16];

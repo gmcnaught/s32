@@ -65,14 +65,18 @@ def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0,
 
 GAMES = {
     # parent: (descriptor, per-set list built from clones automatically)
+    # 2026-08-05: scope reduced to exactly these two parents (see memory
+    # s32-single-profile-roadmap) -- ga2/arabfgt only. Sonic was dropped
+    # after a real resource-fit blocker: the V60's generic instruction
+    # cache fails Quartus 17 RAM inference (same failure class already
+    # fixed for the dual-PCB module) and the proven fix -- the dedicated
+    # synchronous s32_ga_rom_cache, S32_AREA_ROM_CACHE -- assumes no game
+    # needs the generic protection ROM-read arbitration (prot_rom_grant),
+    # which Sonic's PROT_SONIC responder does. Re-add Sonic once that
+    # arbitration is properly extended for a third client; other dropped
+    # games return one at a time after that.
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
-    "holo":     desc(flip_y=1),
-    "jpark":    desc(adc=1, gun=1),
-    "radm":     desc(adc=1, analog=ANALOG["DRIVING"], digital=DIGITAL["RADM"]),
-    "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1, gear_toggle=1),
-    "sonic":    desc(track=1, prot=PROT["SONIC"]),
-    "spidman":  desc(ppi=1),
     # NO MULTI 32 SETS.  harddunk/orunners/scross/titlef are Multi 32 boards and
     # this repository builds System 32 only: every shipped revision sets
     # S32_SYSTEM32_ONLY=1, which folds is_multi32 to a constant and removes the
@@ -87,6 +91,9 @@ GAMES = {
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
     "brival", "darkedge", "dbzvrvs", "f1en", "f1lap", "slipstrm", "svf", "jleague",
+    # 2026-08-05: temporarily out of scope, not declined -- see memory
+    # s32-single-profile-roadmap. Re-add one at a time in future work.
+    "holo", "jpark", "radm", "radr", "spidman", "sonic",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -107,54 +114,24 @@ BUTTONS = {
         "Attack,Magic,-,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,Start,Select,R,L,Y",
     ),
-    "jpark": (
-        "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
-    "spidman": (
-        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "sonic": (
-        "Action,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
-    "radm": (
-        "Light,Wiper,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "radr": (
-        "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
 }
 
 BUTTON_COUNTS = {
     "arabfgt": 2,
     "ga2": 3,
-    "jpark": 1,
-    "spidman": 2,
-    "sonic": 1,
-    "radm": 2,
-    "radr": 1,
 }
-RBF_BY_PARENT = {
-    "ga2": "s32v25",
-    "arabfgt": "s32v25",
-}
+# 2026-08-05: the separate s32v25 revision was retired (see memory
+# s32-single-profile-roadmap) -- real V25 hardware is now always compiled
+# into the single s32 profile, descriptor-led like every other per-game
+# config bit. Every game's MRA routes to "s32" (the emit-time default below).
+RBF_BY_PARENT = {}
 
 UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
 
 # MAME init_* ROM pokes the hardware cannot supply, keyed by parent and applied
 # to every set of that parent. Offsets are local to the maincpu index-4 stream.
-#   jpark: init_jpark (segas32.cpp) pokes pROM[0xC15A8/2]=0xCD70 and
-#   pROM[0xC15AA/2]=0xD8CD -- "Temp. Patch until we emulate the 'Drive
-#   Board', thanks to Malice" -- letting the MAIN BD -> DRIVE BD network
-#   check pass without the cabinet's drive-board Z80.  V60 is little-endian,
-#   so the words become bytes 70 CD / CD D8.
-PATCHES = {
-    "jpark": [(0xC15A8, "70 CD CD D8")],
-}
+# (jpark's init_jpark patch lived here; removed with jpark -- see IGNORED_PARENTS.)
+PATCHES = {}
 
 def parse(src):
     """Return {setname: {'regions': [(region, size, loads)], 'title', 'parent'}}"""

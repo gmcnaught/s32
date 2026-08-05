@@ -51,8 +51,20 @@ set_global_assignment -name ECO_OPTIMIZE_TIMING ON
 set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
-# Seed 2 was the best of the archived legal fits and is the deterministic
-# first-choice seed for the dedicated release pipeline.
+# 2026-08-05: seed 2 was the best archived-legal-fit seed for the *pre-audit*
+# resource profile. This session's RAM-inference fixes (s32_dualpcb,
+# s32_v25_rom_cache, comm_ram) freed enough ALUTs to change the design's
+# whole placement problem, exposing marginal sub-0.2ns setup paths
+# (s32_tilemap lay->vram_addr) that were never the worst path before, once
+# the OSD pixcnt/multiscan multicycle exceptions below closed the larger
+# vendor-OSD violations. Re-checked seed 3 per the timing-closure playbook
+# (try up to 3 additional seeds once logic/constraints are correct, before
+# touching RTL for a placement-sensitive violation this small): seed 3 was
+# worse (-0.831 ns worst setup vs seed 2's -0.183 ns). Kept seed 2. A seed 4
+# trial was started but not completed/validated in this session -- the next
+# session should either finish that comparison or accept seed 2 with the
+# remaining -0.183 ns s32_tilemap path as a reviewed exception once it's
+# confirmed inactive, or fix it in RTL.
 set_global_assignment -name SEED 2
 # Quartus 17.0.2 has crashed in l_run_heap_expansion_algorithm while routing
 # this 99%-full real-V25 image with parallel fitter workers.  A single fitter
@@ -69,21 +81,42 @@ set_global_assignment -name NUM_PARALLEL_PROCESSORS 8
 set_global_assignment -name VERILOG_MACRO "S32_SYSTEM32_ONLY=1"
 set_global_assignment -name VERILOG_MACRO "S32_PROFILE_STANDARD=1"
 set_global_assignment -name VERILOG_MACRO "S32_PCB_TIMING=1"
+# 2026-08-05: this RBF is scoped to exactly ga2/arabfgt (see memory
+# s32-single-profile-roadmap); other games return one at a time later. This
+# reuses the same dedicated-game trim (GAME_ONLY/V25_GAME_ONLY in
+# rtl/s32_core.sv) the retired S32_PROFILE_V25 revision used for the same
+# two games -- no analog/trackball/generic-protection/dual-PCB, and (with
+# S32_REAL_V25 below) the dedicated synchronous V60 ROM cache instead of the
+# generic one, which was the actual resource blocker for a 3rd game (Sonic):
+# it needs the generic protection ROM-read arbitration this cache assumes is
+# unreachable. Remove this macro (not the games it strips) when Sonic or
+# another game returns with that arbitration properly extended.
+set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY=1"
+# Neither ga2 nor Arabian Fight executes the optional V60 floating-point
+# group (proven by the retired dedicated V25 profile, which shipped this
+# exact optimization for these same two games). Re-review before adding any
+# future game to this scope.
+set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
 set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
 
-# --- No real V25 in this revision ---------------------------------------------
-# The NEC V25 is hardware for Golden Axe: The Revenge of Death Adder and
-# Arabian Fight only.  Its sources (rtl/cpu/v25/v25.qip: the s80x86 core,
-# s32_v25_cpu and s32_v25_rom_cache) are listed by s32v25.qsf, not by the
-# shared files.qip, so this revision does not compile them at all -- it is not
-# an opt-in that happens to be switched off.  s32_core instantiates the HLE
-# responder s32_v25 from rtl/prot/s32_prot.sv whenever S32_REAL_V25 is
-# undefined, which is the case here.
+# --- Real V25 (Golden Axe: The Revenge of Death Adder / Arabian Fight) -------
+# 2026-08-05: folded into this single profile so one s32.rbf covers every
+# System 32 game (see memory s32-single-profile-roadmap). Previously only
+# s32v25.qsf compiled the real NEC V25 (rtl/cpu/v25/v25.qip: the s80x86 core,
+# s32_v25_cpu and s32_v25_rom_cache); this revision used the static HLE
+# responder s32_v25 (rtl/prot/s32_prot.sv) for every game instead, with
+# cfg_has_v25 hardcoded to 0 regardless of the board descriptor. s32_core.sv's
+# STANDARD-profile branch now reads cfg_has_v25 from board.has_v25 like every
+# other per-game config bit, so the real V25 core is only enabled at runtime
+# for the two games whose descriptor sets it (tools/gen_mra.py:GAMES).
 #
-# S80X86_PSEUDO_286_INT is deliberately NOT defined: it is a required
-# compile-time choice for the upstream s80x86 Flags module, and that module is
-# no longer part of this revision's source set.
+# S80X86_PSEUDO_286_INT is a required compile-time choice for the upstream
+# s80x86 Flags module whenever its source is part of the build at all.
+set_global_assignment -name VERILOG_MACRO "S80X86_PSEUDO_286_INT=0"
+set_global_assignment -name QIP_FILE rtl/cpu/v25/v25.qip
+set_global_assignment -name VERILOG_MACRO "S32_REAL_V25=1"
+set_global_assignment -name VERILOG_MACRO "S32_V25_MLAB_FIFO=1"
 
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 

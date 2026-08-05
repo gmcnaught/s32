@@ -6,7 +6,6 @@ name: verify-source
 #
 #   set QUARTUS_ROOT=D:\Q17
 #   tools\build-s32.bat
-#   tools\build-s32v25.bat
 #
 # That path records an input manifest, qualifies fit and multicorner timing,
 # and stages hash-verified universal-profile RBFs. Community containers and the legacy

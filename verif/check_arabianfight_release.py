@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Static contract for Arabian Fight in the universal V25 profile."""
+"""Static contract for Arabian Fight in the single merged real-V25 profile.
+
+2026-08-05: the separate universal real-V25 profile (s32v25) was retired --
+real V25 hardware is now always compiled into the single s32.qsf revision,
+descriptor-led (board.has_v25) like every other per-game config bit. See
+memory s32-single-profile-roadmap. CPU Turbo was removed from the merged
+profile so its V60 multicycle relaxation applies unconditionally (s32.sdc).
+This RBF is scoped to exactly ga2/arabfgt (Sonic dropped as a real resource
+blocker), so it also reuses the retired dedicated V25 profile's resource
+trims for these same two games: S32_GAME_ONLY and S32_V60_NO_FP.
+MISTER_DISABLE_SHADOWMASK remains a trim not carried over (a scaler/output
+feature loss, not resource-driven for this scope).
+"""
 
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -7,7 +19,6 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 standard_qsf = (ROOT / "s32.qsf").read_text(encoding="utf-8")
-v25_qsf = (ROOT / "s32v25.qsf").read_text(encoding="utf-8")
 for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
@@ -19,22 +30,22 @@ for assignment in (
     "PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF",
     "NUM_PARALLEL_PROCESSORS 8",
 ):
-    assert f"set_global_assignment -name {assignment}" in v25_qsf, \
-        f"V25 revision is missing required Quartus setting {assignment}"
-for macro in ("S32_PROFILE_V25=1", "S32_REAL_V25=1",
-              "S32_V60_NO_FP=1", "S32_V25_MLAB_FIFO=1",
-              "MISTER_DISABLE_SHADOWMASK=1"):
-    assert f'VERILOG_MACRO "{macro}"' in v25_qsf, \
-        f"V25 revision is missing {macro}"
+    assert f"set_global_assignment -name {assignment}" in standard_qsf, \
+        f"s32.qsf is missing required Quartus setting {assignment}"
+for macro in ("S32_PROFILE_STANDARD=1", "S32_REAL_V25=1", "S32_V25_MLAB_FIFO=1",
+              "S32_RELEASE_MINIMAL=1", "S32_JT12_MLAB_SHIFTS=1",
+              "S32_GAME_ONLY=1", "S32_V60_NO_FP=1"):
+    assert f'VERILOG_MACRO "{macro}"' in standard_qsf, \
+        f"s32.qsf is missing {macro}"
+for macro in ("S32_PROFILE_V25=1", "MISTER_DISABLE_SHADOWMASK=1"):
     assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
-        f"standard QSF unexpectedly forces {macro}"
-for macro in ("S32_RELEASE_MINIMAL=1", "S32_JT12_MLAB_SHIFTS=1"):
-    assert f'VERILOG_MACRO "{macro}"' in v25_qsf
-    assert f'VERILOG_MACRO "{macro}"' in standard_qsf
+        f"s32.qsf unexpectedly forces {macro}"
 
 top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
 assert "active_board.v25_table ? 16'd32768 : 16'd21848" in top, \
     "descriptor-selected V25 game cadence is missing"
+assert '"O[16:15],CPU Turbo' not in top, \
+    "CPU Turbo must not be offered in the merged profile (V60 timing relies on fixed CE)"
 
 matches = []
 for path in (ROOT / "mra").glob("Arabian Fight (*.mra"):
@@ -43,8 +54,8 @@ for path in (ROOT / "mra").glob("Arabian Fight (*.mra"):
 
 assert len(matches) == 3, f"expected three Arabian Fight MRAs, found {len(matches)}"
 for path, root in matches:
-    assert root.findtext("rbf") == "s32v25", \
-        f"{path.name} must load s32v25.rbf"
+    assert root.findtext("rbf") == "s32", \
+        f"{path.name} must load s32.rbf"
 
     rom = root.find("rom[@index='0']")
     assert rom is not None and rom.get("zip") is None

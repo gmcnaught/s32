@@ -8,7 +8,16 @@ import s32_pkg::*;
 
 // Fixed-clock dedicated revisions can use the single-port synchronous V60
 // cache. Keep this preprocessing choice local to this compilation unit.
+// Safe for S32_GAME_ONLY (ga2/arabfgt only, 2026-08-05): both have fixed CE
+// spacing (no CPU Turbo in this profile, s32.sdc) and neither uses the
+// generic protection ROM-read arbitration this cache's prot_rom_grant
+// tie-off assumes is unreachable (PROT_NONE for both -- see GAMES in
+// tools/gen_mra.py). That assumption breaks for a game like Sonic
+// (PROT_SONIC does use prot_rom_grant), which is why Sonic was dropped
+// from this profile instead of enabling this cache underneath it.
 `ifdef S32_PROFILE_V25
+`define S32_AREA_ROM_CACHE
+`elsif S32_GAME_ONLY
 `define S32_AREA_ROM_CACHE
 `endif
 
@@ -146,12 +155,29 @@ module s32_core #(
     output     [47:0] debug_sprram_cpu,
     output     [47:0] debug_pal_rd,    // clk_sys palette shadow {0x410,0x200,0x000}
     output     [23:0] debug_fb_underrun,// PF-6: {sticky?0xff:0, underrun_count[15:0]}
+    // In-game debug OSD: sprite pipeline health (s32_sprite_health_debug).
+    output     [31:0] debug_spr_list,    // {list_odd[15:0], list_even[15:0]}
+    output     [31:0] debug_spr_draw,    // {draw_odd[15:0], draw_even[15:0]}
+    output     [31:0] debug_spr_sprwr,   // {sprwr_odd[15:0], sprwr_even[15:0]}
+    output     [31:0] debug_spr_latency, // {w1lat[15:0], w0lat[15:0]} clk_ram ticks since vblank
+    output     [31:0] debug_spr_health,  // {frames_since_publish,overrun_count,render_pass_count,{7'b0,collision_sticky}}
+    output     [15:0] debug_spr_publish, // saturating publish-event count
+    output     [23:0] debug_tile_overrun,// PF-6: {sticky?0xff:0, overrun_count[15:0]}
+    output     [15:0] debug_mixer_sprpx, // saturating opaque-sprite-pixel count reaching the mixer
     output     [15:0] debug_cam,        // spidman world-camera {page, display_lo}
     output     [23:0] debug_v25,        // V25 bring-up: {ce[3:0],wake,mb!=0,unm,io,rd_cnt,mb_last}
     output     [89:0] debug_v25_img     // {sweep_done, first_valid, hash[23:0], first_line[63:0]}
 );
 
+// 2026-08-05: this RBF is scoped to exactly ga2/arabfgt (see memory
+// s32-single-profile-roadmap) -- the same dedicated-game shape this
+// localparam pair originally served under the retired S32_PROFILE_V25
+// revision (no analog/trackball/generic-protection/dual-PCB at all), so
+// S32_GAME_ONLY reuses it directly rather than introducing a new trim.
 `ifdef S32_PROFILE_V25
+localparam V25_GAME_ONLY = 1'b1;
+localparam GAME_ONLY     = 1'b1;
+`elsif S32_GAME_ONLY
 localparam V25_GAME_ONLY = 1'b1;
 localparam GAME_ONLY     = 1'b1;
 `else
@@ -179,8 +205,8 @@ wire [1:0] cfg_sprite_bank_mask  = 2'b11;
 wire       cfg_flip_y            = 1'b0;
 `elsif S32_PROFILE_STANDARD
 wire       cfg_multi32           = 1'b0;
-wire       cfg_has_v25           = 1'b0;
-wire       cfg_v25_table         = 1'b0;
+wire       cfg_has_v25           = board.has_v25;
+wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
@@ -653,6 +679,15 @@ wire [1:0] disp_buf;
 wire [1:0] spr_scan_buf;
 wire [1:0] spr_scan_buf_prev;
 wire       spr_scan_dual;
+// In-game debug OSD: sprite pipeline health telemetry (see s32_sprite.sv's
+// s32_sprite_health_debug submodule for field definitions).
+wire [15:0] spr_dbg_list_even, spr_dbg_list_odd;
+wire [15:0] spr_dbg_draw_even, spr_dbg_draw_odd;
+wire  [7:0] spr_dbg_render_pass_count, spr_dbg_overrun_count;
+wire [15:0] spr_dbg_w0lat, spr_dbg_w1lat;
+wire [15:0] spr_dbg_sprwr_even, spr_dbg_sprwr_odd;
+wire  [7:0] spr_dbg_frames_since_publish;
+wire        spr_dbg_collision_sticky;
 s32_sprite #(
 `ifdef S32_PROFILE_V25
     .VERIFY_SROM(1'b1)
@@ -690,8 +725,24 @@ s32_sprite #(
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf), .fb_er_y(fb_er_y),
     .fb_er_ack(fb_er_ack),
     .disp_buf(disp_buf), .scan_buf(spr_scan_buf),
-    .scan_buf_prev(spr_scan_buf_prev), .scan_dual(spr_scan_dual)
+    .scan_buf_prev(spr_scan_buf_prev), .scan_dual(spr_scan_dual),
+    .debug_list_even(spr_dbg_list_even), .debug_list_odd(spr_dbg_list_odd),
+    .debug_draw_even(spr_dbg_draw_even), .debug_draw_odd(spr_dbg_draw_odd),
+    .debug_render_pass_count(spr_dbg_render_pass_count),
+    .debug_overrun_count(spr_dbg_overrun_count),
+    .debug_w0lat(spr_dbg_w0lat), .debug_w1lat(spr_dbg_w1lat),
+    .debug_sprwr_even(spr_dbg_sprwr_even), .debug_sprwr_odd(spr_dbg_sprwr_odd),
+    .debug_publish_count(debug_spr_publish),
+    .debug_frames_since_publish(spr_dbg_frames_since_publish),
+    .debug_buffer_collision_sticky(spr_dbg_collision_sticky),
+    .dbg_sprram_wr(wr_stb && m_we && sel_sprram)
 );
+assign debug_spr_list    = {spr_dbg_list_odd, spr_dbg_list_even};
+assign debug_spr_draw    = {spr_dbg_draw_odd, spr_dbg_draw_even};
+assign debug_spr_sprwr   = {spr_dbg_sprwr_odd, spr_dbg_sprwr_even};
+assign debug_spr_latency = {spr_dbg_w1lat, spr_dbg_w0lat};
+assign debug_spr_health  = {spr_dbg_frames_since_publish, spr_dbg_overrun_count,
+                             spr_dbg_render_pass_count, 7'b0, spr_dbg_collision_sticky};
 assign sdr_p2_addr[24] = 1'b1;   // sprites region base 0x1000000
 
 // TM-1: CRT/tilemap screen-width authority is VRAM $1FF00 bit 15, matching
@@ -721,6 +772,11 @@ reg       fb_rd_deadline_seen;
 // PF-6: surface the sprite line-fetch overrun telemetry for an OSD debug view.
 // R = sticky "ever underran" flag, G:B = saturating underrun count.
 assign debug_fb_underrun = {fb_rd_underrun_sticky ? 8'hff : 8'h00, fb_rd_underrun_count};
+// PF-6 (the other half): tm_line_overrun was already computed by
+// s32_tile_line_scheduler but never left s32_core before now -- a mid-line
+// tile-fetch bandwidth exhaustion was invisible on real hardware. Same
+// packing convention as debug_fb_underrun above.
+assign debug_tile_overrun = {tm_line_overrun_sticky ? 8'hff : 8'h00, tm_line_overrun_count};
 // Prefetch only lines that will actually display: kicks during vcnt 0-222
 // fetch lines 1-223 and vcnt 261 fetches next frame's line 0.  The former
 // ungated kick also ran through the 37 vblank lines, fetching nonexistent
@@ -786,12 +842,18 @@ assign fb_rd_x   = hcnt;
 // nonetheless fully independent (the valuable part of B7).
 wire [15:0] fb_rd_pix_b = fb_rd_pix;
 `ifdef S32_PROFILE_V25
+`define S32_MIX_PIX_PIPE
+`elsif S32_GAME_ONLY
+`define S32_MIX_PIX_PIPE
+`endif
+`ifdef S32_MIX_PIX_PIPE
+`undef S32_MIX_PIX_PIPE
 // The fetched sprite line lives in the top-level framebuffer M10K while the
 // mixer is placed with the palette/video logic.  Stage both the sprite pixel
-// and its display-X marker once in the Arabian-only profile.  The mixer still
-// snapshots them together, one clock later within the same 12+ clock pixel
-// period, but the long M10K-to-priority-bank route is split at a freely
-// placeable register.
+// and its display-X marker once in this dedicated-game profile.  The mixer
+// still snapshots them together, one clock later within the same 12+ clock
+// pixel period, but the long M10K-to-priority-bank route is split at a
+// freely placeable register.
 reg [15:0] fb_rd_pix_mix_pipe;
 reg  [8:0] mix_disp_x_pipe;
 always @(posedge clk_ram) begin
@@ -848,7 +910,8 @@ s32_mixer mix0 (
     .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),
     .spr_pix(fb_rd_pix_mix),
     .pal_addr(mix0_pal_addr), .pal_data(mix0_pal_q),
-    .rgb(rgb_a)
+    .rgb(rgb_a),
+    .debug_sprpx(debug_mixer_sprpx)
 );
 
 generate
@@ -887,7 +950,8 @@ generate
             .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),
             .spr_pix(fb_rd_pix_b),
             .pal_addr(mix1_pal_addr), .pal_data(mix1_pal_q),
-            .rgb(rgb_b)
+            .rgb(rgb_b),
+            .debug_sprpx()   // Multi 32 screen B not used by the holo diagnostic
         );
     end
 endgenerate
@@ -944,25 +1008,66 @@ reg [15:0] comm_link_timer;
 reg        comm_link_status;
 integer    comm_init_i;
 initial begin
+    // Power-up default only (not a per-cycle synchronous reset -- comm_ram
+    // is deliberately not touched by `if (rst)` below), matching M10K/MLAB
+    // initial-contents semantics. A game reading share RAM before ever
+    // writing it must read 0x00, not X or open bus.
     for (comm_init_i = 0; comm_init_i < 2048; comm_init_i = comm_init_i + 1)
         comm_ram[comm_init_i] = 8'h00;
-    comm_q = 8'h00;
-    comm_cn = 1'b0;
-    comm_fg = 1'b0;
-    comm_link_timer = 16'h0000;
-    comm_link_status = 1'b0;
 end
+
+// Inference note: the previous version additionally scattered comm_ram
+// writes across five separate call sites, including three simultaneous
+// writes (bytes 0/1/4) in one cycle when the EPR-14084 link-status timer
+// expires. Quartus 17 never classified comm_ram as a RAM candidate under
+// that shape (no diagnostic at all -- same silent-failure class documented
+// for rtl/prot/s32_prot.sv). Below, comm_ram gets exactly one write
+// (address/data selected combinationally by priority) and one
+// unconditional registered read; the three-way "link established" publish
+// is spread across three consecutive clk_sys cycles by comm_pub_seq instead
+// of landing in one cycle -- invisible to the game, which only polls
+// comm_link_status (set after the sequence completes) and never has any
+// protocol reason to read bytes 0/1/4 mid-sequence. Everything else
+// (comm_cn/comm_fg/timer/status) is unchanged, in its own block, and never
+// touches comm_ram.
+reg [1:0]  comm_pub_seq;   // 0=idle, 1..3=publishing bytes 0,1,4 in order
+wire       comm_pub_start = cfg_comm_link_hle && comm_cn && !comm_link_status &&
+                             vbl_start && (comm_link_timer <= 16'd1) &&
+                             (comm_pub_seq == 2'd0);
+wire       comm_cpu_we    = m_req && m_we && sel_comm_ram && m_be[0];
+wire       comm_cn_clr_we = m_req && m_we && sel_comm_cn && m_be[0] &&
+                             cfg_comm_link_hle;   // both cn=0 and cn=1 clear byte 4 to 0x00
+wire       comm_ram_we    = comm_cpu_we || comm_cn_clr_we || (comm_pub_seq != 2'd0);
+wire [10:0] comm_ram_waddr = comm_cpu_we    ? A[11:1] :
+                              comm_cn_clr_we ? 11'd4 :
+                              (comm_pub_seq == 2'd1) ? 11'd0 :
+                              (comm_pub_seq == 2'd2) ? 11'd1 : 11'd4;
+wire [7:0]  comm_ram_wdata = comm_cpu_we ? m_wdata[7:0] :
+                              comm_cn_clr_we ? 8'h00 : 8'h01;
+
 always @(posedge clk_sys) begin
+    if (comm_ram_we) comm_ram[comm_ram_waddr] <= comm_ram_wdata;
     comm_q <= comm_ram[A[11:1]];
-    if (m_req && m_we && sel_comm_ram && m_be[0])
-        comm_ram[A[11:1]] <= m_wdata[7:0];
+end
+
+always @(posedge clk_sys) begin
     if (rst) begin
         comm_cn <= 1'b0;
         comm_fg <= 1'b0;
         comm_link_timer <= 16'h0000;
         comm_link_status <= 1'b0;
+        comm_pub_seq <= 2'd0;
     end
     else begin
+        if (comm_pub_seq != 2'd0) begin
+            if (comm_pub_seq == 2'd3) begin
+                comm_pub_seq <= 2'd0;
+                comm_link_status <= 1'b1;
+            end
+            else comm_pub_seq <= comm_pub_seq + 2'd1;
+        end
+        else if (comm_pub_start) comm_pub_seq <= 2'd1;
+
         if (m_req && m_we && sel_comm_cn && m_be[0]) begin
             comm_cn <= m_wdata[0];
             // MAME's s32comm cn_w(0) invokes device_reset(), clearing FG too.
@@ -970,31 +1075,19 @@ always @(posedge clk_sys) begin
                 comm_fg <= 1'b0;
                 comm_link_timer <= 16'h0000;
                 comm_link_status <= 1'b0;
-                if (cfg_comm_link_hle)
-                    comm_ram[11'd4] <= 8'h00;
             end
             else if (cfg_comm_link_hle) begin
                 // MAME's EPR-14084 simulation starts with an offline link and
                 // performs the master handshake over 0xe8 VBLANK ticks.
                 comm_link_timer <= 16'h00e8;
                 comm_link_status <= 1'b0;
-                comm_ram[11'd4] <= 8'h00;
             end
         end
         if (m_req && m_we && sel_comm_fg && m_be[0] && comm_cn)
             comm_fg <= m_wdata[0];
-        if (cfg_comm_link_hle && comm_cn && !comm_link_status && vbl_start) begin
-            if (comm_link_timer > 16'd1)
-                comm_link_timer <= comm_link_timer - 16'd1;
-            else begin
-                comm_link_status <= 1'b1;
-                // s32comm comm_tick_14084() publishes one master node and
-                // marks shared byte 4 online; 0x800008 is this status byte.
-                comm_ram[11'd0] <= 8'h01;
-                comm_ram[11'd1] <= 8'h01;
-                comm_ram[11'd4] <= 8'h01;
-            end
-        end
+        if (cfg_comm_link_hle && comm_cn && !comm_link_status && vbl_start &&
+            comm_link_timer > 16'd1)
+            comm_link_timer <= comm_link_timer - 16'd1;
     end
 end
 `ifdef SIMULATION
@@ -1199,10 +1292,10 @@ endgenerate
 
 generate
     if (GAME_ONLY) begin : g_no_dualpcb
-        // Dedicated profiles target single-board System 32 titles.  Keeping
-        // this runtime-dead 4KB array cost 32,784 registers in Quartus 17
-        // because its original
-        // read/write shape did not infer block RAM.
+        // Dedicated profiles target boards with no dual-PCB bridge. The
+        // array itself now infers M10K correctly (2026-08-05 fix,
+        // rtl/prot/s32_prot.sv) so this is no longer a large resource win,
+        // just an unused module for the current game scope.
         assign dual_q = 16'h0000;
     end
     else begin : g_dualpcb

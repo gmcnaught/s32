@@ -77,7 +77,25 @@ module s32_sprite #(
     output reg  [1:0] disp_buf,     // game-visible logical A/B selector
     output reg  [1:0] scan_buf,     // newest physical buffer the mixer reads
     output reg  [1:0] scan_buf_prev,// preceding completed field
-    output reg        scan_dual     // both scan buffers contain valid fields
+    output reg        scan_dual,    // both scan buffers contain valid fields
+
+    // In-game debug OSD (S32 debug video pages; observational only, does not
+    // feed back into any renderer decision). See s32_sprite_health_debug
+    // below for field definitions.
+    output     [15:0] debug_list_even, debug_list_odd,
+    output     [15:0] debug_draw_even, debug_draw_odd,
+    output      [7:0] debug_render_pass_count,
+    output      [7:0] debug_overrun_count,
+    output     [15:0] debug_w0lat, debug_w1lat,
+    output     [15:0] debug_sprwr_even, debug_sprwr_odd,
+    output     [15:0] debug_publish_count,
+    output      [7:0] debug_frames_since_publish,
+    output             debug_buffer_collision_sticky,
+
+    // CPU sprite-RAM write strobe, forwarded from s32_core's own bus decode
+    // (this module has no CPU write port of its own; sprite RAM is written
+    // directly by the CPU on its own dual-port RAM port — see s32_core.sv).
+    input              dbg_sprram_wr
 );
 
 // control registers
@@ -1042,6 +1060,158 @@ always @(posedge clk) begin
         end
         default: rs <= R_IDLE;
         endcase
+    end
+end
+
+// In-game debug OSD: pure observational wires into s32_sprite_health_debug,
+// none of them feed back into any renderer decision above. Each matches an
+// existing FSM condition exactly so it fires on precisely the same cycle as
+// the counter/state it shadows.
+wire debug_list_pulse   = (rs == R_DECODE);                 // mirrors debug_decode_count (unconditional in R_DECODE)
+wire debug_draw_pulse   = (rs == R_DECODE) && (list_count != 14'd8192) &&
+                           (sw[0][15:14] == 2'b00) &&
+                           !(d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0);
+wire debug_render_start_pulse = (rs == R_IDLE) && (vblank_rise || vblank_pending);
+wire debug_overrun_pulse      = vblank_rise && (rs != R_IDLE); // mirrors the vblank_pending set condition
+wire debug_publish_pulse      = present_rise && !is_multi32 && ready_valid;
+wire debug_renderer_busy      = (rs != R_IDLE);
+
+s32_sprite_health_debug health_dbg (
+    .clk(clk), .rst(rst),
+    .vblank_rise(vblank_rise),
+    .list_pulse(debug_list_pulse),
+    .draw_pulse(debug_draw_pulse),
+    .render_start_pulse(debug_render_start_pulse),
+    .overrun_pulse(debug_overrun_pulse),
+    .publish_pulse(debug_publish_pulse),
+    .sprram_wr(dbg_sprram_wr),
+    .work_buf(work_buf), .scan_buf(scan_buf), .scan_buf_prev(scan_buf_prev),
+    .renderer_busy(debug_renderer_busy),
+    .list_even(debug_list_even), .list_odd(debug_list_odd),
+    .draw_even(debug_draw_even), .draw_odd(debug_draw_odd),
+    .render_pass_count(debug_render_pass_count),
+    .overrun_count(debug_overrun_count),
+    .w0lat(debug_w0lat), .w1lat(debug_w1lat),
+    .sprwr_even(debug_sprwr_even), .sprwr_odd(debug_sprwr_odd),
+    .publish_count(debug_publish_count),
+    .frames_since_publish(debug_frames_since_publish),
+    .buffer_collision_sticky(debug_buffer_collision_sticky)
+);
+
+endmodule
+
+// In-game debug OSD: sprite pipeline health telemetry, observational only.
+// Counters are per-field: `_even`/`_odd` latch the last two COMPLETED
+// fields' totals (tagged by a toggle flipped once per vblank_rise), so a
+// screenshot mid-count on real hardware still shows two full, stable
+// samples rather than a live-changing partial count. w0lat/w1lat measure
+// vblank-to-first/last-sprite-RAM-write latency in clk_ram ticks, letting
+// you see whether the CPU is building the list early or right up against
+// the R_DELAY deadline. buffer_collision_sticky catches the class of bug
+// behind the arabfgt floor-flicker investigation: the renderer's work
+// target (work_buf) equalling a buffer currently being scanned out while
+// busy, which would tear or corrupt live video.
+module s32_sprite_health_debug (
+    input             clk,
+    input             rst,
+    input             vblank_rise,
+
+    input             list_pulse,          // one list entry decoded (R_DECODE)
+    input             draw_pulse,          // one non-zero-size draw command committed
+    input             render_start_pulse,  // R_IDLE leaving to begin a swap/erase/render pass
+    input             overrun_pulse,       // vblank arrived while still busy (SP-3 stress)
+    input             publish_pulse,       // a completed frame was published to scan_buf
+
+    input             sprram_wr,           // CPU wrote a sprite-RAM word this cycle
+    input       [1:0] work_buf,
+    input       [1:0] scan_buf,
+    input       [1:0] scan_buf_prev,
+    input             renderer_busy,       // rs != R_IDLE
+
+    output reg [15:0] list_even, list_odd,
+    output reg [15:0] draw_even, draw_odd,
+    output reg  [7:0] render_pass_count,   // saturating, this field
+    output reg  [7:0] overrun_count,       // saturating, cumulative since reset
+    output reg [15:0] w0lat, w1lat,        // clk_ram ticks since vblank_rise
+    output reg [15:0] sprwr_even, sprwr_odd,
+    output reg [15:0] publish_count,       // saturating, cumulative since reset
+    output reg  [7:0] frames_since_publish,// saturating, since the last publish_pulse
+    output reg        buffer_collision_sticky
+);
+
+reg        field_odd;
+reg [15:0] list_cur, draw_cur, sprwr_cur;
+reg [23:0] since_vblank;      // free-running clk_ram tick count since vblank_rise
+reg        w0_latched;
+
+function automatic [15:0] sat_inc16(input [15:0] v);
+    sat_inc16 = (&v) ? v : v + 16'd1;
+endfunction
+function automatic [7:0] sat_inc8(input [7:0] v);
+    sat_inc8 = (&v) ? v : v + 8'd1;
+endfunction
+
+always @(posedge clk) begin
+    if (rst) begin
+        field_odd <= 1'b0;
+        list_cur <= 16'd0; draw_cur <= 16'd0; sprwr_cur <= 16'd0;
+        list_even <= 16'd0; list_odd <= 16'd0;
+        draw_even <= 16'd0; draw_odd <= 16'd0;
+        sprwr_even <= 16'd0; sprwr_odd <= 16'd0;
+        render_pass_count <= 8'd0;
+        overrun_count <= 8'd0;
+        publish_count <= 16'd0;
+        frames_since_publish <= 8'd0;
+        buffer_collision_sticky <= 1'b0;
+        since_vblank <= 24'd0;
+        w0lat <= 16'd0; w1lat <= 16'd0;
+        w0_latched <= 1'b0;
+    end
+    else begin
+        since_vblank <= since_vblank + 24'd1;
+
+        if (list_pulse) list_cur <= sat_inc16(list_cur);
+        if (draw_pulse) draw_cur <= sat_inc16(draw_cur);
+        if (render_start_pulse) render_pass_count <= sat_inc8(render_pass_count);
+        if (overrun_pulse) overrun_count <= sat_inc8(overrun_count);
+
+        if (sprram_wr) begin
+            sprwr_cur <= sat_inc16(sprwr_cur);
+            if (!w0_latched) begin
+                w0lat <= since_vblank[15:0];
+                w0_latched <= 1'b1;
+            end
+            w1lat <= since_vblank[15:0];  // always the latest -> ends up "last"
+        end
+
+        if (publish_pulse) begin
+            publish_count <= sat_inc16(publish_count);
+            frames_since_publish <= 8'd0;
+        end
+        else if (vblank_rise && !(&frames_since_publish)) begin
+            frames_since_publish <= frames_since_publish + 8'd1;
+        end
+
+        // A work-in-progress renderer target landing on a buffer that is
+        // currently on screen (either scan slot) would tear or corrupt live
+        // video. Sticky: once seen, stays set until reset.
+        if (renderer_busy &&
+            (work_buf == scan_buf || work_buf == scan_buf_prev))
+            buffer_collision_sticky <= 1'b1;
+
+        if (vblank_rise) begin
+            since_vblank <= 24'd0;
+            w0_latched <= 1'b0;
+            field_odd <= ~field_odd;
+            if (field_odd) begin
+                list_odd  <= list_cur;  draw_odd  <= draw_cur;  sprwr_odd  <= sprwr_cur;
+            end
+            else begin
+                list_even <= list_cur;  draw_even <= draw_cur;  sprwr_even <= sprwr_cur;
+            end
+            list_cur <= 16'd0; draw_cur <= 16'd0; sprwr_cur <= 16'd0;
+            render_pass_count <= 8'd0;
+        end
     end
 end
 

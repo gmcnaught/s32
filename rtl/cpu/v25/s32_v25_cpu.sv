@@ -268,6 +268,8 @@ wire        cache_rom_ack;
 
 `ifdef S32_PROFILE_V25
 s32_v25_rom_line_buffer program_cache (
+`elsif S32_GAME_ONLY
+s32_v25_rom_line_buffer program_cache (
 `else
 s32_v25_rom_cache program_cache (
 `endif
