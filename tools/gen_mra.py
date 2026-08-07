@@ -65,18 +65,17 @@ def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0,
 
 GAMES = {
     # parent: (descriptor, per-set list built from clones automatically)
-    # 2026-08-05: scope reduced to exactly these two parents (see memory
-    # s32-single-profile-roadmap) -- ga2/arabfgt only. Sonic was dropped
-    # after a real resource-fit blocker: the V60's generic instruction
-    # cache fails Quartus 17 RAM inference (same failure class already
-    # fixed for the dual-PCB module) and the proven fix -- the dedicated
-    # synchronous s32_ga_rom_cache, S32_AREA_ROM_CACHE -- assumes no game
-    # needs the generic protection ROM-read arbitration (prot_rom_grant),
-    # which Sonic's PROT_SONIC responder does. Re-add Sonic once that
-    # arbitration is properly extended for a third client; other dropped
-    # games return one at a time after that.
+    # 2026-08-06: two dedicated profiles now exist -- segas32v25 (real V25:
+    # ga2/arabfgt) and segas32 (HLE only). Sonic returns as segas32's first
+    # game: the resource blocker that dropped it (the V60 ROM cache's
+    # prot_rom_grant tie-off assumed no game needed the generic protection
+    # ROM-read arbitration Sonic's PROT_SONIC responder uses) is fixed --
+    # s32_ga_rom_cache's arbiter now grants a real protection-ROM request
+    # instead of hardwiring it to 0 (rtl/s32_core.sv). Other dropped games
+    # return one at a time; see PROFILE_CONTRACT.md for routing.
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
+    "sonic":    desc(track=1, prot=PROT["SONIC"]),
     # NO MULTI 32 SETS.  harddunk/orunners/scross/titlef are Multi 32 boards and
     # this repository builds System 32 only: every shipped revision sets
     # S32_SYSTEM32_ONLY=1, which folds is_multi32 to a constant and removes the
@@ -92,8 +91,10 @@ GAMES = {
 IGNORED_PARENTS = {
     "brival", "darkedge", "dbzvrvs", "f1en", "f1lap", "slipstrm", "svf", "jleague",
     # 2026-08-05: temporarily out of scope, not declined -- see memory
-    # s32-single-profile-roadmap. Re-add one at a time in future work.
-    "holo", "jpark", "radm", "radr", "spidman", "sonic",
+    # s32-single-profile-roadmap. Re-add one at a time in future work
+    # (segas32.qsf's scope, alongside sonic). sonic itself returned
+    # 2026-08-06 -- see GAMES above.
+    "holo", "jpark", "radm", "radr", "spidman",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -114,17 +115,23 @@ BUTTONS = {
         "Attack,Magic,-,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,Start,Select,R,L,Y",
     ),
+    # Restored from the pre-2026-08-05 tracked sonic MRA (git ddfdffc^) --
+    # single action button plus the rev.C trackball.
+    "sonic": (
+        "Action,-,-,-,-,-,Start,Coin,Test,Service",
+        "A,Start,Select,R,L",
+    ),
 }
 
 BUTTON_COUNTS = {
     "arabfgt": 2,
     "ga2": 3,
+    "sonic": 1,
 }
-# 2026-08-05: the separate s32v25 revision was retired (see memory
-# s32-single-profile-roadmap) -- real V25 hardware is now always compiled
-# into the single s32 profile, descriptor-led like every other per-game
-# config bit. Every game's MRA routes to "s32" (the emit-time default below).
-RBF_BY_PARENT = {}
+# 2026-08-06: two dedicated profiles -- ga2/arabfgt (real V25 hardware) route
+# to segas32v25; every other emitted parent (currently just sonic) routes to
+# segas32 (the emit-time default below) instead. See PROFILE_CONTRACT.md.
+RBF_BY_PARENT = {"ga2": "segas32v25", "arabfgt": "segas32v25"}
 
 UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
 
@@ -302,7 +309,7 @@ def gen(setname, data, outdir):
         lines.append(f'  <parent>{parent}</parent>')
     lines.append(f'  <year>{data.get("year", "")}</year>')
     lines.append(f'  <manufacturer>{escape(data.get("manu", "Sega"))}</manufacturer>')
-    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "s32")}</rbf>')
+    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "segas32")}</rbf>')
     button_meta = BUTTONS.get(parent)
     if button_meta:
         names, defaults = button_meta

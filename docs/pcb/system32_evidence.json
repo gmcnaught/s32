@@ -72,7 +72,7 @@
       "confidence": "medium",
       "status": "implemented",
       "sources": ["research_32_md"],
-      "implementation": ["rtl/s32_core.sv", "s32.qsf"]
+      "implementation": ["rtl/s32_core.sv", "segas32v25.qsf", "segas32.qsf"]
     },
     {
       "id": "custom-asic-wait-states",

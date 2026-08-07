@@ -827,7 +827,9 @@ if (rst) begin
     dbus_req <= 0; dbus_we <= 0; irq_ack <= 0;
     dbus_addr <= 0; dbus_size <= 0; dbus_wdata <= 0;
     halted <= 0;
+`ifndef S32_RELEASE_MINIMAL
     dbg_pc <= START_PC;
+`endif
     nmi_seen <= 0;
     nmi_r <= 0;
     xdiv_active <= 0;
@@ -967,7 +969,9 @@ else if (ce) begin
 
     // ------------------------------------------------------------------
     S_DECODE: begin
+`ifndef S32_RELEASE_MINIMAL
         dbg_pc <= pc;
+`endif
         cur_op <= opcode;
         total_len <= 5'd2;      // default for F12 base
         // exception-frame defaults (A8): 2-word frame returning to current PC;

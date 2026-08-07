@@ -72,7 +72,12 @@ def validate(check_rtl: bool = False) -> list[str]:
                     errors.append(f"{claim_id}: missing implementation {relative}")
 
     if check_rtl:
-        for qsf, profile in ((ROOT / "s32.qsf", "S32_PROFILE_STANDARD=1"),):
+        # 2026-08-06: two dedicated profiles -- segas32v25 (real V25) and
+        # segas32 (HLE only, no V25 core compiled in at all).
+        for qsf, profile, needs_real_v25 in (
+            (ROOT / "segas32v25.qsf", "S32_PROFILE_STANDARD=1", True),
+            (ROOT / "segas32.qsf", "S32_PROFILE_STANDARD=1", False),
+        ):
             text = qsf.read_text(encoding="utf-8")
             if profile not in text:
                 errors.append(f"{qsf.name}: missing {profile}")
@@ -80,8 +85,11 @@ def validate(check_rtl: bool = False) -> list[str]:
                 errors.append(f"{qsf.name}: missing S32_PCB_TIMING=1")
             if "NUM_PARALLEL_PROCESSORS 8" not in text:
                 errors.append(f"{qsf.name}: must use eight Quartus workers")
-            if 'VERILOG_MACRO "S32_REAL_V25=1"' not in text:
-                errors.append(f"{qsf.name}: missing S32_REAL_V25=1 (merged profile requirement)")
+            has_real_v25 = 'VERILOG_MACRO "S32_REAL_V25=1"' in text
+            if needs_real_v25 and not has_real_v25:
+                errors.append(f"{qsf.name}: missing S32_REAL_V25=1 (real-V25 profile requirement)")
+            if not needs_real_v25 and has_real_v25:
+                errors.append(f"{qsf.name}: must not compile the real V25 core (no game here has V25 hardware)")
         core_text = (ROOT / "rtl" / "s32_core.sv").read_text(encoding="utf-8")
         if "S32_PCB_TIMING" not in core_text or "FAST_IFETCH_EN" not in core_text:
             errors.append("s32_core.sv: production fetch timing boundary is missing")

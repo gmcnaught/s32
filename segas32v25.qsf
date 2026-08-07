@@ -8,6 +8,20 @@
 #
 # --------------------------------------------------------------------------
 
+# 2026-08-06: split back out of the single merged "s32" profile into two
+# dedicated profiles (this repository's shipping shape as of this date):
+#   segas32v25.qsf (this file): the real NEC V25 games only -- Golden Axe:
+#     The Revenge of Death Adder (ga2) and Arabian Fight (arabfgt).
+#   segas32.qsf: every other in-scope System 32 game, real V25 hardware not
+#     compiled in at all (HLE only). Currently scoped to Sonic only; other
+#     games return one at a time (see tools/gen_mra.py:GAMES/IGNORED_PARENTS,
+#     PROFILE_CONTRACT.md).
+# This file is otherwise unchanged from the retired single-profile "s32.qsf"
+# for this game scope -- same macros, same fitter settings, same seed. Its
+# resource/timing state as of the split: 32,791/41,910 ALMs (78%),
+# 517/553 M10K (93%), worst setup slack -0.210/-0.080 ns (not yet fully
+# closed -- see the SEED comment below for the full investigation history).
+
 set_global_assignment -name TOP_LEVEL_ENTITY sys_top
 
 set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"
@@ -36,6 +50,10 @@ set_global_assignment -name QII_AUTO_PACKED_REGISTERS NORMAL
 set_global_assignment -name ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION OFF
 set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF
 set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF
+# 2026-08-06: tried register retiming ON, twice -- once on the trackball/
+# prot_hle-included netlist (-0.431/-0.415 ns) and once on the reverted
+# netlist (-0.210/-0.080 ns). Both times bit-identical to retiming OFF:
+# confirmed genuine no-op for this design, not netlist-dependent. Reverted.
 set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING OFF
 set_global_assignment -name OPTIMIZATION_TECHNIQUE AREA
 set_global_assignment -name MUX_RESTRUCTURE ON
@@ -60,11 +78,22 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # vendor-OSD violations. Re-checked seed 3 per the timing-closure playbook
 # (try up to 3 additional seeds once logic/constraints are correct, before
 # touching RTL for a placement-sensitive violation this small): seed 3 was
-# worse (-0.831 ns worst setup vs seed 2's -0.183 ns). Kept seed 2. A seed 4
-# trial was started but not completed/validated in this session -- the next
-# session should either finish that comparison or accept seed 2 with the
-# remaining -0.183 ns s32_tilemap path as a reviewed exception once it's
-# confirmed inactive, or fix it in RTL.
+# worse (-0.831 ns worst setup vs seed 2's -0.183 ns). Kept seed 2.
+#
+# 2026-08-06: the Sonic-enablement resource work (trackball s32_upd4701,
+# s32_prot_hle always instantiated) briefly lived in this same profile and
+# measurably worsened this same path family to -0.431/-0.415 ns for zero
+# benefit to ga2/arabfgt. Reverted (that work now belongs in segas32.qsf,
+# the profile that actually needs it). Kept the s32_ga_rom_cache arbiter
+# extension and the s32_gun_aim gating (both inert/beneficial regardless of
+# profile). Re-tried seed 4 (-0.605/-0.436 ns) and seed 1 (-0.746/-0.674 ns)
+# on the reverted netlist and register retiming (no-op, see above): seed 2
+# remains the best known placement at -0.210/-0.080 ns, not yet 0. A targeted
+# RTL fix (video_ram/sprite_ram's read-only port B forced into
+# BIDIR_DUAL_PORT mode) was attempted and reverted after a synthesis error
+# (see rtl/video/s32_big_dpram.sv's header) -- needs correct Intel altsyncram
+# DUAL_PORT documentation before retrying, not another blind guess. See
+# verif/timing/get_worst_paths.tcl for the exact failing nodes.
 set_global_assignment -name SEED 2
 # Quartus 17.0.2 has crashed in l_run_heap_expansion_algorithm while routing
 # this 99%-full real-V25 image with parallel fitter workers.  A single fitter
@@ -73,7 +102,7 @@ set_global_assignment -name NUM_PARALLEL_PROCESSORS 8
 
 # This repository is single-screen Sega System 32 only; Multi 32 is not a
 # supported target here.  The macro compiles out the second palette / mixer and
-# sizes work RAM to the board-correct 64 KiB so SegaS32.rbf fits the Cyclone V
+# sizes work RAM to the board-correct 64 KiB so this RBF fits the Cyclone V
 # memory budget.  The Multi 32 arms remain in the RTL because is_multi32 folds
 # to a constant and reclaims no logic -- deleting them buys nothing.  Every
 # revision in this repository must set this macro; Multi32ExclusionTests in
@@ -81,35 +110,29 @@ set_global_assignment -name NUM_PARALLEL_PROCESSORS 8
 set_global_assignment -name VERILOG_MACRO "S32_SYSTEM32_ONLY=1"
 set_global_assignment -name VERILOG_MACRO "S32_PROFILE_STANDARD=1"
 set_global_assignment -name VERILOG_MACRO "S32_PCB_TIMING=1"
-# 2026-08-05: this RBF is scoped to exactly ga2/arabfgt (see memory
-# s32-single-profile-roadmap); other games return one at a time later. This
-# reuses the same dedicated-game trim (GAME_ONLY/V25_GAME_ONLY in
-# rtl/s32_core.sv) the retired S32_PROFILE_V25 revision used for the same
-# two games -- no analog/trackball/generic-protection/dual-PCB, and (with
-# S32_REAL_V25 below) the dedicated synchronous V60 ROM cache instead of the
-# generic one, which was the actual resource blocker for a 3rd game (Sonic):
-# it needs the generic protection ROM-read arbitration this cache assumes is
-# unreachable. Remove this macro (not the games it strips) when Sonic or
-# another game returns with that arbitration properly extended.
+# This RBF is scoped to exactly ga2/arabfgt. GAME_ONLY strips analog/
+# trackball/generic-protection/dual-PCB entirely (neither game uses any of
+# it -- both are PROT_NONE) and selects the dedicated synchronous V60 ROM
+# cache (S32_AREA_ROM_CACHE) instead of the generic one. That cache's
+# SDRAM-p0 arbiter now supports a real protection-ROM-read grant (2026-08-06,
+# rtl/s32_core.sv's s32_ga_rom_cache instantiation) but neither game here
+# drives one, so it is behavior-inert in this profile; it exists so
+# rtl/s32_core.sv stays identical between profiles.
 set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY=1"
 # Neither ga2 nor Arabian Fight executes the optional V60 floating-point
-# group (proven by the retired dedicated V25 profile, which shipped this
-# exact optimization for these same two games). Re-review before adding any
-# future game to this scope.
+# group. Re-review before adding any future game to this profile.
 set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
 set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
 
 # --- Real V25 (Golden Axe: The Revenge of Death Adder / Arabian Fight) -------
-# 2026-08-05: folded into this single profile so one s32.rbf covers every
-# System 32 game (see memory s32-single-profile-roadmap). Previously only
-# s32v25.qsf compiled the real NEC V25 (rtl/cpu/v25/v25.qip: the s80x86 core,
-# s32_v25_cpu and s32_v25_rom_cache); this revision used the static HLE
-# responder s32_v25 (rtl/prot/s32_prot.sv) for every game instead, with
-# cfg_has_v25 hardcoded to 0 regardless of the board descriptor. s32_core.sv's
-# STANDARD-profile branch now reads cfg_has_v25 from board.has_v25 like every
-# other per-game config bit, so the real V25 core is only enabled at runtime
-# for the two games whose descriptor sets it (tools/gen_mra.py:GAMES).
+# The real NEC V25 (rtl/cpu/v25/v25.qip: the s80x86 core, s32_v25_cpu and
+# s32_v25_rom_cache) is compiled in only for this profile; segas32.qsf uses
+# the static HLE responder s32_v25 (rtl/prot/s32_prot.sv) instead, since none
+# of its games have V25 protection hardware. cfg_has_v25 is still read from
+# the board descriptor like every other per-game config bit
+# (tools/gen_mra.py:GAMES), so this file only needs to compile the real core;
+# it does not need to force it on.
 #
 # S80X86_PSEUDO_286_INT is a required compile-time choice for the upstream
 # s80x86 Flags module whenever its source is part of the build at all.

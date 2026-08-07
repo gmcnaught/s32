@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Static contract for the current Holosseum hardware release profile.
 
-2026-08-05: the separate s32v25 revision was retired -- real V25 hardware is
-now always compiled into the single s32.qsf, descriptor-led (board.has_v25)
-like every other per-game config bit (see memory s32-single-profile-roadmap).
-Holo's own descriptor sets has_v25=0 (asserted below via the byte-0 feature
-field), so the V25 core stays compiled-in but idle for this game -- it is no
-longer *absent* from the build the way it was under the two-revision split.
+2026-08-06: split back into two dedicated profiles -- segas32v25.qsf (ga2,
+arabfgt: real V25) and segas32.qsf (Sonic and future non-V25 games: HLE
+only). Holo has no V25 protection hardware, so it belongs to segas32's
+scope like every other non-V25 game -- see PROFILE_CONTRACT.md. Holo is
+currently still in tools/gen_mra.py:IGNORED_PARENTS (not yet re-added), so
+the MRA-presence assertion below is expected to fail until it returns; that
+mirrors this project's own "add one game at a time" roadmap and is not a
+regression to chase.
 """
 
 from pathlib import Path
@@ -14,22 +16,11 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-qsf = (ROOT / "s32.qsf").read_text(encoding="utf-8")
+qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
 assert 'VERILOG_MACRO "S32_SYSTEM32_ONLY=1"' in qsf, "release is not System 32-only"
 assert 'VERILOG_MACRO "S32_PROFILE_STANDARD=1"' in qsf
-assert 'VERILOG_MACRO "S32_REAL_V25=1"' in qsf, \
-    "merged profile must compile the real V25 core (runtime-gated per game)"
-
-# The real NEC V25 is only hardware for Golden Axe: The Revenge of Death
-# Adder and Arabian Fight, but the merged profile compiles it unconditionally
-# now (files.qip) and gates it at runtime via the board descriptor instead of
-# at compile time via a second Quartus revision.
-files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
-assert "QIP_FILE rtl/cpu/v25/v25.qip" in files_qip or \
-    "QIP_FILE rtl/cpu/v25/v25.qip" in qsf, \
-    "merged profile lost the real V25 sources"
-assert 'VERILOG_MACRO "S80X86_PSEUDO_286_INT=0"' in qsf, \
-    "merged profile lost the s80x86 interrupt-mode parse option"
+assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in qsf, \
+    "segas32.qsf must not compile the real V25 core -- none of its games have V25 hardware"
 
 matches = []
 for path in (ROOT / "mra").glob("*.mra"):
@@ -40,7 +31,7 @@ for path in (ROOT / "mra").glob("*.mra"):
 assert len(matches) == 1, f"expected exactly one Holo MRA, found {len(matches)}"
 path, tree = matches[0]
 root = tree.getroot()
-assert root.findtext("rbf") == "s32"
+assert root.findtext("rbf") == "segas32"
 assert root.findtext("name") == "Holosseum (US, Rev A)"
 rom = root.find("rom[@index='0']")
 assert rom is not None and rom.get("zip") is None

@@ -6,6 +6,20 @@
 //  The Intel primitive is confined to integrated synthesis.  Simulation with
 //  Icarus, Verilator, or ModelSim uses the cycle-equivalent behavioural model
 //  and does not depend on altera_mf simulation libraries.
+//
+//  2026-08-06: video_ram and sprite_ram tie data_b/byteena_b/wren_b to
+//  constants (port B is a read-only renderer-fetch port for both), and one
+//  of BIDIR_DUAL_PORT's always-synthesized port-B write-control registers
+//  (reported by the fitter as .../portb_we_reg) sits on a real setup-timing
+//  critical path. Tried switching those two instances to operation_mode=
+//  "DUAL_PORT" (which should drop the unused write pipeline) via a second
+//  altsyncram instantiation gated by a PORT_B_READ_ONLY parameter -- this
+//  failed synthesis with "q_a is missing source" errors, meaning the
+//  defparam set used was not a legal DUAL_PORT configuration for this
+//  Quartus version. Reverted rather than keep guessing at undocumented
+//  megafunction parameters. Revisit with the actual Intel altsyncram HDL
+//  template/documentation (MegaWizard-generated reference) in hand before
+//  trying again; do not hand-author another attempt blind.
 //============================================================================
 
 module s32_big_dpram #(
@@ -230,6 +244,57 @@ always @(posedge clock) begin
     if (rden_b) q_b_r <= mem[address_b];
     if (wren_a) mem[address_a] <= data_a;
     if (wren_b) mem[address_b] <= data_b;
+end
+`endif
+
+endmodule
+
+// Single-port byte RAM for board devices whose second physical port is not
+// part of the hardware contract. Keeping this separate from the true-dual-port
+// primitive lets Quartus select SINGLE_PORT mode instead of warning that a
+// BIDIR_DUAL_PORT RAM has an unused port (the V25 HLE mailbox is the current
+// user).
+module s32_byte_spram #(
+    parameter integer ADDR_WIDTH = 13,
+    parameter integer NUM_WORDS  = (1 << ADDR_WIDTH),
+    parameter         POWER_UP_UNINITIALIZED = "TRUE"
+) (
+    input                       clock,
+    input      [ADDR_WIDTH-1:0] address_a,
+    input                 [7:0] data_a,
+    input                       rden_a,
+    input                       wren_a,
+    output                [7:0] q_a
+);
+
+`ifdef ALTERA_RESERVED_QIS
+altsyncram ram (
+    .clock0(clock), .address_a(address_a), .data_a(data_a),
+    .rden_a(rden_a), .wren_a(wren_a), .q_a(q_a),
+    .aclr0(1'b0), .clocken0(1'b1), .clocken1(1'b1),
+    .addressstall_a(1'b0), .eccstatus()
+);
+defparam
+    ram.numwords_a = NUM_WORDS,
+    ram.widthad_a = ADDR_WIDTH,
+    ram.width_a = 8,
+    ram.address_reg_a = "CLOCK0",
+    ram.clock_enable_input_a = "BYPASS",
+    ram.clock_enable_output_a = "BYPASS",
+    ram.intended_device_family = "Cyclone V",
+    ram.lpm_type = "altsyncram",
+    ram.operation_mode = "SINGLE_PORT",
+    ram.outdata_aclr_a = "NONE",
+    ram.outdata_reg_a = "UNREGISTERED",
+    ram.power_up_uninitialized = POWER_UP_UNINITIALIZED,
+    ram.read_during_write_mode_port_a = "NEW_DATA_NO_NBE_READ";
+`else
+reg [7:0] mem [0:NUM_WORDS-1];
+reg [7:0] q_a_r;
+assign q_a = q_a_r;
+always @(posedge clock) begin
+    if (rden_a) q_a_r <= mem[address_a];
+    if (wren_a) mem[address_a] <= data_a;
 end
 `endif
 

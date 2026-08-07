@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Static GA2 contract for the single merged real-V25 profile.
+"""Static GA2 contract for the segas32v25 (real-V25) profile.
 
-2026-08-05: the separate universal real-V25 profile (s32v25) was retired --
-real V25 hardware is now always compiled into the single s32.qsf revision,
-descriptor-led (board.has_v25) like every other per-game config bit. See
-memory s32-single-profile-roadmap.
+2026-08-06: split back into two dedicated profiles -- segas32v25.qsf (ga2,
+arabfgt: real V25) and segas32.qsf (Sonic and future non-V25 games: HLE
+only). See PROFILE_CONTRACT.md and segas32v25.qsf's header for the split
+rationale.
 """
 
 from pathlib import Path
@@ -12,19 +12,20 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-standard_qsf = (ROOT / "s32.qsf").read_text(encoding="utf-8")
+standard_qsf = (ROOT / "segas32v25.qsf").read_text(encoding="utf-8")
 for macro in ("S32_PROFILE_STANDARD=1", "S32_REAL_V25=1", "S32_V25_MLAB_FIFO=1",
               "S32_RELEASE_MINIMAL=1", "S32_JT12_MLAB_SHIFTS=1",
               "S32_GAME_ONLY=1", "S32_V60_NO_FP=1"):
-    # 2026-08-05: this RBF is scoped to exactly ga2/arabfgt (Sonic dropped --
-    # see memory s32-single-profile-roadmap), the same shape the retired
-    # dedicated V25 profile served, so it reuses that profile's resource
-    # trims (S32_GAME_ONLY, S32_V60_NO_FP: "Golden Axe never executes the
-    # optional floating-point groups", proven safe for these two games).
+    # This RBF is scoped to exactly ga2/arabfgt. S32_GAME_ONLY and
+    # S32_V60_NO_FP ("Golden Axe never executes the optional floating-point
+    # groups") are proven safe for these two games specifically -- do not
+    # assume either holds for segas32.qsf's games without separate evidence.
     assert f'VERILOG_MACRO "{macro}"' in standard_qsf, \
-        f"s32.qsf is missing {macro}"
+        f"segas32v25.qsf is missing {macro}"
 assert 'VERILOG_MACRO "S32_PROFILE_V25=1"' not in standard_qsf, \
-    "s32.qsf must not redefine the retired S32_PROFILE_V25 macro"
+    "segas32v25.qsf must not redefine the retired S32_PROFILE_V25 macro"
+assert 'VERILOG_MACRO "S32_GAME_ONLY_STD=1"' not in standard_qsf, \
+    "segas32v25.qsf must not define segas32's GAME_ONLY_STD trim"
 
 matches = []
 for path in (ROOT / "mra").glob("*.mra"):
@@ -36,11 +37,11 @@ assert len(matches) == 1, f"expected exactly one GA2 MRA, found {len(matches)}"
 path, tree = matches[0]
 root = tree.getroot()
 
-assert root.findtext("rbf") == "s32", "GA2 MRA must load s32.rbf"
+assert root.findtext("rbf") == "segas32v25", "GA2 MRA must load segas32v25.rbf"
 for regional_path in (ROOT / "mra").glob("Golden Axe The Revenge of Death Adder (*.mra"):
     regional_tree = ET.parse(regional_path)
-    assert regional_tree.findtext("rbf") == "s32", \
-        f"{regional_path.name} must load s32.rbf"
+    assert regional_tree.findtext("rbf") == "segas32v25", \
+        f"{regional_path.name} must load segas32v25.rbf"
     buttons = regional_tree.getroot().find("buttons")
     assert buttons is not None, f"{regional_path.name} is missing button metadata"
     assert buttons.get("names") == "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service,Pause"

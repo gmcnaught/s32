@@ -5,10 +5,11 @@ name: verify-source
 # D:\Q17 Quartus Lite 17.0.2.602 installation:
 #
 #   set QUARTUS_ROOT=D:\Q17
-#   tools\build-s32.bat
+#   tools\build-segas32.bat      (Sonic and future non-V25 games)
+#   tools\build-segas32v25.bat   (ga2, arabfgt: real V25)
 #
 # That path records an input manifest, qualifies fit and multicorner timing,
-# and stages hash-verified universal-profile RBFs. Community containers and the legacy
+# and stages hash-verified per-profile RBFs. Community containers and the legacy
 # Linux qualifier cannot provide the same provenance and are fail-closed.
 on:
   push:
@@ -55,4 +56,4 @@ jobs:
           if ($unexpected.Count -ne 0) {
             throw "Source verification must not produce or publish an RBF."
           }
-          Write-Host "RBF generation remains on the locked tools\build-s32*.bat paths."
+          Write-Host "RBF generation remains on the locked tools\build-segas32*.bat paths."

@@ -548,7 +548,20 @@ wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
 wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
                            ~joystick_0[5], ~joystick_0[4], 1'b1};
 wire [7:0] p2a_dig = p_dig(joystick_1);
+`ifdef S32_GAME_ONLY
+// No game in either dedicated profile's scope (segas32v25: ga2/arabfgt;
+// segas32: Sonic) uses a positional gun (jpark, alien3 only).
+// active_board.gun_aim is loaded from runtime descriptor data, so Quartus
+// cannot prove it constant on its own and would otherwise always pay for
+// the full curve-LUT/divider FSM in s32_gun_aim below regardless of which
+// games a profile ships. Force a real compile-time constant so that module
+// is provably prunable.
+wire gun_aim_active = 1'b0;
+`elsif S32_GAME_ONLY_STD
+wire gun_aim_active = 1'b0;
+`else
 wire gun_aim_active = active_board.gun_aim;
+`endif
 wire [7:0] core_p1a = (active_board.prot_sel == PROT_SONIC) ? sonic_p1a :
                        (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
                        active_board.gear_toggle ? gear_toggle_p1a :
@@ -651,55 +664,71 @@ assign adc_ch[5] = pulled_up_adc ? 8'hff : driving_analog ? 8'h80 : paddle_1;
 assign adc_ch[6] = pulled_up_adc ? 8'hff : 8'h80;
 assign adc_ch[7] = pulled_up_adc ? 8'hff : 8'h80;
 
-// trackballs from mouse
-reg        m_dv [0:2];
-reg signed [8:0] m_dx [0:2], m_dy [0:2];
-reg mouse_toggle;
-always @(posedge clk_sys) begin
-    m_dv[0] <= 0; m_dv[1] <= 0; m_dv[2] <= 0;
-    if (ps2_mouse[24] != mouse_toggle) begin
-        mouse_toggle <= ps2_mouse[24];
-        m_dv[0] <= 1'b1;
-        // MAME marks all three SegaSonic TRACKBALL_X inputs PORT_REVERSE.
-        // Convert the host's right-positive mouse delta at the adapter edge;
-        // the uPD4701 counters themselves remain direction-agnostic.
-        m_dx[0] <= -$signed({ps2_mouse[4], ps2_mouse[15:8]});
-        m_dy[0] <= {ps2_mouse[5], ps2_mouse[23:16]};
-    end
+// Trackball via left analog stick (2026-08-06: replaced the PS2-mouse and
+// digital-d-pad-fallback paths entirely -- analog-stick control only, left
+// stick by default, no mouse). Deadzone + linear deflection-to-velocity,
+// sampled once per trk_tick so a stick held at full deflection behaves like
+// a continuously spinning trackball, while a centered stick produces no
+// counts at all (matching a real trackball at rest). MAME marks all three
+// SegaSonic TRACKBALL_X inputs PORT_REVERSE: right deflection must decrement
+// the X counter, left must increment it (Y is not reversed) -- the uPD4701
+// counters themselves stay direction-agnostic; the reversal is applied here
+// at the analog-to-delta conversion, same as the retired mouse path did.
+localparam [7:0] TRK_DEADZONE = 8'd16;
+// 2026-08-06 fix: joystick_l_analog_0/1's bytes are ALREADY signed two's
+// complement with 0 = center (sys/hps_io.sv: "analog -127..+127"), the same
+// format aim_axis's own `raw` input above documents and converts FROM via
+// `raw ^ 8'h80` before treating it as offset-binary. This function instead
+// wants signed math directly, so it must sign-extend raw as-is -- the
+// previous `$signed({1'b0,raw}) - 128` treated raw as if it were already
+// offset-binary (0x80=center), which made a centered/absent stick compute
+// near-maximum velocity and a fully-deflected stick compute zero.
+function automatic signed [8:0] trk_axis_vel(input [7:0] raw);
+    logic signed [8:0] off;
+    logic [7:0] mag, mag_dz, vel;
+begin
+    off    = $signed(raw);                         // -128..127, 0 = center
+    mag    = off[8] ? (-off[7:0]) : off[7:0];
+    mag_dz = (mag > TRK_DEADZONE) ? (mag - TRK_DEADZONE) : 8'd0;
+    vel    = mag_dz >> 3;                          // 0..14 at full deflection
+    trk_axis_vel = off[8] ? -{1'b0, vel} : {1'b0, vel};
 end
+endfunction
+
+reg [15:0] trk_div = 16'd0;
+always @(posedge clk_sys) trk_div <= trk_div + 1'b1;
+wire trk_tick = (trk_div == 16'd0);       // ~12 injections/frame @48 MHz
+
 wire [7:0] trk_btn [0:2];
 assign trk_btn[0] = {4'b0, ~joystick_0[4], 3'b0};
 assign trk_btn[1] = {4'b0, ~joystick_1[4], 3'b0};
 assign trk_btn[2] = {4'b0, ~joystick_2[4], 3'b0};
-// Digital trackball fallback: the trackball games (sonic, 3 players) were
-// mouse-only, and players 2/3 had no source at all.  A held D-pad now injects
-// rate-limited trackball deltas so a gamepad can play.  Player 1 still prefers
-// the real mouse when it moves.  TRK_STEP/rate are hardware-tunable, and the Y
-// sign may want inverting on hardware.  NOTE: this only reaches the game on a
-// UNIVERSAL build -- the S32_HOLO_ONLY profile trims the trackball read decode
-// (s32_core sel_ioex under GAME_ONLY).
-reg [15:0] trk_div = 16'd0;
-always @(posedge clk_sys) trk_div <= trk_div + 1'b1;
-wire trk_tick = (trk_div == 16'd0);       // ~12 injections/frame @48 MHz
-localparam signed [8:0] TRK_STEP = 9'sd4;
 
-wire p0_dpad = joystick_0[0] | joystick_0[1] | joystick_0[2] | joystick_0[3];
-wire p1_dpad = joystick_1[0] | joystick_1[1] | joystick_1[2] | joystick_1[3];
-wire p2_dpad = joystick_2[0] | joystick_2[1] | joystick_2[2] | joystick_2[3];
+// Only two left-analog-stick ports exist at this top level today
+// (joystick_l_analog_0/1, players 1/2). Player 3 has no analog source wired
+// yet -- held at rest until a third analog port is added (NOTE: this only
+// reaches the game on the segas32 profile; S32_GAME_ONLY builds like
+// segas32v25 trim the trackball read decode, s32_core.sv's sel_ioex under
+// GAME_ONLY, regardless).
+wire signed [8:0] trk_velx [0:1];
+wire signed [8:0] trk_vely [0:1];
+assign trk_velx[0] = -trk_axis_vel(joystick_l_analog_0[7:0]);  // X reversed
+assign trk_vely[0] =  trk_axis_vel(joystick_l_analog_0[15:8]); // Y normal
+assign trk_velx[1] = -trk_axis_vel(joystick_l_analog_1[7:0]);
+assign trk_vely[1] =  trk_axis_vel(joystick_l_analog_1[15:8]);
 
 wire trk_dv_a [0:2];
-assign trk_dv_a[0] = m_dv[0] | (trk_tick & p0_dpad);
-assign trk_dv_a[1] = trk_tick & p1_dpad;
-assign trk_dv_a[2] = trk_tick & p2_dpad;
+assign trk_dv_a[0] = trk_tick & ((trk_velx[0] != 9'sd0) | (trk_vely[0] != 9'sd0));
+assign trk_dv_a[1] = trk_tick & ((trk_velx[1] != 9'sd0) | (trk_vely[1] != 9'sd0));
+assign trk_dv_a[2] = 1'b0;
 wire signed [8:0] trk_dx_a [0:2];
 wire signed [8:0] trk_dy_a [0:2];
-// SegaSonic reverses X only: right decrements, left increments. Y is normal.
-assign trk_dx_a[0] = m_dv[0] ? m_dx[0] : joystick_0[0] ? -TRK_STEP : joystick_0[1] ? TRK_STEP : 9'sd0;
-assign trk_dy_a[0] = m_dv[0] ? m_dy[0] : joystick_0[2] ? TRK_STEP : joystick_0[3] ? -TRK_STEP : 9'sd0;
-assign trk_dx_a[1] = joystick_1[0] ? -TRK_STEP : joystick_1[1] ? TRK_STEP : 9'sd0;
-assign trk_dy_a[1] = joystick_1[2] ? TRK_STEP : joystick_1[3] ? -TRK_STEP : 9'sd0;
-assign trk_dx_a[2] = joystick_2[0] ? -TRK_STEP : joystick_2[1] ? TRK_STEP : 9'sd0;
-assign trk_dy_a[2] = joystick_2[2] ? TRK_STEP : joystick_2[3] ? -TRK_STEP : 9'sd0;
+assign trk_dx_a[0] = trk_velx[0];
+assign trk_dy_a[0] = trk_vely[0];
+assign trk_dx_a[1] = trk_velx[1];
+assign trk_dy_a[1] = trk_vely[1];
+assign trk_dx_a[2] = 9'sd0;
+assign trk_dy_a[2] = 9'sd0;
 
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.

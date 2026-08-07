@@ -1067,6 +1067,7 @@ end
 // none of them feed back into any renderer decision above. Each matches an
 // existing FSM condition exactly so it fires on precisely the same cycle as
 // the counter/state it shadows.
+`ifndef S32_RELEASE_MINIMAL
 wire debug_list_pulse   = (rs == R_DECODE);                 // mirrors debug_decode_count (unconditional in R_DECODE)
 wire debug_draw_pulse   = (rs == R_DECODE) && (list_count != 14'd8192) &&
                            (sw[0][15:14] == 2'b00) &&
@@ -1097,6 +1098,21 @@ s32_sprite_health_debug health_dbg (
     .frames_since_publish(debug_frames_since_publish),
     .buffer_collision_sticky(debug_buffer_collision_sticky)
 );
+`else
+assign debug_list_even = 16'h0000;
+assign debug_list_odd = 16'h0000;
+assign debug_draw_even = 16'h0000;
+assign debug_draw_odd = 16'h0000;
+assign debug_render_pass_count = 8'h00;
+assign debug_overrun_count = 8'h00;
+assign debug_w0lat = 16'h0000;
+assign debug_w1lat = 16'h0000;
+assign debug_sprwr_even = 16'h0000;
+assign debug_sprwr_odd = 16'h0000;
+assign debug_publish_count = 16'h0000;
+assign debug_frames_since_publish = 8'h00;
+assign debug_buffer_collision_sticky = 1'b0;
+`endif
 
 endmodule
 

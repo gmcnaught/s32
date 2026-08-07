@@ -12,7 +12,9 @@ import s32_pkg::*;
 //  Watches CPU writes; issues its own work-RAM writes via a dedicated port
 //  (arbitration handled by the bus controller: prot port wins, CPU stalls).
 // ---------------------------------------------------------------------------
-module s32_prot_hle (
+module s32_prot_hle #(
+    parameter ENABLE = 1'b1
+) (
     input             clk,
     input             rst,
     input       [6:0] prot_sel,
@@ -57,6 +59,8 @@ reg [15:0] cleared;      // sonic cleared-levels value
 reg [15:0] level;
 reg [7:0]  tmp;
 
+generate
+if (ENABLE) begin : g_enabled
 always @(posedge clk) begin
     if (rst) begin
         ps <= P_IDLE;
@@ -225,6 +229,26 @@ always @(posedge clk) begin
         endcase
     end
 end
+end
+else begin : g_disabled
+always @(posedge clk) begin
+    if (rst) begin
+        wram_req <= 1'b0;
+        wram_we <= 1'b0;
+        wram_addr <= 16'h0000;
+        wram_wdata <= 16'h0000;
+        wram_be <= 2'b00;
+        rom_req <= 1'b0;
+        rom_addr <= 24'h000000;
+    end
+    else begin
+        wram_req <= 1'b0;
+        wram_we <= 1'b0;
+        rom_req <= 1'b0;
+    end
+end
+end
+endgenerate
 
 endmodule
 
@@ -483,12 +507,10 @@ module s32_v25 (
 // explicit true-dual-port block preserves the physical interface for a future
 // MCU core without paying 16K flip-flops in the GA2 build.
 wire [7:0] dpram_q;
-s32_byte_dpram #(.ADDR_WIDTH(11), .NUM_WORDS(2048), .POWER_UP_UNINITIALIZED("FALSE")) dpram_mem ( // audit R20 PF-8: deterministic zero power-up
+s32_byte_spram #(.ADDR_WIDTH(11), .NUM_WORDS(2048), .POWER_UP_UNINITIALIZED("FALSE")) dpram_mem ( // audit R20 PF-8: deterministic zero power-up
     .clock(clk),
     .address_a(addr), .data_a(wdata), .rden_a(enable && cs),
-    .wren_a(enable && cs && we), .q_a(dpram_q),
-    .address_b(11'd0), .data_b(8'd0), .rden_b(1'b0),
-    .wren_b(1'b0), .q_b()
+    .wren_a(enable && cs && we), .q_a(dpram_q)
 );
 
 // HLE: wakeup string + echo protocol (MAME simulation fallback)

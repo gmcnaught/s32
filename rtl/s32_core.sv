@@ -8,14 +8,17 @@ import s32_pkg::*;
 
 // Fixed-clock dedicated revisions can use the single-port synchronous V60
 // cache. Keep this preprocessing choice local to this compilation unit.
-// Safe for S32_GAME_ONLY (ga2/arabfgt only, 2026-08-05): both have fixed CE
-// spacing (no CPU Turbo in this profile, s32.sdc) and neither uses the
-// generic protection ROM-read arbitration this cache's prot_rom_grant
-// tie-off assumes is unreachable (PROT_NONE for both -- see GAMES in
-// tools/gen_mra.py). That assumption breaks for a game like Sonic
-// (PROT_SONIC does use prot_rom_grant), which is why Sonic was dropped
-// from this profile instead of enabling this cache underneath it.
+// Both dedicated profiles (segas32v25: ga2/arabfgt; segas32: Sonic and
+// future non-V25 games) use it: fixed CE spacing (no CPU Turbo in either
+// profile) is common to both, and the arbiter feeding this cache's SDRAM p0
+// port grants a real protection-ROM-read request instead of the old
+// hardwired prot_rom_grant=0 (2026-08-06, see the s32_ga_rom_cache
+// instantiation below) -- the structural blocker that used to make this
+// cache unsafe under a game like Sonic (PROT_SONIC does drive
+// prot_rom_grant) is fixed, not just avoided by scope.
 `ifdef S32_PROFILE_V25
+`define S32_AREA_ROM_CACHE
+`elsif S32_GAME_ONLY_STD
 `define S32_AREA_ROM_CACHE
 `elsif S32_GAME_ONLY
 `define S32_AREA_ROM_CACHE
@@ -169,20 +172,29 @@ module s32_core #(
     output     [89:0] debug_v25_img     // {sweep_done, first_valid, hash[23:0], first_line[63:0]}
 );
 
-// 2026-08-05: this RBF is scoped to exactly ga2/arabfgt (see memory
-// s32-single-profile-roadmap) -- the same dedicated-game shape this
-// localparam pair originally served under the retired S32_PROFILE_V25
-// revision (no analog/trackball/generic-protection/dual-PCB at all), so
-// S32_GAME_ONLY reuses it directly rather than introducing a new trim.
+// 2026-08-06: this repository ships two dedicated-game profiles sharing
+// this same RTL (segas32v25.qsf: ga2/arabfgt, real V25; segas32.qsf:
+// Sonic and future non-V25 games, HLE only). Both trim analog/dual-PCB/
+// Burning Rival identically (GAME_ONLY), but only the non-V25 shape needs
+// the trackball and generic protection HLE live (GAME_ONLY_STD) --
+// segas32v25's games are both PROT_NONE and have no trackball board.
+// S32_GAME_ONLY_STD implies GAME_ONLY; a profile never needs to define both.
 `ifdef S32_PROFILE_V25
 localparam V25_GAME_ONLY = 1'b1;
 localparam GAME_ONLY     = 1'b1;
+localparam GAME_ONLY_STD = 1'b0;
+`elsif S32_GAME_ONLY_STD
+localparam V25_GAME_ONLY = 1'b0;
+localparam GAME_ONLY     = 1'b1;
+localparam GAME_ONLY_STD = 1'b1;
 `elsif S32_GAME_ONLY
 localparam V25_GAME_ONLY = 1'b1;
 localparam GAME_ONLY     = 1'b1;
+localparam GAME_ONLY_STD = 1'b0;
 `else
 localparam V25_GAME_ONLY = 1'b0;
 localparam GAME_ONLY     = 1'b0;
+localparam GAME_ONLY_STD = 1'b0;
 `endif
 
 // Dedicated real-V25 game hardware constants. The MRA descriptor is still
@@ -399,6 +411,7 @@ s32_big_dpram #(
 always @(posedge clk_sys)
     pr_ack <= pr_req;
 
+`ifndef S32_RELEASE_MINIMAL
 // Venom/Scorpion trigger diagnostic (spidman): snoop the game's world-camera
 // variable at 0x208032 (work-RAM word 0x4019).  Low byte 0x208032 sources the
 // display scroll (correct on hardware); high byte 0x208033 is the page counter
@@ -413,6 +426,9 @@ always @(posedge clk_sys)
         if (m_be[1]) dbg_cam[15:8] <= m_wdata[15:8];  // 0x208033 (page/high)
     end
 assign debug_cam = dbg_cam;
+`else
+assign debug_cam = 16'h0000;
+`endif
 
 // ---------------------------------------------------------------------------
 // video subsystem
@@ -465,6 +481,7 @@ s32_big_dpram #(
     .wren_b(1'b0), .q_b(sprlist_q)
 );
 
+`ifndef S32_RELEASE_MINIMAL
 // Record completed CPU writes, not every cycle of a held V60 bus request.
 // Packed output = {count, seen/BE/pad, last word address, last data}.
 wire       debug_sprram_seen;
@@ -483,6 +500,9 @@ s32_sprite_write_debug sprite_write_debug (
 assign debug_sprram_cpu = {debug_sprram_count,
                            debug_sprram_seen, debug_sprram_be, 5'b00000,
                            debug_sprram_addr, debug_sprram_data};
+`else
+assign debug_sprram_cpu = 48'h000000000000;
+`endif
 
 // CRT timing
 wire mode_416;
@@ -529,7 +549,7 @@ reg [15:0] tm_clips_cdc [0:19];
 // bank.  The mixer must use the matching snapshot for the line currently
 // being scanned; using tilemap.layer_off directly lets a mid-frame register
 // write gate the previous line with the next line's state.
-reg  [5:0] tm_layer_off_bank [0:1];
+reg  [5:0] tm_layer_off_bank0, tm_layer_off_bank1;
 reg  [8:0] mix_disp_x_cdc;
 reg [15:0] mix_bg_ctrl;
 integer tm_init_i;
@@ -556,8 +576,8 @@ initial begin
         tm_clips[tm_init_i] = 0;
         tm_clips_cdc[tm_init_i] = 0;
     end
-    tm_layer_off_bank[0] = 6'b111111;
-    tm_layer_off_bank[1] = 6'b111111;
+    tm_layer_off_bank0 = 6'b111111;
+    tm_layer_off_bank1 = 6'b111111;
     mix_disp_x_cdc = 0;
 end
 
@@ -622,14 +642,24 @@ always @(posedge clk_ram) begin
         tm_r1ff5c <= r1ff5c; tm_r1ff5e <= r1ff5e;
         tm_r1ff88 <= r1ff88; tm_r1ff8a <= r1ff8a;
         tm_r1ff8c <= r1ff8c; tm_r1ff8e <= r1ff8e;
-        tm_layer_off_bank[tm_lb_bank] <= {
+        if (tm_lb_bank)
+            tm_layer_off_bank1 <= {
+                r1ff02[5] | r1ff8e[5],
+                r1ff02[3] | r1ff8e[4] | r1ff00[13],
+                r1ff02[2] | r1ff8e[3] | r1ff00[12],
+                r1ff02[1] | r1ff8e[2],
+                r1ff02[0] | r1ff8e[1],
+                r1ff02[4] | r1ff8e[0]
+            };
+        else
+            tm_layer_off_bank0 <= {
             r1ff02[5] | r1ff8e[5],
             r1ff02[3] | r1ff8e[4] | r1ff00[13],
             r1ff02[2] | r1ff8e[3] | r1ff00[12],
             r1ff02[1] | r1ff8e[2],
             r1ff02[0] | r1ff8e[1],
             r1ff02[4] | r1ff8e[0]
-        };
+            };
         for (tm_cap_i = 0; tm_cap_i < 4; tm_cap_i = tm_cap_i + 1) begin
             tm_scrollx[tm_cap_i] <= w_scrollx[tm_cap_i];
             tm_scrolly[tm_cap_i] <= w_scrolly[tm_cap_i];
@@ -650,7 +680,7 @@ always @(posedge clk_ram) begin
 end
 
 wire [5:0] tm_layer_off;
-wire [5:0] tm_layer_off_disp = tm_layer_off_bank[vcnt[0]];
+wire [5:0] tm_layer_off_disp = vcnt[0] ? tm_layer_off_bank1 : tm_layer_off_bank0;
 wire [21:3] tile_rom_addr;
 s32_tilemap tilemap (
     .clk(clk_ram), .rst(rst),
@@ -842,6 +872,8 @@ assign fb_rd_x   = hcnt;
 // nonetheless fully independent (the valuable part of B7).
 wire [15:0] fb_rd_pix_b = fb_rd_pix;
 `ifdef S32_PROFILE_V25
+`define S32_MIX_PIX_PIPE
+`elsif S32_GAME_ONLY_STD
 `define S32_MIX_PIX_PIPE
 `elsif S32_GAME_ONLY
 `define S32_MIX_PIX_PIPE
@@ -1149,33 +1181,23 @@ wire sel_adc   = sel_ioex && (A[5:3] == 3'b010) && cfg_has_adc;
 wire sel_track = sel_ioex && (A[5:3] <= 3'b010) && cfg_has_track;
 wire sel_ppi   = sel_ioex && (A[5:3] == 3'b100) && cfg_has_ppi;
 genvar t;                         // declare outside the generate-for (Quartus 17.0)
+localparam TRACKBALL_HW = GAME_ONLY_STD || !GAME_ONLY;
 generate
-    if (V25_GAME_ONLY) begin : g_v25_game_no_analog
-        // Golden Axe and Arabian Fight have no ADC or trackball board.
+for (t = 0; t < 3; t = t + 1) begin : tracks
+    s32_upd4701 #(.ENABLE(TRACKBALL_HW)) upd (
+        .clk(clk_sys), .rst(rst),
+        .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
+        .cs(m_req && sel_ioex && m_be[0] &&
+            cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
+        .we(m_we), .addr(A[2:1]),
+        .rdata(trk_q[t]), .buttons(trk_btn[t])
+    );
+end
+endgenerate
+generate
+    if (GAME_ONLY_STD || GAME_ONLY) begin : g_no_adc
+        // Neither dedicated production profile has an MSM6253 ADC board.
         assign adc_bit = 1'b1;
-        for (t = 0; t < 3; t = t + 1) begin : tracks
-            assign trk_q[t] = 8'hff;
-        end
-    end
-    else if (GAME_ONLY) begin : g_game_no_analog
-        // The trackball counters (sonic) stay compiled out of the dedicated
-        // release, but the MSM6253 ADC is tiny and the positional game on this
-        // profile (jpark: descriptor has_adc=1) reads its aim
-        // through it at 0xC00050-57, so it is retained.  Non-ADC descriptors
-        // gate sel_adc off and Quartus sweeps it as before.  System 32 games
-        // never bank the analog mux (0xC00060 is Multi 32-only), so the four
-        // fixed channels P1X/P1Y/P2X/P2Y match MAME's ANALOG1-4.
-        s32_msm6253 adc (
-            .clk(clk_sys), .rst(rst),
-            .cs(m_req && sel_adc && m_be[0]), // 0xC00050-57
-            .we(m_we), .addr(A[2:1]),
-            .dout_bit(adc_bit),
-            .an0(adc_ch[0]), .an1(adc_ch[1]),
-            .an2(adc_ch[2]), .an3(adc_ch[3])
-        );
-        for (t = 0; t < 3; t = t + 1) begin : tracks
-            assign trk_q[t] = 8'hff;
-        end
     end
     else begin : g_extended_analog
         // Power up at bank 0 to match MAME device_start (m_analog_bank = 0);
@@ -1195,16 +1217,6 @@ generate
                 A[5:0] == 6'h20)
                 analog_bank <= m_wdata[2:0];   // 0xC00060 analog_bank_w
 
-        for (t = 0; t < 3; t = t + 1) begin : tracks
-            s32_upd4701 upd (
-                .clk(clk_sys), .rst(rst),
-                .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
-                .cs(m_req && sel_ioex && m_be[0] &&
-                    cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
-                .we(m_we), .addr(A[2:1]),
-                .rdata(trk_q[t]), .buttons(trk_btn[t])
-            );
-        end
     end
 endgenerate
 
@@ -1243,27 +1255,11 @@ wire [15:0] prot_rom_data = sdr_p0_dout;
 wire [7:0]  v25_q;
 wire        br_rom_req;
 wire [23:0] br_rom_addr;
-generate
-    if (GAME_ONLY) begin : g_game_no_other_protection
-        // Dedicated game profiles use only their selected board path.  Generic
-        // Generic protection HLE and the Burning Rival path are unreachable.
-        assign pr_req = 1'b0;
-        assign pr_we = 1'b0;
-        assign pr_addr = 16'h0000;
-        assign pr_wdata = 16'h0000;
-        assign pr_be = 2'b00;
-        assign br_trap = 1'b0;
-        assign br_trap_q = 16'hffff;
-        assign prot_rom_req = 1'b0;
-        assign prot_rom_addr = 24'h000000;
-        assign br_rom_req = 1'b0;
-        assign br_rom_addr = 24'h000000;
-        assign br_pram_we = 1'b0;
-        assign br_pram_addr = 8'h00;
-        assign br_pram_wdata = 8'h00;
-    end
-    else begin : g_other_protection
-        s32_prot_hle prot (
+// Generic protection HLE (PROT_SONIC's rev.C level loader, PROT_DBZVRVS,
+// PROT_JLEAGUE, PROT_DARKEDGE, PROT_F1LAP): live for segas32.qsf's scope
+// (GAME_ONLY_STD -- Sonic uses PROT_SONIC), unreachable for segas32v25's
+// ga2/arabfgt (both PROT_NONE, no generic protection board at all).
+ s32_prot_hle #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) prot (
             .clk(clk_sys), .rst(rst), .prot_sel(cfg_prot_sel),
             .cpu_wr(m_req && m_we && (sel_wram || sel_prot_a)),
             .cpu_addr(A), .cpu_wdata(m_wdata),
@@ -1275,6 +1271,21 @@ generate
             .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
         );
 
+// Burning Rival string-copy responder: no game in either dedicated GAME_ONLY
+// shape uses it (ga2/arabfgt are PROT_NONE; Sonic is PROT_SONIC), so it's
+// tied off for both segas32v25 and segas32, same as the dual-PCB bridge
+// below (g_no_dualpcb).
+generate
+    if (GAME_ONLY) begin : g_game_no_brival
+        assign br_trap = 1'b0;
+        assign br_trap_q = 16'hffff;
+        assign br_rom_req = 1'b0;
+        assign br_rom_addr = 24'h000000;
+        assign br_pram_we = 1'b0;
+        assign br_pram_addr = 8'h00;
+        assign br_pram_wdata = 8'h00;
+    end
+    else begin : g_brival
         s32_prot_brival brival (
             .clk(clk_sys), .rst(rst), .enable(cfg_prot_sel == PROT_BRIVAL),
             .cpu_wr(m_req && m_we && sel_prot_a),
@@ -1286,7 +1297,6 @@ generate
             .rom_req(br_rom_req), .rom_addr(br_rom_addr),
             .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
         );
-
     end
 endgenerate
 
@@ -1312,15 +1322,10 @@ generate
     end
 endgenerate
 
-// Raw V25 core diagnostics (clk_v25 domain in the real build).  Declared before
-// the instantiation so no implicit nets are inferred; the HLE build ties them
-// off — its static tables are always "alive" so the flags carry no signal.
+// Raw V25 core diagnostics (clk_v25 domain in the real build). Declared before
+// the instantiation so no implicit nets are inferred; the HLE build has no
+// corresponding source signals.
 wire v25_dbg_ce_raw, v25_dbg_io_raw, v25_dbg_unm_raw;
-`ifndef S32_REAL_V25
-assign v25_dbg_ce_raw  = 1'b0;
-assign v25_dbg_io_raw  = 1'b0;
-assign v25_dbg_unm_raw = 1'b0;
-`endif
 
 `ifdef S32_REAL_V25
 // V25 program-fetch address to SDRAM port 5 — declared before the instantiation
@@ -1398,17 +1403,9 @@ end
 s32_v25_cpu v25 (
     .clk_v25(clk_v25),
     .pause(pause),
-`else
-s32_v25 v25 (
-`endif
-`ifdef S32_REAL_V25
     .clk(clk_sys), .rst(rst), .enable(cfg_has_v25 && sweep_done),
-`else
-    .clk(clk_sys), .rst(rst), .enable(cfg_has_v25),
-`endif
     .table_sel(cfg_v25_table),
     .prg_wr(v25_prg_wr), .prg_waddr(v25_prg_waddr), .prg_wdata(v25_prg_wdata),
-`ifdef S32_REAL_V25
     .rom_req(v25_p5_req), .rom_addr(v25_rom_addr),
     .rom_data(sdr_p5_dout), .rom_ack(sdr_p5_ack && !sweep_active),
     .debug_cpu_clk(v25_dbg_ce_raw),
@@ -1417,10 +1414,30 @@ s32_v25 v25 (
     .debug_first_fetch_valid(v25_first_valid),
     .debug_first_fetch_data(v25_first_data),
     .debug_first_fetch_addr(v25_first_addr),
-`endif
     .cs(m_req && sel_v25 && cfg_has_v25 && m_be[0]), .we(m_we),
     .addr(A[11:1]), .wdata(m_wdata[7:0]), .rdata(v25_q)
 );
+`elsif S32_GAME_ONLY
+// 2026-08-06: no game in this dedicated GAME_ONLY-but-not-REAL_V25 shape
+// (segas32.qsf: Sonic and future non-V25 games) ever sets has_v25, so the
+// HLE responder's mailbox (a 2048x8 true-dual-port s32_byte_dpram, real
+// M10K block(s) regardless of its runtime-false enable) would be dead
+// weight -- same exclusion pattern already used for s32_dualpcb/
+// s32_prot_brival in this file. GAME_ONLY alone (without S32_REAL_V25)
+// never actually occurs today since segas32v25.qsf always pairs GAME_ONLY
+// with REAL_V25 (see the top-of-file localparam block), but excluding on
+// GAME_ONLY rather than GAME_ONLY_STD specifically keeps this correct if
+// that ever changes.
+assign v25_q = 8'h00;
+`else
+s32_v25 v25 (
+    .clk(clk_sys), .rst(rst), .enable(cfg_has_v25),
+    .table_sel(cfg_v25_table),
+    .prg_wr(v25_prg_wr), .prg_waddr(v25_prg_waddr), .prg_wdata(v25_prg_wdata),
+    .cs(m_req && sel_v25 && cfg_has_v25 && m_be[0]), .we(m_we),
+    .addr(A[11:1]), .wdata(m_wdata[7:0]), .rdata(v25_q)
+);
+`endif
 
 // ---------------------------------------------------------------------------
 
@@ -1458,11 +1475,11 @@ reg [23:1] rom_addr_r;
 // here so the icache lookup can suppress re-arming a completed ROM read while
 // the V60 bus still holds m_req; the driving logic lives in the read-mux block.
 reg        ack_r;
-`ifdef S32_AREA_ROM_CACHE
-wire       prot_rom_grant = 1'b0;
-`else
+// Both cache implementations arbitrate SDRAM p0 between the V60 ROM path and
+// the protection clients (e.g. PROT_SONIC's level-loader) with a registered
+// grant -- one FSM below drives it per implementation (S32_AREA_ROM_CACHE's
+// s32_ga_rom_cache instantiation, or the generic icache further down).
 reg        prot_rom_grant;
-`endif
 // The protection clients issue an exact byte address for a 16-bit ROM read.
 // Preserve every word-address bit: Sonic's level-order table begins at 0x263a,
 // which is not 8-byte aligned.  Aligning this path like an instruction-cache
@@ -1483,6 +1500,7 @@ assign sdr_p0_addr = prot_rom_grant ? {2'b00, prot_any_rom_addr[21:1]} :
 // extra raw clock of lookup latency remains inside the fixed V60 CE interval.
 wire        rom_ready;
 wire [15:0] rom_word_r;
+wire        ga_cache_busy;
 s32_ga_rom_cache ga_rom_cache (
     .clk(clk_sys),
     .rst(rst),
@@ -1500,8 +1518,31 @@ s32_ga_rom_cache ga_rom_cache (
     .rom_req(rom_req_r),
     .rom_addr(rom_addr_r),
     .rom_data(sdr_p0_dout),
-    .rom_ack(sdr_p0_ack)
+    .rom_ack(sdr_p0_ack),
+    .busy(ga_cache_busy),
+    .stall(prot_rom_grant)
 );
+
+// Arbitrate the cache's exclusive p0 access against a protection client.
+// ga2/arabfgt are both PROT_NONE, so prot_any_rom_req is permanently 0 for
+// them and this FSM is behavior-inert; a game that does drive protection ROM
+// reads through this profile (e.g. Sonic's rev.C level-loader) gets a real
+// grant instead of the old hardwired prot_rom_grant=0. Start a grant only
+// when the cache has nothing in flight (busy = filling || lookup_pending),
+// then hold it until the protection transaction acks. `stall` freezes the
+// cache's lookup-resolution while granted, closing the one-cycle race where
+// a lookup that was already pending when the grant started could otherwise
+// still land a rom_req on the bus mid-grant (see s32_ga_rom_cache's stall
+// port for the full argument).
+always @(posedge clk_sys) begin
+    if (rst)
+        prot_rom_grant <= 1'b0;
+    else if (prot_rom_grant) begin
+        if (sdr_p0_ack) prot_rom_grant <= 1'b0;
+    end
+    else if (prot_any_rom_req && !ga_cache_busy)
+        prot_rom_grant <= 1'b1;
+end
 `else
 reg  [63:0] icache_data [0:31];
 reg  [12:0] icache_tag  [0:31];      // addr[20:8]
@@ -1719,17 +1760,21 @@ always @(posedge clk_sys) begin
                 sel_prot_a:  rmux <= 16'hffff;
                 sel_io0:     rmux <= {8'hff, io0_q};
                 sel_io1:     rmux <= {8'hff, io1_q};
-                sel_ioex:    if (GAME_ONLY)
-                                 // MSM6253 serial output on D7 (audit R20
-                                 // IO-3), same as the universal profile.
-                                 rmux <= sel_adc ? {8'hff, adc_bit, 7'h7f} :
-                                         sel_ppi ? {8'hff, ppi_q} : 16'hffff;
-                             else
-                                 // MSM6253 serial output is wired to D7, not
-                                 // D0 (MAME msm6253 d7_r); audit R20 IO-3.
-                                 rmux <= sel_adc   ? {8'hff, adc_bit, 7'h7f} :
-                                         sel_track ? {8'hff, trk_q[A[4]?2:(A[3]?1:0)]} :
-                                         sel_ppi   ? {8'hff, ppi_q} : 16'hffff;
+                // MSM6253 serial output is wired to D7, not D0 (MAME
+                // msm6253 d7_r); audit R20 IO-3. sel_track is already
+                // cfg_has_track-gated at its own declaration (0 whenever a
+                // descriptor has no trackball, e.g. every segas32v25 game),
+                // so a single branch is correct for every profile -- the
+                // former `if (GAME_ONLY)` special case here dated from when
+                // GAME_ONLY meant "no trackball board at all" (the old
+                // Holosseum-only scope) and never gained a sel_track arm.
+                // 2026-08-06: GAME_ONLY_STD (segas32/Sonic) inherited that
+                // stale branch via GAME_ONLY, silently returning 0xFFFF for
+                // every trackball counter read -- fixed by removing the
+                // dead special case instead of adding a third copy of it.
+                sel_ioex:    rmux <= sel_adc   ? {8'hff, adc_bit, 7'h7f} :
+                                     sel_track ? {8'hff, trk_q[A[4]?2:(A[3]?1:0)]} :
+                                     sel_ppi   ? {8'hff, ppi_q} : 16'hffff;
                 sel_intc:    rmux <= {8'hff, intc_q};
                 sel_rand:    rmux <= rng_read;
                 default:     rmux <= 16'hffff;
@@ -1738,6 +1783,7 @@ always @(posedge clk_sys) begin
     end
 end
 
+`ifndef S32_RELEASE_MINIMAL
 // V25 bring-up diagnostic (Debug Video "V25").  Classifies the V25-game
 // black screen from the V60-visible mailbox plus three synchronised core
 // flags, without touching operation:
@@ -1908,6 +1954,13 @@ always @(posedge clk_sys) begin
     end
 end
 
+`else
+assign debug_status = 24'h000000;
+assign debug_first_rom = 16'h0000;
+assign debug_v25 = 24'h000000;
+assign debug_v25_img = 90'h000000000000000000000000;
+`endif
+
 endmodule
 
 `ifdef S32_AREA_ROM_CACHE
@@ -1941,7 +1994,17 @@ module s32_ga_rom_cache (
     output reg         rom_req,
     output reg  [23:1] rom_addr,
     input       [15:0] rom_data,
-    input              rom_ack
+    input              rom_ack,
+
+    // Held high by an external SDRAM-p0 arbiter while a competing client
+    // (a protection responder) owns the shared bus. Freezes lookup
+    // resolution only -- a cache HIT never touches rom_req/rom_ack so it is
+    // unaffected, and a pending MISS simply waits an extra cycle before
+    // issuing its first rom_req once stall drops. `busy` reports whether
+    // this cache has anything in flight (safe to start a new grant only
+    // when it does not).
+    input              stall,
+    output             busy
 );
 
 // 32 x 77 = 2,464 bits. Cyclone V MLABs support a synchronous 32-word read;
@@ -1977,6 +2040,11 @@ wire [4:0] lookup_mem_addr = lookup_pending ? lookup_index :
 wire [63:0] completed_line = {rom_data, fill_data[47:0]};
 wire cache_commit = filling && rom_ack && (fill_word == 2'd3) &&
                     !fill_discard && !invalidate && !rst;
+// Nothing in flight here means it is safe for an external arbiter to steal
+// the shared p0 bus: a cache HIT resolves without ever touching rom_req, so
+// only an in-progress fill or a not-yet-resolved lookup (which might turn
+// out to be a miss) count as busy.
+assign busy = filling || lookup_pending;
 
 function automatic [15:0] select_word(
     input [63:0] line,
@@ -2086,7 +2154,7 @@ always @(posedge clk) begin
                 end
             end
         end
-        else if (lookup_pending) begin
+        else if (lookup_pending && !stall) begin
             lookup_pending <= 1'b0;
             if (cache_valid[lookup_index] && cache_q[76:64] == lookup_tag) begin
                 if (lookup_fetch) begin

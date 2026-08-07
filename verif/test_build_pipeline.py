@@ -452,9 +452,14 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         self.assertIn("build-seed-state.ps1", lowered)
 
     def test_merged_qsf_enables_resource_saving_macros(self) -> None:
-        qsf = (REPO_ROOT / "s32.qsf").read_text(encoding="utf-8")
-        self.assertIn("S32_JT12_MLAB_SHIFTS=1", qsf)
-        self.assertIn("S32_V25_MLAB_FIFO=1", qsf)
+        # S32_V25_MLAB_FIFO is real-V25-specific (segas32v25 only); the
+        # JT12 shift-register packing applies to every profile.
+        v25_qsf = (REPO_ROOT / "segas32v25.qsf").read_text(encoding="utf-8")
+        self.assertIn("S32_JT12_MLAB_SHIFTS=1", v25_qsf)
+        self.assertIn("S32_V25_MLAB_FIFO=1", v25_qsf)
+        std_qsf = (REPO_ROOT / "segas32.qsf").read_text(encoding="utf-8")
+        self.assertIn("S32_JT12_MLAB_SHIFTS=1", std_qsf)
+        self.assertNotIn("S32_V25_MLAB_FIFO=1", std_qsf)
 
     def test_timing_qualification_precedes_assembly(self) -> None:
         seed_body = self.build.lower().split(":try_seed", maxsplit=1)[1]
@@ -547,8 +552,8 @@ class CIWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("check_ga2_release.py", lowered)
         self.assertIn("check_holo_release.py", lowered)
         self.assertIn("bash -n tools/build.sh", lowered)
-        self.assertIn("build-s32.bat", lowered)
-        self.assertNotIn("build-s32v25.bat", lowered)
+        self.assertIn("build-segas32.bat", lowered)
+        self.assertIn("build-segas32v25.bat", lowered)
         self.assertNotIn("docker run", lowered)
         self.assertNotIn("bash tools/build.sh", lowered)
         self.assertNotIn("upload-artifact", lowered)

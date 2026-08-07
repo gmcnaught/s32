@@ -26,7 +26,8 @@ class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        self.assertEqual(len(paths), 6)
+        # 3 arabfgt + 3 ga2 (segas32v25) + 1 sonic (segas32, restored 2026-08-06)
+        self.assertEqual(len(paths), 7)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")

@@ -777,7 +777,9 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
-module s32_upd4701 (
+module s32_upd4701 #(
+    parameter ENABLE = 1'b1
+) (
     input             clk,
     input             rst,
 
@@ -796,44 +798,54 @@ module s32_upd4701 (
 // MAME's upd4701 keeps a physical 12-bit counter and a reset origin.  A
 // reset_xy write captures the current position; it does not clear motion.
 // Each byte read then latches the current relative position independently.
-reg [11:0] cx, cy;
-reg [11:0] startx, starty;
-reg [11:0] lx, ly;
-wire [11:0] xrel = cx - startx;
-wire [11:0] yrel = cy - starty;
+generate
+    if (ENABLE) begin : g_enabled
+        reg [11:0] cx, cy;
+        reg [11:0] startx, starty;
+        reg [11:0] lx, ly;
+        wire [11:0] xrel = cx - startx;
+        wire [11:0] yrel = cy - starty;
 
-always @(posedge clk) begin
-    if (rst) begin
-        cx <= 0;
-        cy <= 0;
-        startx <= 0;
-        starty <= 0;
-        lx <= 0;
-        ly <= 0;
-        rdata <= 0;
+        always @(posedge clk) begin
+            if (rst) begin
+                cx <= 0;
+                cy <= 0;
+                startx <= 0;
+                starty <= 0;
+                lx <= 0;
+                ly <= 0;
+                rdata <= 0;
+            end
+            else begin
+                if (delta_valid) begin
+                    cx <= cx + {{3{dx[8]}}, dx};
+                    cy <= cy + {{3{dy[8]}}, dy};
+                end
+                if (cs && we) begin
+                    startx <= cx;
+                    starty <= cy;
+                end
+                if (cs && !we) begin
+                    case (addr)
+                        2'd0: begin lx <= xrel; rdata <= xrel[7:0]; end
+                        // XH/YH high nibble = uPD4701 switch inputs; segas32 leaves them
+                        // unconnected (MAME sets no switch callbacks) so they read idle,
+                        // not the live joystick buttons. audit R20 IO-14
+                        2'd1: begin lx <= xrel; rdata <= {4'h0, xrel[11:8]}; end
+                        2'd2: begin ly <= yrel; rdata <= yrel[7:0]; end
+                        2'd3: begin ly <= yrel; rdata <= {4'h0, yrel[11:8]}; end
+                    endcase
+                end
+            end
+        end
     end
-    else begin
-        if (delta_valid) begin
-            cx <= cx + {{3{dx[8]}}, dx};
-            cy <= cy + {{3{dy[8]}}, dy};
-        end
-        if (cs && we) begin
-            startx <= cx;
-            starty <= cy;
-        end
-        if (cs && !we) begin
-            case (addr)
-                2'd0: begin lx <= xrel; rdata <= xrel[7:0]; end
-                // XH/YH high nibble = uPD4701 switch inputs; segas32 leaves them
-                // unconnected (MAME sets no switch callbacks) so they read idle,
-                // not the live joystick buttons. audit R20 IO-14
-                2'd1: begin lx <= xrel; rdata <= {4'h0, xrel[11:8]}; end
-                2'd2: begin ly <= yrel; rdata <= yrel[7:0]; end
-                2'd3: begin ly <= yrel; rdata <= {4'h0, yrel[11:8]}; end
-            endcase
+    else begin : g_disabled
+        always @(posedge clk) begin
+            if (rst) rdata <= 8'hff;
+            else if (cs && !we) rdata <= 8'hff;
         end
     end
-end
+endgenerate
 
 endmodule
 

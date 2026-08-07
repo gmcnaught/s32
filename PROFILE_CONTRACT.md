@@ -2,32 +2,50 @@
 
 This is the persistent cross-chat routing record for the core.
 
-## 2026-08-05: merged into a single profile
+## 2026-08-06: split back into two dedicated profiles
 
-The separate `s32v25` universal real-V25 revision was retired. One RBF now
-supports every non-Multi-32 System 32 game, including `ga2` and `arabfgt`;
-games are added to it one at a time going forward rather than staged across
-parallel profiles (see memory `s32-single-profile-roadmap`). This closed a
-real, previously-unmeasured resource blocker: the universal build had never
-actually fit the device (`docs/compat.md`), because `s32_dualpcb`'s 4 KiB
-comm-RAM array failed Quartus 17 block-RAM inference and cost ~45,746
-combinational ALUTs (~44% of the whole design) as unconditionally-compiled
-registers. That inference failure is fixed (`rtl/prot/s32_prot.sv`) as part
-of this same merge. CPU Turbo was also removed from the profile so its V60
-multicycle timing relaxation (`s32.sdc`) can apply unconditionally instead of
-being keyed to which Quartus revision was selected.
+The single merged `s32` profile (2026-08-05 below) is retired in favor of two
+dedicated Quartus revisions, at explicit user direction after the merged
+profile's resource growth (trackball + generic protection HLE, added to
+prepare for Sonic) measurably regressed timing closure on the shared
+`s32_vram`/`s32_tilemap`/`s32_sprite` critical paths for zero benefit to the
+two games that were actually shipping:
 
-Sections below that still say "`s32v25`" or "V25 profile" as a *routing*
-target are historical (dated) and superseded by this note; the underlying
-attract/gameplay evidence they record remains valid regardless of which RBF
-file the game now loads from.
+- `segas32v25.rbf` / `segas32v25.qsf`: real NEC V25 hardware, for exactly
+  `ga2` and `arabfgt`. Functionally identical in scope to the old merged
+  profile's `S32_GAME_ONLY` trim -- same macros, same fitter settings, same
+  seed (2) -- just under a new filename. `S32_REAL_V25` is compiled in here
+  only.
+- `segas32.rbf` / `segas32.qsf`: no real V25 hardware at all (HLE responder
+  only, `rtl/prot/s32_prot.sv`'s `s32_v25`), for every other in-scope System
+  32 game. Currently scoped to `sonic` alone (its resource-fit blocker --
+  the V60 ROM cache's `prot_rom_grant` tie-off assuming no game needed
+  generic protection ROM-read arbitration -- is fixed, see
+  `rtl/s32_core.sv`'s `s32_ga_rom_cache` arbiter). Other non-V25 games
+  (`holo`, `jpark`, `radm`, `radr`, `spidman`) return to this profile one at
+  a time, same discipline as the retired single-profile roadmap just applied
+  to two profiles instead of one. This profile has never been fit; its
+  QSF's fitter/seed settings are starting points carried over from
+  `segas32v25.qsf`, not validated for its own resource shape.
+
+`rtl/s32_core.sv` is shared by both profiles. The scope trim is now
+three-way: `GAME_ONLY` (dual-PCB/Burning Rival tied off, applies to both
+profiles) and `GAME_ONLY_STD` (additionally keeps the trackball and generic
+protection HLE live, `segas32.qsf` only, implies `GAME_ONLY`). Do not name a
+macro after a specific game (`S32_SONIC_ONLY` etc.) -- see the routing rule
+below, unchanged since before the merge.
+
+Sections below dated 2026-08-05 or earlier that describe the single merged
+profile are historical; the underlying attract/gameplay evidence they record
+remains valid regardless of which RBF file a game now loads from, but any
+routing/macro-name detail in them refers to the retired merge, not current
+state.
 
 ## Outputs
 
-- `s32.rbf` / `s32.qsf`: the single production image for every supported
-  parent (`holo`, `jpark`, `radm`, `radr`, `sonic`, `spidman`, `ga2`,
-  `arabfgt`). The board descriptor's `has_v25`/`v25_table` bits select
-  whether the real V25 core is enabled and which table/cadence it uses.
+- `segas32v25.rbf` / `segas32v25.qsf`: `ga2`, `arabfgt` (real V25).
+- `segas32.rbf` / `segas32.qsf`: `sonic` today; `holo`, `jpark`, `radm`,
+  `radr`, `spidman` return here one at a time (HLE only, no V25 hardware).
 - No production image supports Multi 32 sets.
 
 ## User-requested exclusions (2026-08-03)
@@ -40,24 +58,33 @@ they are outside the production profile.
 
 ## Source of truth
 
-`tools/gen_mra.py:RBF_BY_PARENT` is empty by design (every game routes to the
-default `"s32"`) and is authoritative for MRA-to-RBF routing. `s32.qsf` is the
-only production Quartus revision. `S32_PROFILE_STANDARD` is the only
-production profile macro; `S32_PROFILE_V25` must never be defined again. Any
-other game-named macro is a test legacy and must not be used to route a
+`tools/gen_mra.py:RBF_BY_PARENT` is authoritative for MRA-to-RBF routing:
+`{"ga2": "segas32v25", "arabfgt": "segas32v25"}`, with every other emitted
+parent defaulting to `"segas32"`. `segas32v25.qsf` and `segas32.qsf` are the
+only two production Quartus revisions. `S32_PROFILE_STANDARD` is the only
+production *profile-shape* macro (both revisions set it); `S32_PROFILE_V25`
+must never be defined again (that was the pre-2026-08-05 dedicated-revision
+macro, not the same thing as today's two-revision split). `S32_GAME_ONLY`
+and `S32_GAME_ONLY_STD` are legitimate production *scope-trim* macros (not
+game-named -- they describe a hardware-capability shape), each set by
+exactly one QSF. Any macro named after a specific game (`S32_GA2_ONLY`,
+`S32_SONIC_ONLY`, etc.) is a test legacy and must not be used to route a
 shipped game. `S32_PCB_TIMING` is a common behavior flag that selects the
 shared ce-gated V60 fetch boundary and never selects a game or RBF.
 
-## Feature placement (single profile)
+## Feature placement (two profiles)
 
-| Feature/change | `s32` |
-|---|---:|
-| Shared V60, video, sprite, audio, I/O, loader, and HLE protection fixes | yes |
-| Descriptor-driven ADC/trackball/gun/PPI/dual-PCB/link-HLE paths | yes |
-| Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (shared, `S32_REAL_V25=1`); enabled per-game by the descriptor's `has_v25` bit, otherwise idle |
-| V25 table/cadence selection | descriptor-driven (`v25_table`), same fixed per-board constants as the retired dedicated profile |
-| CPU Turbo | removed (V60 timing relies on fixed CE spacing for every game now — see `s32.sdc`) |
-| Multi 32 second screen/peripheral hardware | no |
+| Feature/change | `segas32v25` | `segas32` |
+|---|---:|---:|
+| Shared V60, video, sprite, audio, I/O, loader, and dedicated V60 ROM cache | yes | yes |
+| MSM6253 ADC | no (`GAME_ONLY` tie-off; no game here has an analog board) | no (same tie-off; no game here has an analog board) |
+| Trackball (`s32_upd4701`) | no (no game here has one) | yes, descriptor-driven (`GAME_ONLY_STD`; Sonic's rev.C hardware) |
+| Generic protection HLE (`s32_prot_hle`) | no (both games are `PROT_NONE`) | yes (`GAME_ONLY_STD`; Sonic's `PROT_SONIC`) |
+| Burning Rival responder / dual-PCB bridge | no | no (no game in either profile uses either) |
+| Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_REAL_V25=1`), enabled per-game by the descriptor's `has_v25` bit | not compiled in at all; HLE responder `s32_v25` only |
+| V25 table/cadence selection | descriptor-driven (`v25_table`) | n/a (no V25 hardware) |
+| CPU Turbo | removed (V60 timing relies on fixed CE spacing) | removed (same) |
+| Multi 32 second screen/peripheral hardware | no | no |
 
 ## Evidence status (2026-08-01)
 
