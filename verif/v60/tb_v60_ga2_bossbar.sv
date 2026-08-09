@@ -197,12 +197,4 @@ initial begin
     #500000;
     $fatal(1, "V60 GA2 BOSSBAR FAIL (timeout)");
 end
-
-always @(posedge clk) begin
-    if (!rst && errors == 0 && (m_req || c_ack))
-        $display("TRACE pc=%08x st=%0d r20=%08x fb=%02x/%02x/%02x/%02x op2=%08x own=%0d dreq=%0b c_req=%0b c_ack=%0b m_req=%0b m_we=%0b addr=%06x data=%04x be=%b",
-                 cpu.pc, cpu.st, cpu.r[20], cpu.fb[0], cpu.fb[1], cpu.fb[2], cpu.fb[3], cpu.op2,
-                 cpu.bus_owner, cpu.dbus_req, c_req, c_ack,
-                 m_req, m_we, {m_addr,1'b0}, m_wdata, m_be);
-end
 endmodule

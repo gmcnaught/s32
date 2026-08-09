@@ -586,7 +586,8 @@ try {
         "rtl/cpu/v60/s32_v60_bus.sv", "verif/v60/tb_v60_bus_lanes.sv"
     ) "V60 BUS LANES PASS"
     Run-HdlTest "t33_v60_bus_nco_timing" "tb_v60_bus_nco_timing" @(
-        "rtl/cpu/v60/s32_v60_bus.sv", "verif/v60/tb_v60_bus_nco_timing.sv"
+        "rtl/s32_pkg.sv", "rtl/cpu/v60/s32_v60_bus.sv",
+        "verif/v60/tb_v60_bus_nco_timing.sv"
     ) "V60 BUS NCO TIMING PASS"
     Run-HdlTest "t33_v60_sonic_burst_timing" "tb_v60_sonic_burst_timing" @(
         "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
@@ -598,7 +599,8 @@ try {
 
     Write-Tier 35 "three-player left-stick to trackball velocity"
     Run-HdlTest "t35_trackball_stick" "tb_trackball_stick" @(
-        "rtl/io/s32_io.sv", "verif/common/tb_trackball_stick.sv"
+        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv",
+        "verif/common/tb_trackball_stick.sv"
     ) "TRACKBALL STICK PASS"
 
     Write-Tier 35 "Slip Stream right-stick pedals and digital fallbacks"

@@ -174,6 +174,10 @@ module tb_core_map_decode;
         @(posedge clk); #1;
         release core.vbl_start;
         release core.comm_link_timer;
+        // The RAM-inference-safe publisher writes bytes 0, 1 and 4 on three
+        // consecutive clocks, then raises status with the final byte.
+        repeat (3) @(posedge clk);
+        #1;
         if (core.comm_link_status !== 1'b1 || core.comm_ram[4] !== 8'h01) begin
             $display("FAIL comm link HLE status=%b shared4=%02x",
                 core.comm_link_status, core.comm_ram[4]);

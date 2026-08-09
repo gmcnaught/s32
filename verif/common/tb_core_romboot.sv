@@ -501,6 +501,7 @@ integer p1_event_count;
 string input_path;
 integer input_fd, input_scan, input_mask_value;
 integer trk_at, trk_len, trk_dx_arg, trk_dy_arg;
+integer cur_frame = 0;
 reg trk0_dv = 1'b0;
 reg signed [8:0] trk0_dx = 9'sd0;
 reg signed [8:0] trk0_dy = 9'sd0;
@@ -969,7 +970,6 @@ always @(posedge clk_ram) begin
     if (core.sprite.fb_wr_valid) spr_px_cnt <= spr_px_cnt + 1'd1;
     if (core.sprite.fb_wr_start) spr_draw_seen <= spr_draw_seen + 1'd1;
 end
-integer cur_frame = 0;
 // Scoped, one-off diagnostic for the SegaSonic floor-palette write-both
 // investigation: n_pal_wr/n_vram_wr are running totals (never reset), so
 // print their per-frame delta alongside mixer $4E only across the narrow

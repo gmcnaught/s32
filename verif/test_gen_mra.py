@@ -64,6 +64,15 @@ class ButtonMetadataTests(unittest.TestCase):
         self.assertEqual(defaults.split(","),
                          ["A", "B", "Start", "Select", "R", "L"])
 
+    def test_dark_edge_names_actions_and_assigns_jump_to_last_default_button(self) -> None:
+        names, defaults = BUTTONS["darkedge"]
+        self.assertEqual(names.split(","),
+                         ["Light Punch", "Heavy Punch", "Jump",
+                          "Light Kick", "Heavy Kick", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "R", "X", "Y", "Start", "Select", "L"])
+
     def test_promoted_games_keep_cabinet_button_counts(self) -> None:
         expected = {
             "alien3": 2, "arescue": 2, "brival": 6,

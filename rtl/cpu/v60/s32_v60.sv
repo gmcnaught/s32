@@ -736,7 +736,18 @@ wire [4:0]  eaf_reg         = fb[5'd2][4:0];
 // deliberately left on the sequential path.
 wire [1:0]  eaf_disp_sz     = fb[5'd2][6:5];
 wire        eaf_disp_direct = EA_OVERLAP && (fb[5'd2][7:5] < 3'd3);  // modtop==0/1/2
-wire [31:0] eaf_disp        = disp_of(5'd3, eaf_disp_sz);
+// Spell out the fb[] reads so simulator sensitivity follows shifted-window
+// byte changes even when the displacement size/base arguments stay constant.
+// Calling disp_of(3, size) from a continuous assignment cached a prior
+// instruction's byte in ModelSim (GA2 wrote 0x114 instead of 0x16c).
+reg [31:0] eaf_disp;
+always @* begin
+    case (eaf_disp_sz)
+        2'd0: eaf_disp = {{24{fb[5'd3][7]}}, fb[5'd3]};
+        2'd1: eaf_disp = {{16{fb[5'd4][7]}}, fb[5'd4], fb[5'd3]};
+        default: eaf_disp = {fb[5'd6], fb[5'd5], fb[5'd4], fb[5'd3]};
+    endcase
+end
 wire [4:0]  eaf_disp_len    = 5'd1 + disp_len(eaf_disp_sz);
 
 always @* begin
@@ -1467,12 +1478,37 @@ else if (ce) begin
                 ea_want_addr <= 1'b1;   // op2 as address for write
                 ea_dim  <= f12_dim2(cur_op);
                 ea_ret  <= 3'd0;
+                // Pure MOV register -> [register+] is fully resolved here:
+                // F2 supplies the source register in instflags and the
+                // autoincrement base in fb[2], both through existing read
+                // ports.  Issue the write and pointer update directly instead
+                // of serialising EA_MODE -> EA_DONE -> EXEC -> WB_MEM setup.
+                // The adapter still launches/acks the access only on the
+                // physical board CE, so this removes internal pipeline slack,
+                // not a bus cycle.
+                if (EA_OVERLAP && instflags[6] &&
+                    fb[5'd2][7:5] == 3'd4 &&
+                    (cur_op == 8'h09 || cur_op == 8'h1b || cur_op == 8'h2d)) begin
+                    op2       <= rf_rdata_c;
+                    flag2     <= 1'b0;
+                    len2      <= 5'd1;
+                    total_len <= 5'd3;
+                    queue_reg_write(eaf_reg,
+                                    rf_rdata_c + dim_step(f12_dim2(cur_op)),
+                                    32'hffff_ffff);
+                    dbus_req   <= 1'b1;
+                    dbus_we    <= 1'b1;
+                    dbus_size  <= f12_dim2(cur_op);
+                    dbus_addr  <= rf_rdata_c;
+                    dbus_wdata <= rf_rdata_a;
+                    st         <= S_WB_MEM;
+                end
                 // EA_OVERLAP fast path: op2 (the AM operand here) is register
                 // direct.  op2 is always the "address" case (ea_want_addr=1
                 // above), so the fast result is always {27'b0,eaf_reg}/flag2
                 // -- no register-value read needed, matching S_EA_MODE's own
                 // register-direct + ea_want_addr arm exactly.
-                if (eaf_reg_direct && instflags[6]) begin
+                else if (eaf_reg_direct && instflags[6]) begin
                     op2   <= {27'b0, eaf_reg};
                     flag2 <= 1'b1;
                     len2  <= 5'd1;

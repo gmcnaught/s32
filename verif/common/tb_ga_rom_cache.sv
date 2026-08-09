@@ -23,6 +23,7 @@ wire        rom_req;
 wire [23:1] rom_addr;
 reg  [15:0] rom_data = 16'd0;
 reg         rom_ack = 1'b0;
+wire        cache_busy;
 
 integer errors = 0;
 integer rom_request_count = 0;
@@ -48,7 +49,9 @@ s32_ga_rom_cache dut (
     .rom_req(rom_req),
     .rom_addr(rom_addr),
     .rom_data(rom_data),
-    .rom_ack(rom_ack)
+    .rom_ack(rom_ack),
+    .stall(1'b0),
+    .busy(cache_busy)
 );
 
 function automatic [15:0] reference_word(input [22:0] word_addr);

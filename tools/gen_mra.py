@@ -142,8 +142,8 @@ BUTTONS = {
         "A,B,X,Y,R,L,Start,Select",
     ),
     "darkedge": (
-        "Button 1,Button 2,Button 3,Button 4,Button 5,-,Start,Coin,Test,Service",
-        "A,B,X,Y,R,Start,Select,L",
+        "Light Punch,Heavy Punch,Jump,Light Kick,Heavy Kick,-,Start,Coin,Test,Service",
+        "A,B,R,X,Y,Start,Select,L",
     ),
     "holo": (
         "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service",

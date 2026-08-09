@@ -228,7 +228,8 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn(
             "pix_addr(rd_blend_buf_latched, rd_y, 7'd44)", fb_if
         )
-        self.assertNotIn("s32_fb_line_ram", fb_if)
+        self.assertIn("s32_fb_line_ram line_ram0", fb_if)
+        self.assertIn("s32_fb_line_ram line_ram1", fb_if)
 
     def test_rad_rally_gear_is_a_descriptor_selected_toggle(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")

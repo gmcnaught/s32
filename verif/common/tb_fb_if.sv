@@ -9,6 +9,8 @@
 //     sprite write remains queued and completes afterward
 //  6. Alien 3 HUD blend falls back to the hidden A/B buffer only inside the
 //     two player-HUD rectangles, retaining shadow pixels as authoritative
+//  7. fetching the next line never overwrites the line still being scanned;
+//     the completed replacement becomes visible only at a raster boundary
 //
 //  The DDR model applies deterministic pseudo-random backpressure and
 //  variable read-response latency/bubbles.  Writes are deliberately modelled
@@ -211,6 +213,7 @@ integer line_read_start;
 integer arb_read_start;
 integer arb_write_start;
 integer blend_read_start;
+integer stable_read_start;
 initial begin
     repeat (5) @(posedge clk);
     rst <= 0;
@@ -323,6 +326,7 @@ initial begin
     end
     @(posedge rd_ack); rd_req <= 0;
     wait (!rd_ack);
+    rd_x = 9'd0; @(posedge clk);
     rd_x = 9'd3; @(posedge clk); #1; check(rd_pix, 16'h8003, 3);
     wait (!wr_busy); repeat (4) @(posedge clk);
     if ((write_accepts - arb_write_start) != 1) begin
@@ -364,6 +368,37 @@ initial begin
     rd_x = 9'd178; @(posedge clk); #1; check(rd_pix, 16'h2103, 178);
     rd_x = 9'd179; @(posedge clk); #1; check(rd_pix, 16'hffff, 179);
     rd_blend <= 1'b0;
+
+    // 7: keep line 8 displayed while line 9 is fetched. The next-line DDR
+    // burst completes while rd_x remains in the middle of the current raster;
+    // scanout must still see line 8 until rd_x=0 publishes the completed bank.
+    // A single shared line RAM fails this by exposing line 9 immediately.
+    for (i = 0; i < 128; i = i + 1) begin
+        ddr[8 * 128 + i] = 64'h8a08_8a08_8a08_8a08;
+        ddr[9 * 128 + i] = 64'h9b09_9b09_9b09_9b09;
+    end
+
+    rd_x <= 9'd0;
+    rd_y <= 8'd8; rd_buf <= 2'd0; rd_req <= 1'b1;
+    @(posedge rd_ack); rd_req <= 1'b0;
+    wait (!rd_ack); repeat (2) @(posedge clk);
+    rd_x <= 9'd200; @(posedge clk); #1;
+    check(rd_pix, 16'h8a08, 200);
+
+    stable_read_start = read_accepts;
+    rd_y <= 8'd9; rd_req <= 1'b1;
+    @(posedge rd_ack); rd_req <= 1'b0;
+    wait (!rd_ack); repeat (2) @(posedge clk);
+    if ((read_accepts - stable_read_start) != 1) begin
+        errors = errors + 1;
+        $display("  FAIL stable-line read accepted %0d bursts, expected 1",
+                 read_accepts - stable_read_start);
+    end
+    check(rd_pix, 16'h8a08, 200);
+
+    rd_x <= 9'd0; @(posedge clk);
+    rd_x <= 9'd200; @(posedge clk); #1;
+    check(rd_pix, 16'h9b09, 200);
 
     if (stalled_request_cycles == 0) begin
         errors = errors + 1;
