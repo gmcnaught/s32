@@ -40,19 +40,27 @@ reg [31:0] addr_r;
 reg [31:0] wdata_r;
 reg [1:0]  size_r;
 reg        we_r;
-reg        c_req_d;
+// Four-phase CPU-side handshake.  The V60 microsequencer may advance between
+// physical bus enables, so observe the request-low re-arm phase on every
+// clk_sys edge and hold ACK until it is seen.  The I_CYC/I_WAIT machinery and
+// every m_req transition remain gated by the board-rate `ce` input.
+reg        c_req_armed;
 
 // how many 16-bit cycles and initial byte lane for a given access
 always @(posedge clk) begin
     if (rst) begin
-        bst <= I_IDLE; m_req <= 0; c_ack <= 0; c_req_d <= 0;
+        bst <= I_IDLE; m_req <= 0; c_ack <= 0; c_req_armed <= 1;
     end
-    else if (ce) begin
-        c_ack <= 1'b0;
-        c_req_d <= c_req;
+    else begin
+        if (!c_req) begin
+            c_ack <= 1'b0;
+            c_req_armed <= 1'b1;
+        end
 
+        if (ce) begin
         case (bst)
-        I_IDLE: if (c_req && !c_req_d) begin
+        I_IDLE: if (c_req && c_req_armed && !c_ack) begin
+            c_req_armed <= 1'b0;
             addr_r  <= c_addr;
             wdata_r <= c_wdata;
             size_r  <= c_size;
@@ -64,6 +72,10 @@ always @(posedge clk) begin
                 2'd1: cycs <= (c_addr[0]) ? 2'd1 : 2'd0;           // half: 1 or 2
                 default: cycs <= (c_addr[0]) ? 2'd2 : 2'd1;        // word: 2 or 3
             endcase
+            // I_IDLE is the address/setup clock of the V60's documented
+            // minimum three-clock external cycle.  I_CYC launches m_req on
+            // the following board enable; do not fuse these states merely to
+            // improve instruction throughput.
             bst <= I_CYC;
         end
         I_CYC: begin
@@ -129,7 +141,7 @@ always @(posedge clk) begin
             end
             if (cyc == cycs) begin
                 bst <= I_IDLE;
-                c_ack <= 1'b1;
+                if (c_req) c_ack <= 1'b1;
             end
             else begin
                 cyc <= cyc + 1'd1;
@@ -157,6 +169,7 @@ always @(posedge clk) begin
                     default: c_rdata <= {m_rdata[7:0], acc[23:0]};
                 endcase
             end
+        end
         end
     end
 end

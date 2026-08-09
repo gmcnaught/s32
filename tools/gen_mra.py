@@ -43,7 +43,7 @@ REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 #       multi32 is retained because the RTL still parses the bit, but it is
 #       always 0 here: this repository emits no Multi 32 set.
 #   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional-gun
-#       analog default-invert (alien3/jpark), bit3=Alien3 cabinet wiring,
+#       conditioner (alien3/jpark), bit3=Alien3 cabinet wiring,
 #       bits5:4=analog profile;
 #       bit6=dual-PCB comm RAM reset-to-FF
 #   b2: bits6:0=prot_sel; bit7=descriptor-selected EPR-14084 link HLE

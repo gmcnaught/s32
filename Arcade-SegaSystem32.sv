@@ -185,6 +185,8 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
 `endif
     "O[7],Service Mode,Off,On;",
+    // h0 hides this line unless menumask[0] identifies Alien 3.
+    "h0O[8],Alien 3 HUD Blend,Off,On;",
     "-;",
     "R[0],Reset;",
     "J1,B1,B2,B3,B4,B5,B6,Start,Coin,Test,Service;",
@@ -291,6 +293,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .buttons(buttons),
     .status(status),
+    .status_menumask({15'd0, active_board.gun_aim && active_board.coin_swap}),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
@@ -387,8 +390,8 @@ sdram sdram (
 
 ////////////////////////////   FRAMEBUFFER   //////////////////////////////////
 wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
-wire        fbe_req, fbe_ack, fbr_req, fbr_ack, fbr_dual;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_buf_alt;
+wire        fbe_req, fbe_ack, fbr_req, fbr_ack, fbr_blend;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_blend_buf;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix, fbr_pix;
@@ -403,8 +406,8 @@ s32_fb_if fb (
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
-    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_buf_alt(fbr_buf_alt),
-    .rd_dual(fbr_dual), .rd_y(fbr_y), .rd_ack(fbr_ack),
+    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_blend_buf(fbr_blend_buf),
+    .rd_blend(fbr_blend), .rd_y(fbr_y), .rd_ack(fbr_ack),
     .rd_x(fbr_x), .rd_pix(fbr_pix)
 );
 
@@ -475,7 +478,9 @@ wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
                            ~joystick_0[5], ~joystick_0[4], 1'b1};
 `ifdef S32_REAL_V25
 // The real-V25 profile has no positional gun. The standard profile retains
-// this conditioner for descriptor-selected Jurassic Park and Alien3.
+// one shared conditioner for descriptor-selected Jurassic Park and Alien3;
+// both games therefore use exactly the same sticks, inversion, curve,
+// deadzones, saturation, smoothing and four ADC-channel assignments.
 // active_board.gun_aim is loaded from runtime descriptor data, so Quartus
 // cannot prove it constant on its own and would otherwise always pay for
 // the full curve-LUT/divider FSM in s32_gun_aim below regardless of which
@@ -486,6 +491,10 @@ wire gun_aim_active = 1'b0;
 wire gun_aim_active = active_board.gun_aim;
 `endif
 wire alien3_controls = active_board.gun_aim && active_board.coin_swap;
+// Alien 3 has no cabinet Start inputs.  MAME's alien3 port map leaves
+// SERVICE12 bit 5 unused and repurposes generic Start 1 (bit 4) as Service 2;
+// starting a side is done with its gun trigger.  Keep MiSTer's Start buttons
+// as convenient trigger aliases without asserting either service-credit line.
 wire [7:0] alien3_p1a = p1a_dig & {7'h7f, ~joystick_0[10]};
 wire [7:0] alien3_p2a = p2a_dig & {7'h7f, ~joystick_1[10]};
 wire [7:0] core_p1a = sonic_controls ? sonic_p1a :
@@ -506,11 +515,12 @@ wire [7:0] core_p2a = sonic_controls ? sonic_p2a :
 // at 0x80 (full left/up=0x00, full right/down=0xff).  MiSTer's left analog
 // stick feeds them directly (P1 = stick 0, P2 = stick 1). Positional-gun
 // inputs use a radial inner deadzone, 95%-throw outer saturation, progressive
-// response, and error-sensitive smoothing in s32_gun_aim. Other analog titles retain the
-// proven per-axis conditioning below. The gun games keep their default
-// inversion through active_board.gun_aim.
-wire aim_inv_x = active_board.gun_aim;
-wire aim_inv_y = active_board.gun_aim;
+// response, and error-sensitive smoothing in s32_gun_aim. Other analog titles
+// retain the proven per-axis conditioning below. Alien 3 and Jurassic Park
+// use natural stick directions: left/up decrease the cabinet ADC coordinate,
+// while right/down increase it.
+wire aim_inv_x = 1'b0;
+wire aim_inv_y = 1'b0;
 localparam signed [8:0] AIM_DZ = 9'sd6;
 
 // signed stick -> offset binary (center 0x80), with centred optional inversion
@@ -666,6 +676,9 @@ wire [7:0] svc12_generic = ~{
                      sonic_controls ? joystick_2[11] : 1'b0,
                      joystick_1[10], joystick_0[10],
                      joystick_1[11], joystick_0[11], test_btn, svc_btn};
+// Alien 3 swaps the two coin assignments relative to system32_generic:
+// bit3=Coin 1, bit2=Coin 2.  Bits 5/4 must remain released so Start cannot
+// become the game's right-side service credit.
 wire [7:0] svc12_alien3 = ~{2'b00, 2'b00, joystick_0[11],
                              joystick_1[11], test_btn, svc_btn};
 wire [7:0] svc12 = alien3_controls ? svc12_alien3 : svc12_generic;
@@ -721,7 +734,7 @@ s32_core core (
     // Production profiles have no debug/screenshot pause control. Keep the
     // core port constant so standalone verification benches can still test
     // V25 pause semantics without carrying the menu logic into an RBF.
-    .pause(1'b0),
+    .pause(1'b0), .alien3_hud_blend(alien3_controls && status[8]),
     .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
     .sdr_p1_ack(p1_ack),
@@ -734,8 +747,9 @@ s32_core core (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_buf_alt(fbr_buf_alt),
-    .fb_rd_dual(fbr_dual), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
+    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
+    .fb_rd_blend_buf(fbr_blend_buf), .fb_rd_blend(fbr_blend),
+    .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(v25_wr), .v25_prg_waddr(v25_waddr), .v25_prg_wdata(v25_wdata),
     .eep_ld_wr(eep_wr), .eep_ld_addr(eep_waddr), .eep_ld_data(eep_wdata),

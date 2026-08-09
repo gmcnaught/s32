@@ -339,8 +339,8 @@ end
 // Framebuffer service.  The broad regression keeps the compact behavioral
 // memory; +define+S32_REAL_FB_SIM selects the production s32_fb_if plus a
 // deterministic MiSTer-style DDR model for Golden Axe qualification.
-wire        fbw_start, fbw_valid, fbw_end, fbe_req, fbr_req, fbr_dual;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_buf_alt;
+wire        fbw_start, fbw_valid, fbw_end, fbe_req, fbr_req, fbr_blend;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_blend_buf;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix;
@@ -350,8 +350,8 @@ wire [15:0] fbr_pix;
 
 integer fbr_accepts = 0;
 reg [1:0] fbr_buf_l;
-reg [1:0] fbr_buf_alt_l;
-reg       fbr_dual_l;
+reg [1:0] fbr_blend_buf_l;
+reg       fbr_blend_l;
 reg [7:0] fbr_y_l;
 reg fbr_req_d = 0, fbr_ack_h_d = 0;
 always @(posedge clk_ram) begin
@@ -359,8 +359,8 @@ always @(posedge clk_ram) begin
     fbr_ack_h_d <= fbr_ack;
     if (fbr_req && !fbr_req_d) begin
         fbr_buf_l <= fbr_buf;
-        fbr_buf_alt_l <= fbr_buf_alt;
-        fbr_dual_l <= fbr_dual;
+        fbr_blend_buf_l <= fbr_blend_buf;
+        fbr_blend_l <= fbr_blend;
         fbr_y_l   <= fbr_y;
     end
     if (fbr_ack && !fbr_ack_h_d)
@@ -378,8 +378,8 @@ s32_fb_ddr_model fb_service (
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
-    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_buf_alt(fbr_buf_alt),
-    .rd_dual(fbr_dual), .rd_y(fbr_y), .rd_ack(fbr_ack),
+    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_blend_buf(fbr_blend_buf),
+    .rd_blend(fbr_blend), .rd_y(fbr_y), .rd_ack(fbr_ack),
     .rd_x(fbr_x), .rd_pix(fbr_pix),
     .write_accepts(fb_ddr_writes), .read_accepts(fb_ddr_reads),
     .line_acks(fb_line_acks),
@@ -407,9 +407,13 @@ always @(posedge clk_ram) begin
         for (int x = 0; x < 512; x++) fbmem[fbe_buf][fbe_y][x] = 16'hffff;
 end
 wire [15:0] fbr_pix_new = fbmem[fbr_buf_l][fbr_y_l][fbr_x];
-wire [15:0] fbr_pix_old = fbmem[fbr_buf_alt_l][fbr_y_l][fbr_x];
-assign fbr_pix = (fbr_dual_l && fbr_pix_new == 16'hffff)
-               ? fbr_pix_old : fbr_pix_new;
+wire [15:0] fbr_pix_other = fbmem[fbr_blend_buf_l][fbr_y_l][fbr_x];
+wire fbr_hud_x = (fbr_x >= 9'd16 && fbr_x <= 9'd143) ||
+                 (fbr_x >= 9'd176 && fbr_x <= 9'd303);
+assign fbr_pix = (fbr_blend_l && fbr_hud_x &&
+                  (fbr_pix_new & 16'h7fff) == 16'h7fff)
+               ? {fbr_pix_other[15] & fbr_pix_new[15], fbr_pix_other[14:0]}
+               : fbr_pix_new;
 `endif
 integer spr_px = 0;
 always @(posedge clk_ram) if (fbw_valid) spr_px = spr_px + 1;
@@ -617,6 +621,7 @@ s32_core core (
 `endif
     .rst(rst), .video_rst(rst), .board(board),
     .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0),
+    .alien3_hud_blend(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(p1_req), .sdr_p1_addr(p1_addr), .sdr_p1_dout(p1_dout), .sdr_p1_ack(p1_ack),
     .sdr_p2_req(p2_req), .sdr_p2_addr(p2_addr), .sdr_p2_dout(p2_dout), .sdr_p2_ack(p2_ack),
@@ -627,8 +632,9 @@ s32_core core (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf), .fb_rd_buf_alt(fbr_buf_alt),
-    .fb_rd_dual(fbr_dual), .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
+    .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
+    .fb_rd_blend_buf(fbr_blend_buf), .fb_rd_blend(fbr_blend),
+    .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
     .eep_ld_wr(eep_ld_wr), .eep_ld_addr(eep_ld_addr), .eep_ld_data(eep_ld_data),

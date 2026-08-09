@@ -134,10 +134,10 @@ reg        pf_req;               // instruction-prefetch bus request
 reg [31:0] pf_addr;
 localparam [1:0] OWN_NONE = 2'd0, OWN_D = 2'd1, OWN_PF = 2'd2;
 reg  [1:0] bus_owner;
-reg        bus_req_d;   // bus_req delayed one ce: gates a fresh grant so bus_req
-                        // always shows a 0->1 edge between transactions (the
-                        // adapter starts on that edge).  Without it a prefetch->
-                        // data owner switch keeps bus_req high and deadlocks.
+reg        bus_req_d;
+// bus_req delayed one CPU enable: gates a fresh grant so bus_req always shows
+// a 0->1 edge between transactions.  In particular, a prefetch->data owner
+// switch must not keep the combined request high across payload changes.
 wire sel_d  = (bus_owner == OWN_D)  || (bus_owner == OWN_NONE && dbus_req && !bus_req_d);
 wire sel_pf = (bus_owner == OWN_PF) || (bus_owner == OWN_NONE && !dbus_req && pf_req && !bus_req_d);
 assign bus_req   = sel_d ? dbus_req   : (sel_pf ? pf_req : 1'b0);
@@ -826,18 +826,16 @@ if (rst) begin
     nmi_r <= 0;
     xdiv_active <= 0;
     bus_owner <= OWN_NONE;
-    bus_req_d <= 0;
     pf_req <= 0;
     if_req <= 0;
     pf_busy <= 0;
     pf_epoch <= 0;
     pf_iss_epoch <= 0;
     pf_suppress <= 0;
+    bus_req_d <= 0;
 end
 else if (ce) begin
-    // bus ownership: grant per-transaction, data priority, hold until ack.  A
-    // grant requires the bus to have been idle last cycle (!bus_req_d) so every
-    // transaction begins with a clean 0->1 edge on bus_req.
+    // Bus ownership: grant per transaction, data priority, hold until ACK.
     bus_req_d <= bus_req;
     if (bus_owner == OWN_NONE && !bus_req_d) begin
         if (dbus_req)    bus_owner <= OWN_D;
@@ -2012,16 +2010,34 @@ else if (ce) begin
     // already complete in the window we enter S_DECODE directly, retiring the
     // S_NEXT->S_FILL->S_DECODE bubble (docs/v60-pipelining-plan.md Stage A).
     S_NEXT: begin
+        logic keep_prev_for_dbr;
+        logic [31:0] successor_pc, successor_target;
+        keep_prev_for_dbr = 1'b0;
+        successor_pc = pc + {27'b0, total_len};
+        successor_target = 32'd0;
+        // If the successor is a complete DBcc/TB encoding that branches to
+        // the saved window, retain that window for the imminent loop-back.
+        // This models the V60 PFU keeping a short multi-instruction loop (the
+        // Sonic MOVCUH/MOV/DBR body is 13 bytes) without altering the branch's
+        // own decode/refill states or published instruction latency.
+        if (fb_prev_valid != 0 && total_len <= 5'd20 &&
+            fb_valid >= total_len + 5'd4 &&
+            (fb[total_len] == 8'hc6 || fb[total_len] == 8'hc7)) begin
+            successor_target = successor_pc +
+                {{16{fb[total_len + 5'd3][7]}},
+                  fb[total_len + 5'd3], fb[total_len + 5'd2]};
+            keep_prev_for_dbr = (successor_target == fb_prev_base);
+        end
         pc <= pc + total_len;
         st <= S_FILL; st_after_fill <= S_DECODE;
         if (seq_shift_ok) begin
-            // Identical bookkeeping to S_FILL's first realign step, including the
-            // fb_prev snapshot: the loop cache restores fb_prev whenever a branch
-            // lands on fb_prev_base, so letting it go stale against fb[] would
-            // serve wrong bytes, not merely lose performance.
-            for (int i = 0; i < 24; i++) fb_prev[i] <= fb[i];
-            fb_prev_base  <= fb_base;
-            fb_prev_valid <= fb_valid;
+            // Normal sequential retirement snapshots the current window.  The
+            // one exception above preserves a verified imminent DBcc target.
+            if (!keep_prev_for_dbr) begin
+                for (int i = 0; i < 24; i++) fb_prev[i] <= fb[i];
+                fb_prev_base  <= fb_base;
+                fb_prev_valid <= fb_valid;
+            end
             for (int i = 0; i < 24; i++)
                 if (i + seq_s < 24) fb[i] <= fb[i + seq_s];
             fb_base  <= fb_base + {27'b0, seq_s};
@@ -2442,7 +2458,7 @@ else if (ce) begin
                     queue_reg_write(5'd27, str_len2 + (ci << shf), 32'hffff_ffff);
                     st <= S_NEXT;
                 end
-                else st <= S_STR_NEXT;               // equal: tail flags set at exhaustion
+                else str_advance();                  // equal: tail flags set at exhaustion
             end
             else begin
                 // MOVC write complete.  MOVCSU (0x0c, bStop) ends the copy when the
@@ -2455,7 +2471,7 @@ else if (ce) begin
                     cmin = (str_len1 < str_len2) ? str_len1 : str_len2;
                     movc_finish(cmin - str_cnt);     // break index i
                 end
-                else st <= S_STR_NEXT;
+                else str_advance();
             end
         end
     end
@@ -3055,28 +3071,7 @@ else if (ce) begin
     end
 
     S_STR_NEXT: begin
-        logic [31:0] stp;
-        stp = cur_op[1] ? 32'd2 : 32'd1;
-        // down variants (MOVCD*) decrement; up variants increment
-        if (subop[0] && (subop[4:0]>=5'h08)) begin
-            str_src <= str_src - stp; str_dst <= str_dst - stp;
-        end
-        else begin
-            str_src <= str_src + stp; str_dst <= str_dst + stp;
-        end
-        str_cnt <= str_cnt - 1;
-        if (str_cnt == 1) begin
-            // CMPC finishes through S_STR_RD's exhaustion branch so the MAME
-            // length-tail flags/registers apply; MOVC finalizes R28/R27 from the
-            // operand bases and the copied count via movc_finish (which also
-            // scales by the element size and launches the MOVCF fill tail — the
-            // old address-based completion was off by one step, audit V60-13/14).
-            if (subop[4:0] <= 5'h02)
-                st <= S_STR_RD;
-            else
-                movc_finish((str_len1 < str_len2) ? str_len1 : str_len2);
-        end
-        else st <= S_STR_RD;
+        str_advance();
     end
 
     // ------------------------------------------------------------------
@@ -3522,6 +3517,30 @@ task automatic movc_finish(input [31:0] idx);
         queue_reg_write(5'd27, r27, 32'hffff_ffff);
         st <= S_NEXT;
     end
+endtask
+
+// Per-element MOVC/CMPC pointer/count retirement is independent of the next
+// bus result.  Fold it into the completing read/write acknowledgement so the
+// real V60's EAG-style bookkeeping overlaps the BCU request gap.
+task automatic str_advance;
+    logic [31:0] stp;
+    stp = cur_op[1] ? 32'd2 : 32'd1;
+    if (subop[0] && (subop[4:0] >= 5'h08)) begin
+        str_src <= str_src - stp;
+        str_dst <= str_dst - stp;
+    end
+    else begin
+        str_src <= str_src + stp;
+        str_dst <= str_dst + stp;
+    end
+    str_cnt <= str_cnt - 1;
+    if (str_cnt == 1) begin
+        if (subop[4:0] <= 5'h02)
+            st <= S_STR_RD;
+        else
+            movc_finish((str_len1 < str_len2) ? str_len1 : str_len2);
+    end
+    else st <= S_STR_RD;
 endtask
 
 // BAM decode plumbing: record the AM length into len1/len2, and route to

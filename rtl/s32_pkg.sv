@@ -96,7 +96,7 @@ package s32_pkg;
         logic       sprite_bank_valid;
         logic [1:0] sprite_bank_mask; // 0/1/3 for 4/8/16 MiB respectively
         logic       flip_y;         // cabinet/game orientation (holo)
-        logic       gun_aim;        // positional-gun analog default-invert (alien3/jpark)
+        logic       gun_aim;        // positional-gun conditioner (alien3/jpark)
         logic       coin_swap;      // Alien3 cabinet trigger/start/coin wiring
         logic [1:0] analog_profile; // ADC source/default layout (ANALOG_*)
         logic       dual_comm_ff;   // dual-PCB comm RAM reset state (F1 Exhaust Note)

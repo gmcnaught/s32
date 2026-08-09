@@ -11,6 +11,9 @@ scratch/
 roms/
 /docs/
 /reference/
+/.codex-mister-build/
+/.playwright-mcp/
+/artifacts/
 *.tmp
 
 # Build outputs (Quartus / simulation), for later development phases

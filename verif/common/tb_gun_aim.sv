@@ -115,6 +115,18 @@ initial begin
     settle();
     check(p1_aim_x == 8'h00, "negative physical maximum reaches cabinet endpoint");
 
+    // The shared Alien 3/Jurassic Park top-level keeps inversion low on both
+    // axes: signed-negative is left/up, signed-positive is right/down.
+    p1_raw_x = 8'h00;
+    p1_raw_y = 8'h80;
+    settle();
+    check(p1_aim_x == 8'h80 && p1_aim_y == 8'h00,
+          "negative Y throw maps to crosshair up");
+    p1_raw_y = 8'd127;
+    settle();
+    check(p1_aim_y == 8'hff,
+          "positive Y throw maps to crosshair down");
+
     // Equal diagonal components remain equal after radial scaling.
     p1_raw_x = 8'd64;
     p1_raw_y = 8'd64;

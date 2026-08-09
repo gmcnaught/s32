@@ -43,15 +43,14 @@ wire        fbe_req, fbe_ack;
 wire [1:0]  fbe_buf;
 wire [7:0]  fbe_y;
 wire [1:0]  disp_buf;
-wire [1:0]  scan_buf;
 wire        rendering;
 
 reg vblank = 0;
 s32_sprite sprite (
-    .clk(clk), .rst(rst), .is_multi32(1'b0), .retain_previous(1'b0),
+    .clk(clk), .rst(rst), .is_multi32(1'b0),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),
-    .present(vblank), .vblank(vblank),
+    .vblank(vblank),
     .ctl_we(1'b0), .ctl_addr(3'd0), .ctl_wdata(8'd0),
     .ctl_rdata(), .ctl_raddr(3'd0),
     .slist_addr(slist_addr), .slist_data(slist_q),
@@ -62,8 +61,7 @@ s32_sprite sprite (
     .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y),
-    .fb_er_ack(fbe_ack), .disp_buf(disp_buf), .scan_buf(scan_buf),
-    .scan_buf_prev(), .scan_dual()
+    .fb_er_ack(fbe_ack), .disp_buf(disp_buf)
 );
 assign rendering = sprite.rs != 0;
 
@@ -87,7 +85,7 @@ s32_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
-    .rd_req(1'b0), .rd_buf(2'd0), .rd_buf_alt(2'd0), .rd_dual(1'b0),
+    .rd_req(1'b0), .rd_buf(2'd0), .rd_blend_buf(2'd0), .rd_blend(1'b0),
     .rd_y(8'd0), .rd_ack(),
     .rd_x(9'd0), .rd_pix()
 );
@@ -198,12 +196,11 @@ initial begin
     rst <= 1'b0;
     repeat (4) @(posedge clk);
 
-    // Physical scanout remains on buffer 0 until the first completed frame is
-    // published at the next vblank. Rendering therefore starts in buffer 1,
-    // then alternates with buffer 0 in the normal no-overrun case.
-    run_frame(2'd1);
+    // Vanilla System 32 swaps the visible A/B selector, erases the old front,
+    // then renders the next field into that old front: 0,1,0 from reset.
     run_frame(2'd0);
     run_frame(2'd1);
+    run_frame(2'd0);
 
     if (write_accepts < (3 * 224 * 128)) begin
         errors = errors + 1;

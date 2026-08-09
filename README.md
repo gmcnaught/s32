@@ -107,6 +107,13 @@ The repository ships exactly two System 32 profiles:
   memories while retaining descriptor-selected standard peripherals including
   the PPI, trackball, MSM6253 ADC, positional-gun conditioner, Air Rescue DSP
   responder, dual-PCB bridge, generic protection, sprite, video and audio paths.
+  Alien3 and Jurassic Park use the same two-player left-analog-stick aiming
+  curve and ADC channel mapping, with natural directions: left/up moves the
+  crosshair left/up and right/down moves it right/down.
+  Alien3 alone exposes an `Alien 3 HUD Blend` OSD option. When enabled, it
+  combines the alternating P1/P2 health-bar sprite fields inside their HUD
+  rectangles; when disabled, sprite scanout remains the normal A/B framebuffer
+  output used by every other game.
 - `segas32v25.rbf` supports Golden Axe and Arabian Fight. It includes the real V25
   execution core and selects the correct protection table and V60 cadence from
   each MRA descriptor. Unrelated peripherals and all Multi 32 logic are

@@ -53,8 +53,8 @@ module s32_fb_if #(
     // line read port -> mixer
     input             rd_req,
     input       [1:0] rd_buf,
-    input       [1:0] rd_buf_alt,       // preceding completed field
-    input             rd_dual,          // combine current + preceding field
+    input       [1:0] rd_blend_buf,     // hidden A/B buffer for HUD effect
+    input             rd_blend,         // Alien 3 HUD rows only
     input       [7:0] rd_y,
     output reg        rd_ack,          // line available in buffer
     input       [8:0] rd_x,            // synchronous read of fetched line
@@ -69,9 +69,7 @@ module s32_fb_if #(
 // a synchronous 64-bit flush read port.  Keeping this out of flops removes the
 // 8,192-register run buffer and its large read mux from the integrated map.
 reg [511:0] run_msk;               // which pixels this run actually wrote
-// Two fetched/composed lines. Scanout reads one M10K bank while DDR fills the
-// other, allowing the next line to be requested near the start of the current
-// line instead of racing the renderer during the short horizontal blank.
+reg [63:0]  line_buf [0:127];      // normal 512-pixel fetched scanline
 reg [8:0]   run_x0, run_xe;        // min / max written x
 reg [7:0]   run_y;
 reg [1:0]   run_bufsel;
@@ -83,53 +81,49 @@ reg         run_any;               // at least one pixel written
 // waits one clk_ram edge after disp_x changes before snapshotting all layer
 // pixels, so registering this read both aligns sprites with the tile layers
 // and prevents a deep clk_sys -> clk_ram path through the priority logic.
+reg [63:0] rd_word;
 reg  [1:0] rd_lane;
-reg        display_bank;
-reg        fill_bank;
-reg        line_ready;
-wire       rd_line_publish = (rd_x == 9'd0) && line_ready;
-wire       scan_bank = rd_line_publish ? fill_bank : display_bank;
 
-// Resolve optional alternating player fields while the preceding field is
-// fetched from DDR, before acknowledging the completed line to scanout.
+// Resolve Alien 3's alternating player HUD fields while the hidden A/B buffer
+// is fetched from DDR, before acknowledging the completed line to scanout.
 // System 32 regards both 0xffff and 0x7fff as transparent; the latter is what
-// remains when a shadow RMW crosses an erased pixel.  For 0x7fff, retain the
-// preceding field's pixel while applying the newest field's shadow flag.  This
-// makes both player HUD/sight fields solid without dropping shadow semantics.
-// Keeping the composed result in the inactive line RAM removes both a second
-// scanout RAM and the transparency compare from the 96.6 MHz pixel-read path.
-function automatic [63:0] compose_line_word(
+// remains when a shadow RMW crosses an erased pixel. For 0x7fff, retain the
+// other field's pixel while applying the current field's shadow flag. The two
+// aligned word ranges cover P1 x=16..143 and mirrored P2 x=176..303; all other
+// sprite pixels remain the ordinary single-frame result.
+function automatic [63:0] compose_hud_word(
     input [63:0] newest,
-    input [63:0] prior
+    input [63:0] other
 );
     reg [63:0] result;
     begin
         result = newest;
         if (&newest[14:0]) begin
-            result[14:0] = prior[14:0];
-            result[15] = prior[15] & newest[15];
+            result[14:0] = other[14:0];
+            result[15] = other[15] & newest[15];
         end
         if (&newest[30:16]) begin
-            result[30:16] = prior[30:16];
-            result[31] = prior[31] & newest[31];
+            result[30:16] = other[30:16];
+            result[31] = other[31] & newest[31];
         end
         if (&newest[46:32]) begin
-            result[46:32] = prior[46:32];
-            result[47] = prior[47] & newest[47];
+            result[46:32] = other[46:32];
+            result[47] = other[47] & newest[47];
         end
         if (&newest[62:48]) begin
-            result[62:48] = prior[62:48];
-            result[63] = prior[63] & newest[63];
+            result[62:48] = other[62:48];
+            result[63] = other[63] & newest[63];
         end
-        compose_line_word = result;
+        compose_hud_word = result;
     end
 endfunction
 
-reg rd_dual_latched;
+reg rd_blend_latched;
 
 // DDR engine
 typedef enum logic [3:0] { D_IDLE, D_WR_PF, D_WR, D_ER, D_RD, D_RD_W,
-                           D_RD_ALT, D_RD_ALT_W, D_RD_ALT_FLUSH,
+                           D_RD_BLEND1, D_RD_BLEND1_W,
+                           D_RD_BLEND2, D_RD_BLEND2_W, D_RD_BLEND_FLUSH,
                            D_SH_R, D_SH_RW, D_SH_W } dstate_t;
 dstate_t dst = D_IDLE;
 
@@ -140,55 +134,48 @@ reg [63:0] ddin;
 reg [7:0]  dbe;
 reg [6:0]  beat, beats;
 reg [6:0]  rbeat;
-reg [1:0]  rd_buf_alt_latched;
-reg [63:0] compose_prior;
+reg [1:0]  rd_blend_buf_latched;
+reg [63:0] compose_other;
 reg  [6:0] compose_addr;
 reg        compose_valid;
 
-// Each bank is a true 128x64 simple-dual-port RAM. During a second field
-// field fetch, the inactive bank's read port feeds a one-beat RMW pipeline;
-// the active bank remains dedicated to scanout. Keeping the bank select
-// outside the memory array prevents Quartus from flattening the two lines into
-// 16,384 registers and more than 12,000 ALUTs.
-wire       compose_state = (dst == D_RD_ALT_W) ||
-                           (dst == D_RD_ALT_FLUSH);
-wire [6:0] line_raddr0 = (compose_state && !fill_bank) ? rbeat
-                                                       : rd_x[8:2];
-wire [6:0] line_raddr1 = (compose_state &&  fill_bank) ? rbeat
-                                                       : rd_x[8:2];
-wire [63:0] line_q0, line_q1;
-wire [63:0] fill_line_q = fill_bank ? line_q1 : line_q0;
+// Only the 64 words covering the two HUD rectangles are cached while the
+// normal line is fetched: P1 words 4..35 and P2 words 44..75. This replaces
+// the old pair of full-line Alien 3 composition RAMs. With the option off,
+// the cache and both short hidden-buffer reads are idle.
+(* ramstyle = "M10K, no_rw_check" *) reg [63:0] hud_cache [0:63];
+reg [63:0] hud_cache_q;
+wire       current_is_hud_word = (rbeat >= 7'd4 && rbeat <= 7'd35) ||
+                                 (rbeat >= 7'd44 && rbeat <= 7'd75);
+wire [5:0] hud_cache_waddr = (rbeat <= 7'd35) ? rbeat[5:0] - 6'd4
+                                              : rbeat[5:0] - 6'd12;
+wire       blend_second_span = (dst == D_RD_BLEND2) ||
+                               (dst == D_RD_BLEND2_W);
+wire [5:0] hud_cache_raddr = (blend_second_span ? 6'd32 : 6'd0)
+                           + {1'b0, rbeat[4:0]};
 wire        line_direct_we = (dst == D_RD_W) && DDRAM_DOUT_READY;
-wire        line_compose_we = compose_state && compose_valid;
-wire        line_we = line_direct_we || line_compose_we;
-wire [6:0]  line_waddr = line_compose_we ? compose_addr : rbeat;
-wire [63:0] line_wdata = line_compose_we
-                       ? compose_line_word(fill_line_q, compose_prior)
-                       : DDRAM_DOUT;
-wire        line_we0 = line_we && !fill_bank;
-wire        line_we1 = line_we &&  fill_bank;
-
-s32_fb_line_ram line_ram0 (
-    .clk(clk), .wr_en(line_we0), .wr_addr(line_waddr),
-    .wr_data(line_wdata), .rd_addr(line_raddr0), .rd_q(line_q0)
-);
-s32_fb_line_ram line_ram1 (
-    .clk(clk), .wr_en(line_we1), .wr_addr(line_waddr),
-    .wr_data(line_wdata), .rd_addr(line_raddr1), .rd_q(line_q1)
-);
-
-wire [63:0] rd_word = scan_bank ? line_q1 : line_q0;
+wire        hud_cache_we = line_direct_we && rd_blend_latched &&
+                           current_is_hud_word;
 assign rd_pix = (rd_lane == 2'd0) ? rd_word[15:0]  :
                 (rd_lane == 2'd1) ? rd_word[31:16] :
                 (rd_lane == 2'd2) ? rd_word[47:32] : rd_word[63:48];
 
 always @(posedge clk) begin
-    if (rst) begin
-        rd_lane <= 2'd0;
-    end
-    else begin
-        rd_lane <= rd_x[1:0];
-    end
+    rd_word <= line_buf[rd_x[8:2]];
+    rd_lane <= rd_x[1:0];
+    if (line_direct_we)
+        line_buf[rbeat] <= DDRAM_DOUT;
+    else if (compose_valid)
+        line_buf[compose_addr] <= compose_hud_word(hud_cache_q,
+                                                   compose_other);
+end
+
+// One unconditional registered read plus one write port keeps the small cache
+// in block RAM instead of expanding it into registers and a read mux.
+always @(posedge clk) begin
+    hud_cache_q <= hud_cache[hud_cache_raddr];
+    if (hud_cache_we)
+        hud_cache[hud_cache_waddr] <= DDRAM_DOUT;
 end
 
 function automatic [28:0] pix_addr(input [1:0] buf_i, input [7:0] y,
@@ -251,10 +238,7 @@ reg flush_req;
 // a pending display-line fetch has been launched.  Keep acceptance explicit so
 // deferring the flush cannot discard it.
 wire erase_pending = er_req && !er_ack;
-// Do not reuse the just-filled bank until the raster boundary has published
-// it. This also makes a rare late line recover cleanly instead of allowing the
-// following request to overwrite a completed-but-not-yet-visible line.
-wire read_pending  = rd_req && !rd_ack && !line_ready;
+wire read_pending  = rd_req && !rd_ack;
 wire flush_accept  = (dst == D_IDLE) && !erase_pending &&
                      !read_pending && flush_req;
 
@@ -295,26 +279,16 @@ assign wr_busy = wr_end | flush_req |
 always @(posedge clk) begin
     if (rst) begin
         dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0;
-        rd_dual_latched <= 1'b0;
-        rd_buf_alt_latched <= 2'd0;
-        display_bank <= 1'b0;
-        fill_bank <= 1'b1;
-        line_ready <= 1'b0;
-        compose_prior <= 64'd0;
+        rd_blend_latched <= 1'b0;
+        rd_blend_buf_latched <= 2'd0;
+        compose_other <= 64'd0;
         compose_addr <= 7'd0;
         compose_valid <= 1'b0;
     end
     else begin
-        // A one-cycle valid pulse makes the alternate-field RMW pipeline safe
+        // A one-cycle valid pulse makes the HUD merge RMW pipeline safe
         // even when DDR inserts gaps between DOUT_READY beats.
         compose_valid <= 1'b0;
-        // Publish a completely fetched line only at the raster boundary. The
-        // bank that is still being displayed is never modified underneath the
-        // mixer, even if DDR completes very early in the preceding scanline.
-        if (rd_line_publish) begin
-            display_bank <= fill_bank;
-            line_ready <= 1'b0;
-        end
         case (dst)
         D_IDLE: begin
             dwe <= 0; drd <= 0;
@@ -333,9 +307,8 @@ always @(posedge clk) begin
                 daddr  <= pix_addr(rd_buf, rd_y, 7'd0);
                 dburst <= 8'd128;
                 rbeat  <= 0;
-                fill_bank <= ~display_bank;
-                rd_dual_latched <= rd_dual;
-                rd_buf_alt_latched <= rd_buf_alt;
+                rd_blend_latched <= rd_blend;
+                rd_blend_buf_latched <= rd_blend_buf;
                 drd    <= 1'b1;
                 dbe    <= 8'hFF;  // audit R20 PF-4: reads drive all byte lanes
                 dst    <= D_RD;
@@ -415,40 +388,56 @@ always @(posedge clk) begin
             if (DDRAM_DOUT_READY) begin
                 rbeat <= rbeat + 1'd1;
                 if (rbeat == 7'd127) begin
-                    if (rd_dual_latched) begin
-                        daddr  <= pix_addr(rd_buf_alt_latched, rd_y, 7'd0);
-                        dburst <= 8'd128;
+                    if (rd_blend_latched) begin
+                        // Only fetch the two 128-pixel player HUD spans from
+                        // the hidden A/B buffer, not a second complete line.
+                        daddr  <= pix_addr(rd_blend_buf_latched, rd_y, 7'd4);
+                        dburst <= 8'd32;
                         rbeat  <= 0;
                         drd    <= 1'b1;
-                        dst    <= D_RD_ALT;
+                        dst    <= D_RD_BLEND1;
                     end
                     else begin
-                        line_ready <= 1'b1;
                         rd_ack <= 1'b1;
                         dst <= D_IDLE;
                     end
                 end
             end
         end
-        D_RD_ALT: if (!DDRAM_BUSY) begin
+        D_RD_BLEND1: if (!DDRAM_BUSY) begin
             drd <= 1'b0;
-            dst <= D_RD_ALT_W;
+            dst <= D_RD_BLEND1_W;
         end
-        D_RD_ALT_W: begin
+        D_RD_BLEND1_W: begin
             if (DDRAM_DOUT_READY) begin
-                compose_prior <= DDRAM_DOUT;
-                compose_addr <= rbeat;
+                compose_other <= DDRAM_DOUT;
+                compose_addr <= 7'd4 + rbeat;
                 compose_valid <= 1'b1;
                 rbeat <= rbeat + 1'd1;
-                if (rbeat == 7'd127) begin
-                    // The final current/prior pair is written on the following
-                    // edge after the synchronous RAM read has arrived.
-                    dst <= D_RD_ALT_FLUSH;
+                if (rbeat == 7'd31) begin
+                    daddr  <= pix_addr(rd_blend_buf_latched, rd_y, 7'd44);
+                    dburst <= 8'd32;
+                    rbeat  <= 0;
+                    drd    <= 1'b1;
+                    dst    <= D_RD_BLEND2;
                 end
             end
         end
-        D_RD_ALT_FLUSH: begin
-            line_ready <= 1'b1;
+        D_RD_BLEND2: if (!DDRAM_BUSY) begin
+            drd <= 1'b0;
+            dst <= D_RD_BLEND2_W;
+        end
+        D_RD_BLEND2_W: begin
+            if (DDRAM_DOUT_READY) begin
+                compose_other <= DDRAM_DOUT;
+                compose_addr <= 7'd44 + rbeat;
+                compose_valid <= 1'b1;
+                rbeat <= rbeat + 1'd1;
+                if (rbeat == 7'd31)
+                    dst <= D_RD_BLEND_FLUSH;
+            end
+        end
+        D_RD_BLEND_FLUSH: begin
             rd_ack <= 1'b1;
             dst <= D_IDLE;
         end
@@ -460,83 +449,6 @@ always @(posedge clk) begin
         if (!er_req) er_ack <= 1'b0;
     end
 end
-
-endmodule
-
-// ---------------------------------------------------------------------------
-// 128 x 64 fetched-line RAM. Port A writes complete DDR words while port B is
-// used either by scanout or by the inactive-bank composition pipeline.
-// ---------------------------------------------------------------------------
-module s32_fb_line_ram (
-    input              clk,
-    input              wr_en,
-    input       [6:0]  wr_addr,
-    input      [63:0]  wr_data,
-    input       [6:0]  rd_addr,
-    output     [63:0]  rd_q
-);
-
-`ifdef ALTERA_RESERVED_QIS
-altsyncram ram (
-    .clock0(clk),
-    .address_a(wr_addr),
-    .data_a(wr_data),
-    .wren_a(wr_en),
-
-    .clock1(clk),
-    .address_b(rd_addr),
-    .q_b(rd_q),
-
-    .aclr0(1'b0),
-    .aclr1(1'b0),
-    .addressstall_a(1'b0),
-    .addressstall_b(1'b0),
-    .byteena_a(1'b1),
-    .clocken0(1'b1),
-    .clocken1(1'b1),
-    .clocken2(1'b1),
-    .clocken3(1'b1),
-    .eccstatus(),
-    .rden_a(1'b1),
-    .rden_b(1'b1)
-);
-defparam
-    ram.numwords_a = 128,
-    ram.widthad_a = 7,
-    ram.width_a = 64,
-    ram.numwords_b = 128,
-    ram.widthad_b = 7,
-    ram.width_b = 64,
-    ram.address_reg_b = "CLOCK1",
-    ram.clock_enable_input_a = "BYPASS",
-    ram.clock_enable_input_b = "BYPASS",
-    ram.clock_enable_output_b = "BYPASS",
-    ram.intended_device_family = "Cyclone V",
-    ram.lpm_type = "altsyncram",
-    ram.operation_mode = "DUAL_PORT",
-    ram.outdata_aclr_b = "NONE",
-    ram.outdata_reg_b = "UNREGISTERED",
-    ram.power_up_uninitialized = "TRUE",
-    ram.read_during_write_mode_mixed_ports = "DONT_CARE",
-    ram.width_byteena_a = 1;
-`else
-reg [63:0] mem [0:127];
-reg [63:0] rd_q_r;
-assign rd_q = rd_q_r;
-
-integer __line_init;
-initial begin
-    rd_q_r = 64'd0;
-    for (__line_init = 0; __line_init < 128; __line_init = __line_init + 1)
-        mem[__line_init] = 64'd0;
-end
-
-always @(posedge clk) begin
-    rd_q_r <= mem[rd_addr];
-    if (wr_en)
-        mem[wr_addr] <= wr_data;
-end
-`endif
 
 endmodule
 

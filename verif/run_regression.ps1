@@ -585,6 +585,13 @@ try {
     Run-HdlTest "t33_v60_bus_lanes" "tb_v60_bus_lanes" @(
         "rtl/cpu/v60/s32_v60_bus.sv", "verif/v60/tb_v60_bus_lanes.sv"
     ) "V60 BUS LANES PASS"
+    Run-HdlTest "t33_v60_bus_nco_timing" "tb_v60_bus_nco_timing" @(
+        "rtl/cpu/v60/s32_v60_bus.sv", "verif/v60/tb_v60_bus_nco_timing.sv"
+    ) "V60 BUS NCO TIMING PASS"
+    Run-HdlTest "t33_v60_sonic_burst_timing" "tb_v60_sonic_burst_timing" @(
+        "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
+        "verif/v60/tb_v60_sonic_burst_timing.sv"
+    ) "SONIC BURST TIMING PASS"
 
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")

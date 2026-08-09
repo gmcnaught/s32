@@ -90,10 +90,10 @@ reg [1:0] srom_bank_mask = 2'b11;
 wire rendering;
 
 s32_sprite #(.POST_VBLANK_CYCLES(4)) dut (
-    .clk(clk), .rst(rst), .is_multi32(is_multi32), .retain_previous(1'b0),
+    .clk(clk), .rst(rst), .is_multi32(is_multi32),
     .verify_srom(1'b0),
     .srom_bank_mask(srom_bank_mask),
-    .present(vblank), .vblank(vblank),
+    .vblank(vblank),
     .ctl_we(ctl_we), .ctl_addr(ctl_addr), .ctl_wdata(ctl_wdata),
     .ctl_rdata(ctl_rdata), .ctl_raddr(ctl_raddr),
     .slist_addr(slist_addr), .slist_data(slist_q),
@@ -103,7 +103,7 @@ s32_sprite #(.POST_VBLANK_CYCLES(4)) dut (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_busy(1'b0),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .disp_buf(), .scan_buf(), .scan_buf_prev(), .scan_dual()
+    .disp_buf()
 );
 assign rendering = dut.rs != 0;
 
@@ -170,7 +170,7 @@ task expect_skipped_frame;
         @(posedge clk); vblank <= 0;
         for (k = 0; k < 10; k = k + 1) begin
             @(posedge clk); #1;
-            if (fbe_req || rendering) begin
+            if (fbe_req || fbw_start) begin
                 errors = errors + 1;
                 $display("  FAIL 30/60-Hz skipped frame started work");
             end
@@ -465,10 +465,10 @@ initial begin
     entry(0, 16'h9fff, 0,0,0,0,0,0,0);
     entry(13'h1fff, 16'hc000, 0,0,0,0,0,0,0);
     frame;
-    if (dut.list_idx !== 13\x27h1fff || dut.list_count !== 14\x27d2) begin
+    if (dut.list_idx !== 13'h1fff || dut.list_count !== 14'd2) begin
         errors = errors + 1;
         $display("  FAIL high list JUMP idx/count/desc=%04x/%0d/%04x",
-                 dut.list_idx, dut.list_count, 16\x27h0000);
+                 dut.list_idx, dut.list_count, 16'h0000);
     end
 
     // ---- 22: Multi32 erase clears the selected visible buffer on both

@@ -168,6 +168,68 @@ class GlobalProfileContractTests(unittest.TestCase):
             text,
         )
 
+    def test_alien3_uses_its_cabinet_coin_start_service_wiring(self) -> None:
+        """Alien 3 must not fall through to generic SERVICE12 assignments."""
+        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        self.assertIn(
+            "wire alien3_controls = active_board.gun_aim && active_board.coin_swap",
+            text,
+        )
+        # Alien 3 starts each side with its trigger; the MiSTer Start button is
+        # an alias for that trigger rather than generic SERVICE12 Start 1/2.
+        self.assertIn(
+            "wire [7:0] alien3_p1a = p1a_dig & {7'h7f, ~joystick_0[10]}",
+            text,
+        )
+        self.assertIn(
+            "wire [7:0] alien3_p2a = p2a_dig & {7'h7f, ~joystick_1[10]}",
+            text,
+        )
+        # MAME alien3: SERVICE12 bit3=Coin 1, bit2=Coin 2, bit4=Service 2,
+        # bit5 unused.  Bits 5/4 stay released here so Start cannot issue a
+        # service credit; Test and Service retain generic bits 1/0.
+        self.assertIn(
+            "wire [7:0] svc12_alien3 = ~{2'b00, 2'b00, joystick_0[11],\n"
+            "                             joystick_1[11], test_btn, svc_btn}",
+            text,
+        )
+        self.assertIn(
+            "wire [7:0] svc12 = alien3_controls ? svc12_alien3 : svc12_generic",
+            text,
+        )
+
+    def test_alien3_hud_blend_osd_is_hidden_for_every_other_game(self) -> None:
+        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
+        self.assertIn('"h0O[8],Alien 3 HUD Blend,Off,On;"', text)
+        self.assertIn(
+            ".status_menumask({15'd0, active_board.gun_aim && "
+            "active_board.coin_swap})",
+            text,
+        )
+        self.assertIn(
+            ".alien3_hud_blend(alien3_controls && status[8])",
+            text,
+        )
+        self.assertIn(
+            "fb_rd_blend_r <= alien3_hud_blend && "
+            "fb_next_is_alien3_hud",
+            core,
+        )
+        self.assertIn(
+            "fb_next_y >= 8'd184 && fb_next_y <= 8'd201",
+            core,
+        )
+        self.assertIn("dburst <= 8'd32", fb_if)
+        self.assertIn(
+            "pix_addr(rd_blend_buf_latched, rd_y, 7'd4)", fb_if
+        )
+        self.assertIn(
+            "pix_addr(rd_blend_buf_latched, rd_y, 7'd44)", fb_if
+        )
+        self.assertNotIn("s32_fb_line_ram", fb_if)
+
     def test_rad_rally_gear_is_a_descriptor_selected_toggle(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         self.assertIn("if (joystick_0[6] && !radr_gear_btn_d)", text)
@@ -212,6 +274,21 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_dualpcb", core)
         self.assertIn("wire gun_aim_active = active_board.gun_aim", top)
         self.assertIn("wire alien3_controls = active_board.gun_aim && active_board.coin_swap", top)
+
+    def test_alien3_and_jpark_share_one_analog_aim_path(self) -> None:
+        top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        self.assertIn("wire gun_aim_active = active_board.gun_aim", top)
+        self.assertIn(".enable(gun_aim_active)", top)
+        self.assertIn(".p1_raw_x(joystick_l_analog_0[7:0])", top)
+        self.assertIn(".p1_raw_y(joystick_l_analog_0[15:8])", top)
+        self.assertIn(".p2_raw_x(joystick_l_analog_1[7:0])", top)
+        self.assertIn(".p2_raw_y(joystick_l_analog_1[15:8])", top)
+        self.assertIn("wire aim_inv_x = 1'b0", top)
+        self.assertIn("wire aim_inv_y = 1'b0", top)
+        self.assertIn("gun_aim_active ? gun_aim_x[0]", top)
+        self.assertIn("gun_aim_active ? gun_aim_y[0]", top)
+        self.assertIn("gun_aim_active ? gun_aim_x[1]", top)
+        self.assertIn("gun_aim_active ? gun_aim_y[1]", top)
 
     def test_attract_sweep_preserves_gate_and_capture_tail(self) -> None:
         """The matrix runner must request and finish every attract capture."""

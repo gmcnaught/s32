@@ -20,14 +20,14 @@ module tb_v60_sonic_burst_timing;
 reg clk = 0, rst = 1;
 always #10 clk = ~clk;
 
-// Match the production 48.3 MHz clk_sys : 16.1 MHz V60 relationship.  The
-// overlap mode lets the sequential RTL engine use idle clk_sys slots for
-// internal work, but returns to the board-rate enable whenever a logical data
-// transaction is active.  The external bus adapter is board-rate in both
-// modes, so this cannot shorten a PCB memory cycle.
-reg [1:0] bus_phase = 0;
+// Match production exactly: a 21848/65536 NCO drives the physical 16.108 MHz
+// bus while a fixed alternating CE represents overlapped internal V60 work.
+// The adapter remains on ce_bus in both modes, so no PCB access is shortened.
+reg [15:0] bus_acc = 0;
+reg        ce_bus_r = 0;
+reg        exec_phase = 0;
 reg       use_overlap = 0;
-wire      ce_bus = (bus_phase == 0);
+wire      ce_bus = ce_bus_r;
 
 wire c_req, c_we, c_ack;
 wire [31:0] c_addr, c_wdata, c_rdata;
@@ -36,12 +36,20 @@ wire m_req, m_we, m_ack;
 wire [23:1] m_addr;
 wire [15:0] m_wdata, m_rdata;
 wire [1:0] m_be;
-wire ce_exec = use_overlap
-             ? (ce_bus || (!c_req && !c_ack))
-             : ce_bus;
+wire ce_exec = use_overlap ? !exec_phase : ce_bus;
 always @(posedge clk) begin
-    if (rst || bus_phase == 2) bus_phase <= 0;
-    else                       bus_phase <= bus_phase + 1'd1;
+    reg [16:0] bus_sum;
+    if (rst) begin
+        bus_acc <= 0;
+        ce_bus_r <= 0;
+        exec_phase <= 0;
+    end
+    else begin
+        bus_sum = bus_acc + 17'd21848;
+        bus_acc <= bus_sum[15:0];
+        ce_bus_r <= bus_sum[16];
+        exec_phase <= ~exec_phase;
+    end
 end
 
 s32_v60 #(.START_PC(32'h0000_0000)) cpu (
@@ -130,9 +138,10 @@ task run_test_a;
 endtask
 
 // ---------------------------------------------------------------------------
-// Test B: the exact byte sequence at real ROM PC 0x0009A516 -- a single
-// movcu.h (MOVCUH string instruction) with the count supplied in R1, no
-// outer wrapper loop needed.  Bytes copied verbatim from MAME's disassembler.
+// Test B: the exact hot loop at real ROM PC 0x0009A530.  It copies 16
+// halfwords, publishes R27 to R11, then DBRs back to MOVCUH.  The old N=2000
+// synthetic string instruction hid this fixed/outer-loop cost and understated
+// the real Sonic timing problem.  125 chunks produce the same 2000 writes.
 // ---------------------------------------------------------------------------
 integer cyclesB, writesB;
 task run_test_b;
@@ -141,43 +150,42 @@ task run_test_b;
         writes = 0; ap = 0;
         ab(8'h2d); ab(8'h2a); ab(8'hf4); aw32(32'h0000_0200); // MOVW #0x200,R10 (source)
         ab(8'h2d); ab(8'h2b); ab(8'hf4); aw32(32'h0000_8000); // MOVW #0x8000,R11 (dest)
-        ab(8'h2d); ab(8'h21); ab(8'hf4); aw32(32'd2000);      // MOVW #2000,R1 (element count)
-        // movcu.h [R10],R1,[R11],R1  -- bytes verified at ROM PC 0x9A516
-        ab(8'h5a); ab(8'h88); ab(8'h6a); ab(8'h81); ab(8'h6b); ab(8'h81);
+        ab(8'h2d); ab(8'h22); ab(8'hf4); aw32(32'd125);       // MOVW #125,R2
+        ab(8'h5a); ab(8'h88); ab(8'h6a); ab(8'h10); ab(8'h6b); ab(8'h10); // MOVCUH #16
+        ab(8'h2d); ab(8'h5b); ab(8'h6b);                     // MOVW R27,R11
+        ab(8'hc6); ab(8'ha2); ab(8'hf7); ab(8'hff);           // DBR R2,-9
         ab(8'h00);
 
         rst = 1; repeat (8) @(posedge clk); rst = 0;
         cycles = 0;
         while (writes < 2000 && cycles < 200000) @(posedge clk);
         cyclesB = cycles; writesB = writes;
-        $display("[bench] %s B (movcu.h string op, real PC 0x0009A516): %0d elements in %0d clk_sys cycles = %0.2f V60-clk/elem",
+        $display("[bench] %s B (MOVCUH #16 + R27 publish + DBR, real PC 0x0009A530): %0d elements in %0d clk_sys cycles = %0.2f V60-clk/elem",
                   use_overlap ? "overlap" : "baseline", writesB, cyclesB,
                   writesB ? cyclesB * 1.0 / (3.0 * writesB) : 0.0);
     end
 endtask
 
 initial begin
-    integer baselineA, baselineB;
+    longint weighted_now, weighted_old;
     use_overlap = 0;
     run_test_a;
-    baselineA = cyclesA;
     run_test_b;
-    baselineB = cyclesB;
     use_overlap = 1;
     run_test_a;
     run_test_b;
-    // Evidence-backed physical floor (docs/v60-authenticity-from-manual.md:
-    // no per-instruction cycle table exists; a halfword element is one read +
-    // one write bus cycle, and the V60's minimum bus cycle is 3 clocks):
-    // ~6 clk_sys/element.  This bench reports the actual number so the plan's
-    // budget check (Phase 1) can be made on real data instead of assumption.
-    $display("[bench] evidence-backed floor (1R+1W @ 3clk min bus cycle) = ~6 cyc/elem");
+    // Pre-fix values from this exact bench and production NCO were A=84316,
+    // B=98636 raw clocks.  The measured palette race needs the weighted burst
+    // (8928 plain + 18176 string writes) below 60% of that duration.
+    weighted_now = 64'd8928 * cyclesA + 64'd18176 * cyclesB;
+    weighted_old = 64'd84316 * 64'd8928 + 64'd98636 * 64'd18176;
+    $display("[bench] Sonic weighted duration: %0d / %0d raw weighted clocks = %0.2f%%",
+             weighted_now, weighted_old, 100.0 * weighted_now / weighted_old);
     if (writesA != 2000 || writesB != 2000) begin
         $display("SONIC BURST TIMING FAIL (incomplete write burst)");
     end
-    else if (cyclesA * 100 > baselineA * 60 ||
-             cyclesB * 100 > baselineB * 85) begin
-        $display("SONIC BURST TIMING FAIL (overlap throughput regressed)");
+    else if (weighted_now * 100 > weighted_old * 60) begin
+        $display("SONIC BURST TIMING FAIL (weighted duration exceeds 60%% budget)");
     end
     else begin
         $display("SONIC BURST TIMING PASS");

@@ -23,6 +23,13 @@ class BoardDescriptorTests(unittest.TestCase):
         self.assertEqual(GAMES["jpark"][:2], bytes.fromhex("0804"))
         self.assertEqual(GAMES["radr"][:3], bytes.fromhex("089080"))
 
+    def test_alien3_and_jpark_select_the_same_gun_aim_profile(self) -> None:
+        alien3 = GAMES["alien3"]
+        jpark = GAMES["jpark"]
+        self.assertEqual(alien3[0], jpark[0])       # same MSM6253 ADC board
+        self.assertEqual(alien3[1] & 0xF7, jpark[1])
+        self.assertEqual(alien3[1] & 0x34, 0x04)  # same gun/analog profile
+
 
 class ButtonMetadataTests(unittest.TestCase):
     def test_ga2_magic_is_attack_plus_jump(self) -> None:

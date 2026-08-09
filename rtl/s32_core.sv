@@ -46,7 +46,7 @@ module s32_core #(
     input  board_desc_t board,
 
     // clock enables (from fractional CE generators in emu top)
-    input             ce_cpu,       // 16.108 / 20 MHz
+    input             ce_cpu,       // 16.108 / 20 MHz physical V60/V70 bus
     input             ce_z80,       // 8.054 / 8.0
     input             ce_fm,
     input             ce_pcm,       // 12.5 / 10.0
@@ -54,6 +54,9 @@ module s32_core #(
     // its own clk_v25-domain CE generator, so it must be told separately or
     // it keeps running against a frozen V60 (mailbox tear on ga2/arabfgt).
     input             pause,
+    // Alien 3-only display option. The top-level gates this with the exact
+    // cabinet descriptor before it reaches the shared System 32 core.
+    input             alien3_hud_blend,
 
     // SDRAM ports (to sdram.sv in emu top)
     output            sdr_p0_req,
@@ -97,8 +100,8 @@ module s32_core #(
     input             fb_er_ack,
     output            fb_rd_req,
     output      [1:0] fb_rd_buf,
-    output      [1:0] fb_rd_buf_alt,
-    output            fb_rd_dual,
+    output      [1:0] fb_rd_blend_buf,
+    output            fb_rd_blend,
     output      [7:0] fb_rd_y,
     input             fb_rd_ack,
     output      [8:0] fb_rd_x,
@@ -266,8 +269,22 @@ wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU nev
   `define FAST_IFETCH_EN 1'b1
  `endif
 `endif
+// The PCB clocks the V60 at 16.108 MHz, but the processor overlaps its
+// decode/EA/execute units while the external BCU continues to issue minimum
+// three-clock bus cycles.  Our single-FSM implementation has no independent
+// pipeline stages, so advancing its internal microsequencer at clk_sys/2
+// models that overlap without shortening the physical bus cadence below.
+// The fixed alternating CE also preserves s32.sdc's two-cycle V60 timing
+// contract: no V60 register can update on adjacent clk_sys edges.
+reg v60_exec_phase;
+always @(posedge clk_sys) begin
+    if (rst || pause) v60_exec_phase <= 1'b0;
+    else              v60_exec_phase <= ~v60_exec_phase;
+end
+wire v60_exec_ce = !pause && !v60_exec_phase;
+
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
-    .clk(clk_sys), .ce(ce_cpu), .rst(rst),
+    .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
@@ -623,9 +640,6 @@ assign sdr_p1_addr = SDR_TILES_BASE[24:3] + {3'b000, tile_rom_addr};
 // sprite engine
 wire [7:0] sprctl_q;
 wire [1:0] disp_buf;
-wire [1:0] spr_scan_buf;
-wire [1:0] spr_scan_buf_prev;
-wire       spr_scan_dual;
 s32_sprite #(
 `ifdef S32_REAL_V25
     .VERIFY_SROM(1'b1)
@@ -634,15 +648,11 @@ s32_sprite #(
 `endif
 ) sprite (
     .clk(clk_ram), .rst(rst), .is_multi32(is_multi32),
-    .retain_previous(1'b0),
     .verify_srom(!cfg_v25_table),
     // Old MRAs predate bank metadata and therefore retain the original
     // four-bank address space. New descriptors mirror 4/8 MiB ROMs exactly.
     .srom_bank_mask(cfg_sprite_bank_valid ? cfg_sprite_bank_mask : 2'b11),
-    // Publish completed physical frames at VBLANK start, before the line-0
-    // prefetch. MAME schedules logical erase/swap/render just after VBLANK
-    // ends; GA2 builds its next list during VBLANK, so that trigger stays late.
-    .present(vbl_start), .vblank(vbl_end),
+    .vblank(vbl_end),
     .ctl_we(wr_stb && m_we && sel_sprctl && m_be[0]),
     .ctl_addr(A[3:1]), .ctl_wdata(m_wdata[7:0]),
     .ctl_rdata(sprctl_q), .ctl_raddr(A[3:1]),
@@ -655,8 +665,7 @@ s32_sprite #(
     .fb_wr_shadow(fb_wr_shadow), .fb_busy(fb_wr_busy),
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf), .fb_er_y(fb_er_y),
     .fb_er_ack(fb_er_ack),
-    .disp_buf(disp_buf), .scan_buf(spr_scan_buf),
-    .scan_buf_prev(spr_scan_buf_prev), .scan_dual(spr_scan_dual)
+    .disp_buf(disp_buf)
 );
 assign sdr_p2_addr[24] = 1'b1;   // sprites region base 0x1000000
 
@@ -675,8 +684,8 @@ assign mode_416 = r1ff00[15];
 // preceding line and give the line-buffer fetch almost a whole scanline.
 reg       fb_rd_req_r;
 reg [1:0] fb_rd_buf_r;
-reg [1:0] fb_rd_buf_alt_r;
-reg       fb_rd_dual_r;
+reg [1:0] fb_rd_blend_buf_r;
+reg       fb_rd_blend_r;
 reg [7:0] fb_rd_y_r;
 // Prefetch only lines that will actually display: kicks during vcnt 0-222
 // fetch lines 1-223 and vcnt 261 fetches next frame's line 0.  The former
@@ -685,12 +694,18 @@ reg [7:0] fb_rd_y_r;
 // rationale as the TM-5 tilemap vblank suppression).
 wire fb_rd_kick = ce_pix && hcnt == 9'd16 &&
                   (vcnt < 9'd223 || vcnt == 9'd261);
+wire [7:0] fb_next_y = (vcnt == 9'd261) ? (cfg_flip_y ? 8'd223 : 8'd0) :
+                           (cfg_flip_y ? (8'd222 - vcnt[7:0])
+                                       : (vcnt[7:0] + 8'd1));
+// Captured MAME fields place P1/P2 HUD objects on rows 185..200. Keep a
+// one-pixel guard above/below so scaled edge pixels are included.
+wire fb_next_is_alien3_hud = fb_next_y >= 8'd184 && fb_next_y <= 8'd201;
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;
         fb_rd_buf_r <= 2'd0;
-        fb_rd_buf_alt_r <= 2'd0;
-        fb_rd_dual_r <= 1'b0;
+        fb_rd_blend_buf_r <= 2'd0;
+        fb_rd_blend_r <= 1'b0;
         fb_rd_y_r   <= 8'd0;
     end
     else begin
@@ -699,12 +714,12 @@ always @(posedge clk_ram) begin
         end
         else if (!fb_rd_ack && fb_rd_kick) begin
             fb_rd_req_r <= 1'b1;
-            // The CPU-visible logical selector changes with MAME's delayed
-            // sprite-controller update. Scanout uses the separately published
-            // physical buffer, which changes only at a complete frame boundary.
-            fb_rd_buf_r <= spr_scan_buf;
-            fb_rd_buf_alt_r <= spr_scan_buf_prev;
-            fb_rd_dual_r <= spr_scan_dual;
+            // Ordinary System 32 A/B scanout. Alien 3's optional HUD effect
+            // also fetches the hidden A/B buffer, but only for its two small
+            // HUD rectangles and never changes renderer buffer ownership.
+            fb_rd_buf_r <= disp_buf;
+            fb_rd_blend_buf_r <= {1'b0, ~disp_buf[0]};
+            fb_rd_blend_r <= alien3_hud_blend && fb_next_is_alien3_hud;
             // CRT lines are 0..261. Truncating line 261 before adding produced
             // line 6 instead of the next frame's line 0.
             if (vcnt == 9'd261)
@@ -718,8 +733,8 @@ always @(posedge clk_ram) begin
 end
 assign fb_rd_req = fb_rd_req_r;
 assign fb_rd_buf = fb_rd_buf_r;
-assign fb_rd_buf_alt = fb_rd_buf_alt_r;
-assign fb_rd_dual = fb_rd_dual_r;
+assign fb_rd_blend_buf = fb_rd_blend_buf_r;
+assign fb_rd_blend = fb_rd_blend_r;
 assign fb_rd_y   = fb_rd_y_r;
 assign fb_rd_x   = hcnt;
 
