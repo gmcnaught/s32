@@ -86,6 +86,21 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertNotIn("SYSTEMVERILOG_FILE rtl/prot/s32_prot.sv", shared)
         self.assertNotIn("QIP_FILE rtl/cpu/v25/v25.qip", shared)
 
+    def test_v60_cadence_fix_is_shared_by_both_profiles(self) -> None:
+        """The Sonic timing fix must not become a profile-specific bypass."""
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
+        self.assertIn("module s32_v60_exec_cadence", core)
+        self.assertIn("s32_v60_exec_cadence v60_cadence", core)
+        self.assertIn(".ce(v60_exec_ce)", core)
+        self.assertIn("s32_v60_bus vbus", core)
+        self.assertIn(".clk(clk_sys), .ce(ce_cpu), .rst(rst)", core)
+        self.assertIn("SYSTEMVERILOG_FILE rtl/s32_core.sv", files_qip)
+        for profile in (ROOT / "segas32.qsf", ROOT / "segas32v25.qsf"):
+            text = profile.read_text(encoding="utf-8")
+            self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
+            self.assertIn('VERILOG_MACRO "S32_SYSTEM32_ONLY=1"', text)
+
     def test_production_osd_has_no_debug_pause_or_aim_override(self) -> None:
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         self.assertNotIn("O[12],Pause", top)

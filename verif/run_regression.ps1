@@ -589,10 +589,18 @@ try {
         "rtl/s32_pkg.sv", "rtl/cpu/v60/s32_v60_bus.sv",
         "verif/v60/tb_v60_bus_nco_timing.sv"
     ) "V60 BUS NCO TIMING PASS"
-    Run-HdlTest "t33_v60_exec_cadence" "tb_v60_exec_cadence" @(
+    $execCadenceSources = @(
         "rtl/s32_pkg.sv", "rtl/s32_core.sv",
         "verif/common/tb_v60_exec_cadence.sv"
-    ) "V60 EXEC CADENCE PASS"
+    )
+    # The cadence module is shared RTL, but compile it through both shipping
+    # macro shapes so a profile-only edit cannot accidentally bypass the fix.
+    Run-HdlTest "t33_v60_exec_cadence_standard" "tb_v60_exec_cadence" $execCadenceSources "V60 EXEC CADENCE PASS" @(
+        "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING"
+    )
+    Run-HdlTest "t33_v60_exec_cadence_v25" "tb_v60_exec_cadence" $execCadenceSources "V60 EXEC CADENCE PASS" @(
+        "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY", "S32_REAL_V25", "S32_PCB_TIMING"
+    )
     Run-HdlTest "t33_v60_sonic_burst_timing" "tb_v60_sonic_burst_timing" @(
         "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
         "verif/v60/tb_v60_sonic_burst_timing.sv"

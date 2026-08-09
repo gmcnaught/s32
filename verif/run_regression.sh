@@ -230,10 +230,22 @@ echo "[33/35] V60 external bus byte/half/dword lane and alignment cycles"
 iverilog -g2012 -o /tmp/s32_v60_bus_lanes \
   rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_bus_lanes.sv
 vvp /tmp/s32_v60_bus_lanes | grep -q "V60 BUS LANES PASS" && echo "V60 BUS LANES: PASS" || { echo "V60 BUS LANES: FAIL"; exit 1; }
-iverilog -g2012 -DSIMULATION -s tb_v60_exec_cadence -o /tmp/s32_v60_exec_cadence \
-  rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_v60_exec_cadence.sv
-vvp /tmp/s32_v60_exec_cadence | grep -q "V60 EXEC CADENCE PASS" && \
-  echo "V60 EXEC CADENCE: PASS" || { echo "V60 EXEC CADENCE: FAIL"; exit 1; }
+for profile in standard v25; do
+  cadence_flags="-DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING"
+  if [ "$profile" = v25 ]; then
+    cadence_flags="$cadence_flags -DS32_GAME_ONLY -DS32_REAL_V25"
+  else
+    cadence_flags="$cadence_flags -DS32_GAME_ONLY_STD"
+  fi
+  # shellcheck disable=SC2086 -- cadence_flags intentionally expands to defines
+  iverilog -g2012 -DSIMULATION $cadence_flags -s tb_v60_exec_cadence \
+    -o "/tmp/s32_v60_exec_cadence_$profile" \
+    rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_v60_exec_cadence.sv
+  vvp "/tmp/s32_v60_exec_cadence_$profile" | grep -q "V60 EXEC CADENCE PASS" || {
+    echo "V60 EXEC CADENCE ($profile): FAIL"; exit 1;
+  }
+  echo "V60 EXEC CADENCE ($profile): PASS"
+done
 echo "[34/35] System32 palette/mixer/I-O/V25 mirrored address decode"
 iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
