@@ -47,7 +47,10 @@ working on the target MiSTer setup; an X means it is not yet ready.
   µPD4701 trackball counters, 8255 PPI, timers/interrupt controller, and the
   V25 protection path used by Golden Axe 2 and Arabian Fight.
 - MiSTer integration: MRA-based ROM loading, 16-bit HPS transfers, Cyclone V
-  SDRAM for ROM regions, and the DE10-Nano DDR3 framebuffer for sprites.
+  SDRAM for ROM regions, and the DE10-Nano DDR3 framebuffer for sprites. The
+  video OSD provides Normal, V-Integer, and HV-Integer HDMI scaling, plus an
+  optional core-side CRT Adjust for H-Size, H-Position, and V-Shift on native
+  15 kHz output.
 
 ## NEC V60 CPU
 

@@ -157,6 +157,7 @@ module s32_core #(
     output     [23:0] rgb_b,
     output            ce_pix,
     output            hs, vs, hb, vb,
+    output            mode_416_active,
 
     output signed [15:0] audio_l,
     output signed [15:0] audio_r,
@@ -465,7 +466,6 @@ s32_big_dpram #(
 
 // CRT timing
 wire mode_416;
-wire mode_416_active;
 wire vbl_start, vbl_end;
 wire [8:0] hcnt, vcnt;
 s32_video crt (

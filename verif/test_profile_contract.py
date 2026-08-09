@@ -219,10 +219,19 @@ class GlobalProfileContractTests(unittest.TestCase):
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
         self.assertIn('"h0O[8],Alien 3 HUD Blend,Off,On;"', text)
         self.assertIn(
-            ".status_menumask({15'd0, active_board.gun_aim && "
+            ".status_menumask({14'd0, ~status[9], active_board.gun_aim && "
             "active_board.coin_swap})",
             text,
         )
+        self.assertIn('"O[28:27],Scale,Normal,V-Integer,HV-Integer;"', text)
+        self.assertIn('"O[9],CRT Adjust,Off,On;"', text)
+        self.assertIn('"H1O[14:10],CRT H-Size,', text)
+        self.assertIn('"H1O[21:15],CRT H-Position,', text)
+        self.assertIn('"H1O[26:22],CRT V-Shift,', text)
+        self.assertIn('SYSTEMVERILOG_FILE rtl/crt_adjust.sv', (ROOT / "files.qip").read_text(encoding="utf-8"))
+        self.assertIn('crt_adjust #(', text)
+        self.assertIn('.AW        (10)', text)
+        self.assertIn('video_freak s32_video_freak', text)
         self.assertIn(
             ".alien3_hud_blend(alien3_controls && status[8])",
             text,

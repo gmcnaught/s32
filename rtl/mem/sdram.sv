@@ -138,8 +138,6 @@ reg  [1:0] open_bank;
 reg [12:0] open_row;
 reg [1:0]  ack_stretch;     // acks held 2 clk_ram cycles (clk_sys is /2 sync)
 
-reg [15:0] din_pipe_d1, din_pipe_d2;   // unused placeholder (kept for clarity)
-
 // Request mailboxes.  Capture every transaction's metadata with its request;
 // arbitration may delay a lower-priority port long after the producer pulses
 // req or moves on to its next address.  This mirrors the latched per-slot

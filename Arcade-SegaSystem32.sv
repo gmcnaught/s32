@@ -188,6 +188,12 @@ localparam CONF_STR = {
     // h0 hides this line unless menumask[0] identifies Alien 3.
     "h0O[8],Alien 3 HUD Blend,Off,On;",
     "-;",
+    "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
+    "O[9],CRT Adjust,Off,On;",
+    "H1O[14:10],CRT H-Size,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
+    "H1O[21:15],CRT H-Position,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,+16,+17,+18,+19,+20,+21,+22,+23,+24,+25,+26,+27,+28,+29,+30,+31,+32,+33,+34,+35,+36,+37,+38,+39,+40,+41,+42,+43,+44,+45,+46,+47,+48,-48,-47,-46,-45,-44,-43,-42,-41,-40,-39,-38,-37,-36,-35,-34,-33,-32,-31,-30,-29,-28,-27,-26,-25,-24,-23,-22,-21,-20,-19,-18,-17,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
+    "H1O[26:22],CRT V-Shift,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
+    "-;",
     "R[0],Reset;",
     "J1,B1,B2,B3,B4,B5,B6,Start,Coin,Test,Service;",
     "V,v",`BUILD_DATE
@@ -293,7 +299,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .buttons(buttons),
     .status(status),
-    .status_menumask({15'd0, active_board.gun_aim && active_board.coin_swap}),
+    .status_menumask({14'd0, ~status[9], active_board.gun_aim && active_board.coin_swap}),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
@@ -720,7 +726,7 @@ wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
 
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
-wire ce_pix_core, core_hs, core_hb, core_vb;
+wire ce_pix_core, core_hs, core_vs, core_hb, core_vb, mode_416_active;
 wire signed [15:0] aud_l, aud_r;
 
 s32_core core (
@@ -765,6 +771,7 @@ s32_core core (
     .rgb_a(rgb_a), .rgb_b(rgb_b),
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
+    .mode_416_active(mode_416_active),
     .audio_l(aud_l), .audio_r(aud_r),
     .out_lamps()
 );
@@ -778,23 +785,9 @@ wire [23:0] game_rgb = rgb_a;
 `else
 wire [23:0] game_rgb = status[6] ? rgb_b : rgb_a;
 `endif
-// The core stays reset until ROM/SDRAM are ready and therefore emits a stable
-// blank raster during startup. Do not add diagnostic colour muxes to the
-// production video path.
-wire [23:0] rgb_out = game_rgb;
-
-assign CE_PIXEL = ce_pix_core;
-assign VGA_R  = rgb_out[23:16];
-assign VGA_G  = rgb_out[15:8];
-assign VGA_B  = rgb_out[7:0];
-assign VGA_HS = core_hs;
-assign VGA_VS = core_vs;
-assign VGA_DE = ~(core_hb | core_vb);
-// Scandoubler Fx is a 3-bit field (None/CRT 25/50/75).  VGA_SL takes the two low
-// bits directly so None=0 and CRT 25/50/75 map to 1/2/3 (audit R20 PF-1 — the old
-// status[5:4] slice made CRT 75% unreachable; audit F2 — dropped the
-// non-functional "HQ2x" option, this core has no hq2x scaler instance).
 wire [2:0] scandoubler_fx = status[5:3];
+// Scandoubler Fx is a 3-bit field (None/CRT 25/50/75). VGA_SL takes the two
+// low bits directly so None=0 and CRT 25/50/75 map to 1/2/3.
 wire [2:0] scanline_level = scandoubler_fx;   // None=0, CRT 25/50/75 = 1/2/3
 assign VGA_SL = scanline_level[1:0];
 
@@ -803,7 +796,159 @@ assign VGA_SL = scanline_level[1:0];
 // Full Screen fills; [ARC1]/[ARC2] emit the framework custom-aspect encoding
 // (ARY=0, ARX = menu index) instead of acting as 16:9 (audit R20 PF-2).
 wire [1:0] aspect = status[2:1];
-assign VIDEO_ARX = (aspect == 0) ? 13'd4 : {11'd0, (aspect - 1'd1)};
-assign VIDEO_ARY = (aspect == 0) ? 13'd3 : 13'd0;
+wire [11:0] aspect_arx = (aspect == 0) ? 12'd4 : {10'd0, (aspect - 1'd1)};
+wire [11:0] aspect_ary = (aspect == 0) ? 12'd3 : 12'd0;
+
+// Reuse the framework's existing integer-scaling engine. This adds no frame
+// buffer: video_freak only computes the requested HDMI target size and the
+// existing sys/ascal scaler performs the actual resize. A direct-video mode
+// reports HDMI_WIDTH/HEIGHT as zero, so keep the engine in its cheap bypass
+// mode there instead of asking its divider to divide by zero.
+wire [2:0] scale_mode = (HDMI_WIDTH != 12'd0 && HDMI_HEIGHT != 12'd0)
+                      ? {1'b0, status[28:27]} : 3'd0;
+wire scale_de_unused;
+video_freak s32_video_freak (
+    .CLK_VIDEO (clk_sys),
+    .CE_PIXEL  (ce_pix_core),
+    .VGA_VS    (core_vs),
+    .HDMI_WIDTH(HDMI_WIDTH),
+    .HDMI_HEIGHT(HDMI_HEIGHT),
+    .VGA_DE    (scale_de_unused),
+    .VIDEO_ARX (VIDEO_ARX),
+    .VIDEO_ARY (VIDEO_ARY),
+    .VGA_DE_IN(~(core_hb | core_vb)),
+    .ARX       (aspect_arx),
+    .ARY       (aspect_ary),
+    .CROP_SIZE (12'd0),
+    .CROP_OFF  (5'd0),
+    .SCALE     (scale_mode)
+);
+
+//////////////////////////// CRT ADJUST /////////////////////////////////////
+// The upstream core-side CRT Adjust module uses one ping-pong RGB line buffer
+// and keeps the native sync reference. AW includes the ping-pong bank bit, so
+// two complete 512-sample lines require the generic 1024-entry AW=10 buffer.
+// Use the hps_io status bits directly; they already live in clk_sys and this
+// avoids duplicating 19 control registers solely to sample them on pixel CE.
+wire              crt_on     = status[9];
+wire signed [4:0] crt_hsize  = $signed(status[14:10]);
+wire        [6:0] crt_hpos    = status[21:15];
+wire signed [5:0] crt_vshift = $signed(status[26:22]);
+
+// CRT Adjust operates on the native 15 kHz stream. The framework's
+// scandoubler changes the pixel-CE ratio, so leave the line buffer in bypass
+// while a CRT 25/50/75% effect is selected.
+wire crt_adjust_active = crt_on && (scandoubler_fx == 3'd0);
+
+// HSync-shift mode is the safe choice here because the System 32 active window
+// is line-anchored at x=0 rather than centered inside the total line. The
+// module is sized for the 416-wide mode; for 320-wide mode compensate negative
+// positions by the 512-410 total-line difference before passing the offset in.
+wire signed [8:0] crt_hpos_native = (crt_hpos <= 7'd48)
+    ? $signed({2'b00, crt_hpos})
+    : $signed({2'b00, crt_hpos}) - 9'sd128;
+wire signed [8:0] crt_hpos_module = (!mode_416_active && crt_hpos_native[8])
+    ? crt_hpos_native - 9'sd102 : crt_hpos_native;
+
+wire [7:0] crt_r, crt_g, crt_b;
+wire crt_hs, crt_vs, crt_hb, crt_vb, crt_hs_ref;
+
+// clk_sys/pixel is 6 clocks (24 quarter-cycles) in 416 mode and 7.5 clocks
+// (30 quarter-cycles on average) in 320 mode. CRT Adjust steps the read period
+// in quarter-cycles; this preserves its native width in both modes without a
+// divider or a second timing generator.
+reg [7:0] crt_rd_acc;
+reg crt_hs_ref_d;
+wire [7:0] crt_base_period = mode_416_active ? 8'd24 : 8'd30;
+wire [7:0] crt_rd_period = crt_base_period + {{3{crt_hsize[4]}}, crt_hsize};
+wire crt_rd_tick = (crt_rd_acc + 8'd4) >= {1'b0, crt_rd_period};
+wire crt_hs_ref_rise = crt_hs_ref & ~crt_hs_ref_d;
+always @(posedge clk_sys) begin
+    if (video_reset) begin
+        crt_rd_acc   <= 8'd0;
+        crt_hs_ref_d <= 1'b0;
+    end
+    else begin
+        crt_hs_ref_d <= crt_hs_ref;
+        if (crt_hs_ref_rise)
+            crt_rd_acc <= 8'd0;
+        else if (crt_rd_tick)
+            crt_rd_acc <= crt_rd_acc + 8'd4 - {1'b0, crt_rd_period};
+        else
+            crt_rd_acc <= crt_rd_acc + 8'd4;
+    end
+end
+wire crt_rd_ce = crt_adjust_active ? crt_rd_tick : ce_pix_core;
+
+crt_adjust #(
+    .VTOTAL   (262),
+    .HTOTAL   (512),
+    .HPOS_MODE(0),
+    .AW        (10)
+) u_crt_adjust (
+    .clk       (clk_sys),
+    .pxl_cen   (ce_pix_core),
+    .pxl2_cen  (crt_rd_ce),
+    .active    (crt_adjust_active),
+    .hsize     (crt_hsize),
+    .hoffset   (crt_hpos_module),
+    .voffset   (crt_vshift),
+    .r_in      (game_rgb[23:16]),
+    .g_in      (game_rgb[15:8]),
+    .b_in      (game_rgb[7:0]),
+    .hs_in     (core_hs),
+    .vs_in     (core_vs),
+    .hb_in     (core_hb | core_vb),
+    .vb_in     (core_vb),
+    .r_out     (crt_r),
+    .g_out     (crt_g),
+    .b_out     (crt_b),
+    .hs_out    (crt_hs),
+    .vs_out    (crt_vs),
+    .hb_out    (crt_hb),
+    .vb_out    (crt_vb),
+    .hs_ref_out(crt_hs_ref)
+);
+
+// Keep the framework OSD centered on the native active window. H-Position and
+// H-Size alter the analog image window, but this separate DE edge keeps the
+// downstream OSD from following that adjustment.
+reg crt_hs_in_d, crt_native_active_d, crt_str_active_d;
+reg crt_vblank_1l, crt_de_osd;
+wire crt_hs_in_rise = core_hs & ~crt_hs_in_d;
+wire crt_native_active = ~(core_hb | crt_vblank_1l);
+wire crt_native_rise = crt_native_active & ~crt_native_active_d;
+wire crt_str_active = ~crt_hb;
+wire crt_str_fall = crt_str_active_d & ~crt_str_active;
+always @(posedge clk_sys) begin
+    if (video_reset) begin
+        crt_hs_in_d         <= 1'b0;
+        crt_native_active_d <= 1'b0;
+        crt_str_active_d    <= 1'b0;
+        crt_vblank_1l       <= 1'b0;
+        crt_de_osd           <= 1'b0;
+    end
+    else begin
+        crt_hs_in_d <= core_hs;
+        if (crt_hs_in_rise)
+            crt_vblank_1l <= core_vb;
+        if (ce_pix_core)
+            crt_native_active_d <= crt_native_active;
+        if (crt_rd_ce)
+            crt_str_active_d <= crt_str_active;
+        if (crt_native_rise)
+            crt_de_osd <= 1'b1;
+        else if (crt_str_fall)
+            crt_de_osd <= 1'b0;
+    end
+end
+
+assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : ce_pix_core;
+assign VGA_R  = crt_adjust_active ? crt_r : game_rgb[23:16];
+assign VGA_G  = crt_adjust_active ? crt_g : game_rgb[15:8];
+assign VGA_B  = crt_adjust_active ? crt_b : game_rgb[7:0];
+assign VGA_HS = crt_adjust_active ? crt_hs : core_hs;
+assign VGA_VS = crt_adjust_active ? crt_vs : core_vs;
+assign VGA_DE = crt_adjust_active ? crt_de_osd : ~(core_hb | core_vb);
 
 endmodule
