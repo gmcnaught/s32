@@ -6,6 +6,27 @@
 
 import s32_pkg::*;
 
+// Keep the V60 execution cadence as a separately testable hardware contract.
+// The external BCU remains on ce_cpu (the PCB's 16.108 MHz bus cadence), while
+// this enable advances the serial RTL microsequencer at clk_sys/2 to model the
+// overlap of the real V60's decode/EA/execute units.  In a captured pre-fix
+// Dark Edge build, running both sides from ce_cpu made its displayed gameplay
+// countdown advance every 70 frames instead of MAME's measured 35-frame writes
+// to 0x20a112 at PC 0x087080, consistent with alternate VBlank work coalescing.
+module s32_v60_exec_cadence (
+    input  wire clk,
+    input  wire rst,
+    input  wire pause,
+    output wire ce
+);
+reg phase;
+always @(posedge clk) begin
+    if (rst || pause) phase <= 1'b0;
+    else              phase <= ~phase;
+end
+assign ce = !pause && !phase;
+endmodule
+
 // Fixed-clock dedicated revisions can use the single-port synchronous V60
 // cache. Keep this preprocessing choice local to this compilation unit.
 // Both production profiles (segas32v25 and the descriptor-driven segas32
@@ -276,12 +297,10 @@ wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU nev
 // models that overlap without shortening the physical bus cadence below.
 // The fixed alternating CE also preserves s32.sdc's two-cycle V60 timing
 // contract: no V60 register can update on adjacent clk_sys edges.
-reg v60_exec_phase;
-always @(posedge clk_sys) begin
-    if (rst || pause) v60_exec_phase <= 1'b0;
-    else              v60_exec_phase <= ~v60_exec_phase;
-end
-wire v60_exec_ce = !pause && !v60_exec_phase;
+wire v60_exec_ce;
+s32_v60_exec_cadence v60_cadence (
+    .clk(clk_sys), .rst(rst), .pause(pause), .ce(v60_exec_ce)
+);
 
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),

@@ -230,6 +230,10 @@ echo "[33/35] V60 external bus byte/half/dword lane and alignment cycles"
 iverilog -g2012 -o /tmp/s32_v60_bus_lanes \
   rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_bus_lanes.sv
 vvp /tmp/s32_v60_bus_lanes | grep -q "V60 BUS LANES PASS" && echo "V60 BUS LANES: PASS" || { echo "V60 BUS LANES: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -s tb_v60_exec_cadence -o /tmp/s32_v60_exec_cadence \
+  rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_v60_exec_cadence.sv
+vvp /tmp/s32_v60_exec_cadence | grep -q "V60 EXEC CADENCE PASS" && \
+  echo "V60 EXEC CADENCE: PASS" || { echo "V60 EXEC CADENCE: FAIL"; exit 1; }
 echo "[34/35] System32 palette/mixer/I-O/V25 mirrored address decode"
 iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
