@@ -99,8 +99,7 @@ s32_core core (
     .trk_btn(tbt_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
     .rgb_a(), .rgb_b(), .ce_pix(), .hs(), .vs(), .hb(), .vb(),
-    .audio_l(), .audio_r(), .out_lamps(),
-    .debug_pc(), .debug_halted(), .debug_status(), .debug_first_rom(), .debug_hcnt()
+    .audio_l(), .audio_r(), .out_lamps()
 );
 
 // ---------------------------------------------------------------------
@@ -201,10 +200,10 @@ always @(posedge clk_sys) begin
 end
 reg [31:0] pc_last;
 always @(posedge clk_sys) begin
-    if (core.v60.dbg_pc != pc_last) begin
-        if (core.v60.dbg_pc > 32'hFF && core.v60.dbg_pc < 32'h200)
-            $display("[%0t] PC=%08x", $time, core.v60.dbg_pc);
-        pc_last <= core.v60.dbg_pc;
+    if (core.v60.pc != pc_last) begin
+        if (core.v60.pc > 32'hFF && core.v60.pc < 32'h200)
+            $display("[%0t] PC=%08x", $time, core.v60.pc);
+        pc_last <= core.v60.pc;
     end
 end
 `endif
@@ -225,14 +224,14 @@ initial begin
         core.work_ram.sim_peek(16'h0008) & 16'h00ff,
         core.work_ram.sim_peek(16'h0009) & 16'h00ff,
         core.vram.video_ram.sim_peek(16'h0020), core.pal0.sim_peek(14'h0001),
-        core.work_ram.sim_peek(16'h0080), spr_px_writes, core.v60.dbg_halted);
+        core.work_ram.sim_peek(16'h0080), spr_px_writes, core.v60.halted);
     if ((core.work_ram.sim_peek(16'h0008) & 16'h00ff) == "w" &&
         (core.work_ram.sim_peek(16'h0009) & 16'h00ff) == "X" &&
         core.vram.video_ram.sim_peek(16'h0020) == 16'hBEE5 &&
         core.pal0.sim_peek(14'h0001) == 16'h7C1F &&
         core.work_ram.sim_peek(16'h0080) == 16'hCAFE &&
         spr_px_writes > 0 &&
-        core.v60.dbg_halted)
+        core.v60.halted)
         $display("GA2 PATH PASS");
     else
         $display("GA2 PATH FAIL");

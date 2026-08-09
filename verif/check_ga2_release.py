@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 standard_qsf = (ROOT / "segas32v25.qsf").read_text(encoding="utf-8")
 for macro in ("S32_PROFILE_STANDARD=1", "S32_REAL_V25=1", "S32_V25_MLAB_FIFO=1",
-              "S32_RELEASE_MINIMAL=1", "S32_JT12_MLAB_SHIFTS=1",
+              "S32_JT12_MLAB_SHIFTS=1",
               "S32_GAME_ONLY=1", "S32_V60_NO_FP=1"):
     # This RBF is scoped to exactly ga2/arabfgt. S32_GAME_ONLY and
     # S32_V60_NO_FP ("Golden Axe never executes the optional floating-point
@@ -24,6 +24,8 @@ for macro in ("S32_PROFILE_STANDARD=1", "S32_REAL_V25=1", "S32_V25_MLAB_FIFO=1",
         f"segas32v25.qsf is missing {macro}"
 assert 'VERILOG_MACRO "S32_PROFILE_V25=1"' not in standard_qsf, \
     "segas32v25.qsf must not redefine the retired S32_PROFILE_V25 macro"
+assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \
+    "segas32v25.qsf must not retain the retired debug/release macro"
 assert 'VERILOG_MACRO "S32_GAME_ONLY_STD=1"' not in standard_qsf, \
     "segas32v25.qsf must not define segas32's GAME_ONLY_STD trim"
 
@@ -44,9 +46,10 @@ for regional_path in (ROOT / "mra").glob("Golden Axe The Revenge of Death Adder 
         f"{regional_path.name} must load segas32v25.rbf"
     buttons = regional_tree.getroot().find("buttons")
     assert buttons is not None, f"{regional_path.name} is missing button metadata"
-    assert buttons.get("names") == "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service,Pause"
-    assert buttons.get("default") == "A,B,X,Start,Select,R,L,Y"
-    assert buttons.get("count") == "3"
+    # GA2's magic action is the Attack+Jump chord, not a third cabinet button.
+    assert buttons.get("names") == "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause"
+    assert buttons.get("default") == "A,B,Start,Select,R,L,Y"
+    assert buttons.get("count") == "2"
 
 assert root.findtext("name") == "Golden Axe: The Revenge of Death Adder (World, Rev B)"
 rom = root.find("rom[@index='0']")

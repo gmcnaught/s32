@@ -37,8 +37,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -128,7 +127,7 @@ initial begin
 
     repeat (8) @(posedge clk);
     rst = 0;
-    for (i = 0; i < 4000 && !cpu.dbg_halted; i = i + 1) @(posedge clk);
+    for (i = 0; i < 4000 && !cpu.halted; i = i + 1) @(posedge clk);
 
     $display("mem: A1=%04x A2=%04x A3=%04x A4=%04x A5=%04x A6=%04x A7=%04x",
         ram[wi(A1)], ram[wi(A2)], ram[wi(A3)], ram[wi(A4)], ram[wi(A5)], ram[wi(A6)], ram[wi(A7)]);
@@ -136,7 +135,7 @@ initial begin
         cpu.r[6]&4'hf, cpu.r[7]&4'hf, cpu.r[8]&4'hf, cpu.r[9]&4'hf,
         cpu.r[10]&4'hf, cpu.r[11]&4'hf, cpu.r[12]&4'hf);
 
-    chk(cpu.dbg_halted, "HALT reached");
+    chk(cpu.halted, "HALT reached");
     // value checks (halfword RMW writeback)
     chk(ram[wi(A1)] == 16'h0707, "DEC.H 0708 value");
     chk(ram[wi(A2)] == 16'h0000, "DEC.H 0001 value");

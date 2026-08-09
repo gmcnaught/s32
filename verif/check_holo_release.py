@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Static contract for the current Holosseum hardware release profile.
 
-2026-08-06: split back into two dedicated profiles -- segas32v25.qsf (ga2,
-arabfgt: real V25) and segas32.qsf (Sonic and future non-V25 games: HLE
-only). Holo has no V25 protection hardware, so it belongs to segas32's
-scope like every other non-V25 game -- see PROFILE_CONTRACT.md. Holo is
-currently still in tools/gen_mra.py:IGNORED_PARENTS (not yet re-added), so
-the MRA-presence assertion below is expected to fail until it returns; that
-mirrors this project's own "add one game at a time" roadmap and is not a
-regression to chase.
+2026-08-07: split back into two dedicated profiles -- segas32v25.qsf (ga2,
+arabfgt: real V25) and segas32.qsf (Sonic, Holo, and Spider-Man: HLE only).
+Holo has no V25 protection hardware, so it belongs to segas32's scope.
 """
 
 from pathlib import Path

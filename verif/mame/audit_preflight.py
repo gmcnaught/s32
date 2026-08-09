@@ -116,7 +116,7 @@ def main() -> int:
         "set": args.set,
         "cloneof": machine.get("cloneof") if machine is not None else None,
         "profile": args.profile,
-        "profile_macro": "S32_PROFILE_V25=1" if args.profile == "v25" else "S32_PROFILE_STANDARD=1",
+        "profile_macro": "S32_REAL_V25=1" if args.profile == "v25" else "S32_PROFILE_STANDARD=1",
         "media": {
             "mame_archive": str(archive.resolve()),
             "mame_archive_sha256": sha256(archive) if archive.is_file() else None,

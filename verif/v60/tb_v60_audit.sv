@@ -25,8 +25,7 @@ s32_v60 #(.START_PC(32'h00000000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -86,16 +85,16 @@ begin
     cpu.r[31] = 32'h0000_8000;
     rst = 1'b0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 2000) begin
+    while (!cpu.halted && cycles < 2000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_0100 ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_0100 ||
         cpu.r[31] !== 32'h0000_7ff8 ||
         {ram[16'h3ffd], ram[16'h3ffc]} !== 32'h0000_0000) begin
         errors = errors + 1;
         $display("RESERVED %02x FAIL halt=%0d pc=%08x sp=%08x saved_pc=%08x",
-                 op, cpu.dbg_halted, cpu.dbg_pc, cpu.r[31],
+                 op, cpu.halted, cpu.pc, cpu.r[31],
                  {ram[16'h3ffd], ram[16'h3ffc]});
     end
     else $display("RESERVED %02x PASS cycles=%0d", op, cycles);
@@ -117,15 +116,15 @@ begin
     cpu.r[31] = 32'h0000_8000;
     rst = 1'b0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 2000) begin
+    while (!cpu.halted && cycles < 2000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_0006 ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_0006 ||
         cpu.r[31] !== 32'h0000_8000) begin
         errors = errors + 1;
         $display("CLRTLB LENGTH FAIL halt=%0d pc=%08x sp=%08x",
-                 cpu.dbg_halted, cpu.dbg_pc, cpu.r[31]);
+                 cpu.halted, cpu.pc, cpu.r[31]);
     end
     else $display("CLRTLB LENGTH PASS cycles=%0d", cycles);
 end
@@ -155,11 +154,11 @@ begin
     cpu.r[31] = 32'h0000_8000;
     rst = 1'b0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 12000) begin
+    while (!cpu.halted && cycles < 12000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.r[1] !== 32'ha500_001c ||
+    if (!cpu.halted || cpu.r[1] !== 32'ha500_001c ||
         cpu.atbr0 !== 32'ha500_0010 || cpu.atlr0 !== 32'ha500_0011 ||
         cpu.atbr1 !== 32'ha500_0012 || cpu.atlr1 !== 32'ha500_0013 ||
         cpu.atbr2 !== 32'ha500_0014 || cpu.atlr2 !== 32'ha500_0015 ||
@@ -169,7 +168,7 @@ begin
         cpu.adtmr1 !== 32'ha500_001c || cpu.pir !== 32'h0000_6000) begin
         errors = errors + 1;
         $display("PRIV MAP FAIL halt=%0d R1=%08x ATBR0=%08x ADTMR1=%08x PIR=%08x",
-                 cpu.dbg_halted, cpu.r[1], cpu.atbr0, cpu.adtmr1, cpu.pir);
+                 cpu.halted, cpu.r[1], cpu.atbr0, cpu.adtmr1, cpu.pir);
     end
     else $display("PRIV MAP PASS cycles=%0d", cycles);
 end
@@ -193,11 +192,11 @@ begin
     @(negedge clk);
     cpu.f_ov = 1'b1;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 2000) begin
+    while (!cpu.halted && cycles < 2000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_0100 ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_0100 ||
         cpu.r[31] !== 32'h0000_7ff0 ||
         {ram[16'h3ff9], ram[16'h3ff8]} !== 32'h0000_0001 ||
         {ram[16'h3ffb], ram[16'h3ffa]} !== 32'h1000_0004 ||
@@ -205,7 +204,7 @@ begin
         {ram[16'h3fff], ram[16'h3ffe]} !== 32'h0000_0000) begin
         errors = errors + 1;
         $display("BRKV FRAME FAIL halt=%0d pc=%08x sp=%08x ret=%08x psw=%08x code=%08x fault=%08x",
-                 cpu.dbg_halted, cpu.dbg_pc, cpu.r[31],
+                 cpu.halted, cpu.pc, cpu.r[31],
                  {ram[16'h3ff9], ram[16'h3ff8]},
                  {ram[16'h3ffb], ram[16'h3ffa]},
                  {ram[16'h3ffd], ram[16'h3ffc]},
@@ -228,15 +227,15 @@ begin
     @(negedge clk);
     cpu.psw_rest[27] = 1'b1; // TP alone is not a floating exception cause
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 2000) begin
+    while (!cpu.halted && cycles < 2000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_0001 ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_0001 ||
         cpu.r[31] !== 32'h0000_8000) begin
         errors = errors + 1;
         $display("TRAPFL MASK FAIL halt=%0d pc=%08x sp=%08x",
-                 cpu.dbg_halted, cpu.dbg_pc, cpu.r[31]);
+                 cpu.halted, cpu.pc, cpu.r[31]);
     end
     else $display("TRAPFL MASK PASS cycles=%0d", cycles);
 end
@@ -267,16 +266,16 @@ begin
     cpu.r[31] = 32'h0000_8000;
     rst = 1'b0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 3000) begin
+    while (!cpu.halted && cycles < 3000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_000c ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_000c ||
         cpu.r[2] !== 32'h1234_5678 || cpu.r[29] !== 32'hcafe_babe ||
         cpu.r[31] !== 32'h0000_8000) begin
         errors = errors + 1;
         $display("CALL LENGTH FAIL halt=%0d pc=%08x R2=%08x AP=%08x SP=%08x",
-                 cpu.dbg_halted, cpu.dbg_pc, cpu.r[2], cpu.r[29], cpu.r[31]);
+                 cpu.halted, cpu.pc, cpu.r[2], cpu.r[29], cpu.r[31]);
     end
     else $display("CALL LENGTH PASS cycles=%0d", cycles);
 end
@@ -297,11 +296,11 @@ begin
     cpu.r[31] = 32'h0000_8000;
     rst = 1'b0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 3000) begin
+    while (!cpu.halted && cycles < 3000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_0100 ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_0100 ||
         cpu.r[31] !== 32'h0000_7ff0 || cpu.psw !== 32'h9200_0000 ||
         {ram[16'h3ff9], ram[16'h3ff8]} !== 32'h0000_000b ||
         {ram[16'h3ffb], ram[16'h3ffa]} !== 32'h1000_0000 ||
@@ -309,7 +308,7 @@ begin
         {ram[16'h3fff], ram[16'h3ffe]} !== 32'hdead_beef) begin
         errors = errors + 1;
         $display("CHLVL FRAME FAIL halt=%0d pc=%08x sp=%08x psw=%08x ret=%08x old=%08x code=%08x data=%08x",
-                 cpu.dbg_halted, cpu.dbg_pc, cpu.r[31], cpu.psw,
+                 cpu.halted, cpu.pc, cpu.r[31], cpu.psw,
                  {ram[16'h3ff9], ram[16'h3ff8]},
                  {ram[16'h3ffb], ram[16'h3ffa]},
                  {ram[16'h3ffd], ram[16'h3ffc]},
@@ -348,11 +347,11 @@ begin
     @(negedge clk);
     cpu.trr = 32'h0000_2000;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 20000) begin
+    while (!cpu.halted && cycles < 20000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || cpu.dbg_pc !== 32'h0000_002e ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_002e ||
         cpu.r[0] !== 32'h1111_1111 || cpu.r[2] !== 32'h2222_2222 ||
         cpu.tkcw !== 32'h0000_e000 || cpu.trr !== 32'h0000_2000 ||
         {ram[16'h1001], ram[16'h1000]} !== 32'h0000_e000 ||
@@ -360,7 +359,7 @@ begin
         {ram[16'h1005], ram[16'h1004]} !== 32'h2222_2222) begin
         errors = errors + 1;
         $display("TASK ROUNDTRIP FAIL halt=%0d pc=%08x R0=%08x R2=%08x TKCW=%08x TR=%08x mem=%08x/%08x/%08x",
-                 cpu.dbg_halted, cpu.dbg_pc, cpu.r[0], cpu.r[2],
+                 cpu.halted, cpu.pc, cpu.r[0], cpu.r[2],
                  cpu.tkcw, cpu.trr,
                  {ram[16'h1001], ram[16'h1000]},
                  {ram[16'h1003], ram[16'h1002]},
@@ -411,8 +410,8 @@ initial begin
     repeat (4000) @(posedge clk);
     // The subroutine sets R30=0x1111; after RSR, main copies R30 to R0.
     // This exercises BSR/RSR return path and register file integrity.
-    $display("R0=%08x R30=%08x halted=%0d", cpu.r[0], cpu.r[30], cpu.dbg_halted);
-    if (!cpu.dbg_halted || cpu.r[0] != 32'h00001111) errors = errors + 1;
+    $display("R0=%08x R30=%08x halted=%0d", cpu.r[0], cpu.r[30], cpu.halted);
+    if (!cpu.halted || cpu.r[0] != 32'h00001111) errors = errors + 1;
     check_reserved(8'h6b, 8'h00);
     check_reserved(8'h7b, 8'h00);
     check_reserved(8'h58, 8'h03);

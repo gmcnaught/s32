@@ -43,7 +43,7 @@ module tb_core_lint;
         if (core.is_multi32 !== 1'b0)   $fatal(1, "System32 profile accepted Multi 32 mode");
         #1;
         if (core.rgb_b !== core.rgb_a)  $fatal(1, "System32 Screen B output does not mirror A");
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
         if (core.GAME_ONLY !== 1'b1) $fatal(1, "V25 profile pruning not enabled");
         if (core.cfg_has_v25 !== 1'b1) $fatal(1, "V25 profile omitted V25 hardware");
         $display("CORE V25 PROFILE LINT PASS");

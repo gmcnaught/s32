@@ -24,8 +24,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -90,11 +89,11 @@ initial begin
 
     repeat (8) @(posedge clk);
     rst = 0;
-    for (i = 0; i < 6000 && !cpu.dbg_halted; i = i + 1) @(posedge clk);
+    for (i = 0; i < 6000 && !cpu.halted; i = i + 1) @(posedge clk);
 
     $display("MULX[9000]=%08x_%08x  DIVX q[9008]=%08x r[900C]=%08x",
         rd32(32'h9004), rd32(32'h9000), rd32(32'h9008), rd32(32'h900C));
-    chk(cpu.dbg_halted, "HALT reached");
+    chk(cpu.halted, "HALT reached");
     chk(rd32(32'h9000) == 32'h0000_0000, "MULX mem low 32 = 0");
     chk(rd32(32'h9004) == 32'h0000_0001, "MULX mem high 32 = 1");
     chk(rd32(32'h9008) == 32'd14, "DIVX mem quotient = 14");

@@ -85,18 +85,18 @@ begin
     $fdisplay(fd, "sprite_control_width=%0d",
               harness.core.sprite.ctl[6][0] ? 416 : 320);
     $fdisplay(fd, "video_timing_width=%0d", harness.core.mode_416 ? 416 : 320);
-    $fdisplay(fd, "renderer_was_active=%0d", harness.core.debug_sprite_rendering);
+    $fdisplay(fd, "renderer_was_active=%0d", (harness.core.sprite.rs != 0));
     // Automatic 30 Hz mode renders only when this down-counter is zero.
     // Preserve it so post-processing can distinguish real render callbacks
     // from the intentionally skipped alternate frame.
     $fdisplay(fd, "render_count=%0d", harness.core.sprite.render_count);
-    $fdisplay(fd, "v60_pc=%08x", harness.core.v60.dbg_pc);
+    $fdisplay(fd, "v60_pc=%08x", harness.core.v60.pc);
     $fclose(fd);
     captures = captures + 1;
     $display("HOLO SPRITE CAPTURE frame=%0d target=%0d sprite_width=%0d video_width=%0d pc=%08x",
              frame_number, render_target,
              harness.core.sprite.ctl[6][0] ? 416 : 320,
-             harness.core.mode_416 ? 416 : 320, harness.core.v60.dbg_pc);
+             harness.core.mode_416 ? 416 : 320, harness.core.v60.pc);
 end
 endtask
 
@@ -109,7 +109,7 @@ always @(negedge harness.clk_ram) begin
         vblank_seen = 1'b1;
         if (!harness.rst && harness.cur_frame >= capture_first &&
             harness.cur_frame <= capture_last) begin
-            if (harness.core.debug_sprite_rendering)
+            if ((harness.core.sprite.rs != 0))
                 $fatal(1, "previous sprite pass still active at Holo capture frame %0d",
                        harness.cur_frame);
             dump_state(harness.cur_frame);

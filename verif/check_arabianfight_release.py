@@ -7,9 +7,9 @@ only). See PROFILE_CONTRACT.md and segas32v25.qsf's header for the split
 rationale. CPU Turbo remains removed from this profile so its V60 multicycle
 relaxation applies unconditionally (s32.sdc). This RBF is scoped to exactly
 ga2/arabfgt, so it carries S32_GAME_ONLY and S32_V60_NO_FP -- proven safe
-for these two games specifically. MISTER_DISABLE_SHADOWMASK remains a trim
-not carried over (a scaler/output feature loss, not resource-driven for
-this scope).
+for these two games specifically. MISTER_DISABLE_SHADOWMASK is enabled in
+both production profiles: the optional CRT post-process is outside the arcade
+video signal and its LUT/multiplier is not needed by either release.
 """
 
 from pathlib import Path
@@ -32,13 +32,17 @@ for assignment in (
     assert f"set_global_assignment -name {assignment}" in standard_qsf, \
         f"segas32v25.qsf is missing required Quartus setting {assignment}"
 for macro in ("S32_PROFILE_STANDARD=1", "S32_REAL_V25=1", "S32_V25_MLAB_FIFO=1",
-              "S32_RELEASE_MINIMAL=1", "S32_JT12_MLAB_SHIFTS=1",
+              "S32_JT12_MLAB_SHIFTS=1",
               "S32_GAME_ONLY=1", "S32_V60_NO_FP=1"):
     assert f'VERILOG_MACRO "{macro}"' in standard_qsf, \
         f"segas32v25.qsf is missing {macro}"
-for macro in ("S32_PROFILE_V25=1", "MISTER_DISABLE_SHADOWMASK=1", "S32_GAME_ONLY_STD=1"):
+for macro in ("S32_PROFILE_V25=1", "S32_GAME_ONLY_STD=1"):
     assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
         f"segas32v25.qsf unexpectedly forces {macro}"
+assert 'VERILOG_MACRO "MISTER_DISABLE_SHADOWMASK=1"' in standard_qsf, \
+    "segas32v25.qsf must compile out the optional HDMI shadow-mask stage"
+assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \
+    "segas32v25.qsf must not retain the retired debug/release macro"
 
 top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
 assert "active_board.v25_table ? 16'd32768 : 16'd21848" in top, \

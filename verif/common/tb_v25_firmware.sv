@@ -23,14 +23,6 @@ reg we = 1'b0;
 reg [11:1] addr = 11'd0;
 reg [7:0] wdata = 8'd0;
 wire [7:0] rdata;
-wire debug_cpu_ce;
-wire debug_io_seen;
-wire [15:0] debug_last_io_addr;
-wire debug_unmapped_seen;
-wire [19:0] debug_last_unmapped_addr;
-wire debug_first_fetch_valid;
-wire [63:0] debug_first_fetch_data;
-wire [15:3] debug_first_fetch_addr;
 wire rom_req;
 wire [15:3] rom_addr;
 reg [63:0] rom_data = 64'hffffffffffffffff;
@@ -40,15 +32,7 @@ s32_v25_cpu dut (
     .clk(clk), .clk_v25(clk_v25), .rst(rst), .enable(enable), .pause(1'b0), .table_sel(1'b0),
     .prg_wr(prg_wr), .prg_waddr(prg_waddr), .prg_wdata(prg_wdata),
     .rom_req(rom_req), .rom_addr(rom_addr), .rom_data(rom_data), .rom_ack(rom_ack),
-    .cs(cs), .we(we), .addr(addr), .wdata(wdata), .rdata(rdata),
-    .debug_cpu_clk(debug_cpu_ce),
-    .debug_io_seen(debug_io_seen),
-    .debug_last_io_addr(debug_last_io_addr),
-    .debug_unmapped_seen(debug_unmapped_seen),
-    .debug_last_unmapped_addr(debug_last_unmapped_addr),
-    .debug_first_fetch_valid(debug_first_fetch_valid),
-    .debug_first_fetch_data(debug_first_fetch_data),
-    .debug_first_fetch_addr(debug_first_fetch_addr)
+    .cs(cs), .we(we), .addr(addr), .wdata(wdata), .rdata(rdata)
 );
 
 reg [7:0] raw [0:65535];
@@ -213,7 +197,7 @@ initial begin
     ce_last_cycle = -1;
     for (cycles = 0; cycles < 200 && ce_last_cycle < 0; cycles = cycles + 1) begin
         @(negedge clk_v25);
-        if (debug_cpu_ce) begin
+        if (dut.v25_ce) begin
             ce_last_cycle = 0;
             ce_pulses = 1;
         end
@@ -224,7 +208,7 @@ initial begin
     end
     for (cycles = 1; cycles < 12081; cycles = cycles + 1) begin
         @(negedge clk_v25);
-        if (debug_cpu_ce) begin
+        if (dut.v25_ce) begin
             if (ce_last_cycle >= 0) begin
                 ce_gap = cycles - ce_last_cycle;
                 if (ce_gap != 2 && ce_gap != 3) begin
@@ -256,9 +240,6 @@ initial begin
     if (matched != 48) begin
         v60_read_byte(16'h0100, observed);
         $display("V25_FIRMWARE FAIL: wake mailbox matched %0d/48; byte100=%02x", matched, observed);
-        $display("V25_FIRMWARE trace: io_seen=%0d last_io=%04x unmapped=%0d last_mem=%05x",
-                 debug_io_seen, debug_last_io_addr,
-                 debug_unmapped_seen, debug_last_unmapped_addr);
         $fatal(1);
     end
 
@@ -305,36 +286,11 @@ initial begin
         $display("V25_FIRMWARE mailbox dumped to scratch/our_mbox.hex");
     end
 
-    // The V25 on-chip internal data area (256 B register-bank RAM at
-    // 0xFFE00-0xFFEFF + SFRs at 0xFFF00-0xFFFFF) is now implemented in
-    // s32_v25_cpu.sv, so the ga2 boot's PRC write (byte 0xFFFEB) and any
-    // register-bank/scratch accesses are serviced internally and no longer
-    // surface on the diagnostic bands.  A clean boot therefore shows NO io-band
-    // event and NO unmapped/IRAM event.  (Before the overlay this same firmware
-    // flagged PRC on the io band and would have flagged the IRAM band on
-    // hardware — see audit R25.)  MAME's GA2 trace performs no port I/O either.
-    if (debug_unmapped_seen) begin
-        $display("V25_FIRMWARE FAIL: unmapped/IRAM access after internal-area overlay last_mem=%05x",
-                 debug_last_unmapped_addr);
-        $fatal(1);
-    end
-    if (debug_io_seen) begin
-        $display("V25_FIRMWARE FAIL: unexpected port-I/O access io last_io=%04x (internal SFRs should be handled on-chip)",
-                 debug_last_io_addr);
-        $fatal(1);
-    end
-
     if (rom_reads == 0) begin
         $display("V25_FIRMWARE FAIL: external program ROM was never requested");
         $fatal(1);
     end
     $display("V25_FIRMWARE PASS: genuine GA2 firmware wrote wake-up, table, and stack state");
-    $display("V25_FIRMWARE trace: io_seen=%0d last_io=%04x unmapped=%0d last_mem=%05x",
-             debug_io_seen, debug_last_io_addr,
-             debug_unmapped_seen, debug_last_unmapped_addr);
-    $display("V25_FIRMWARE first_fetch: valid=%0d addr=%04x data=%016x",
-             debug_first_fetch_valid, {debug_first_fetch_addr, 3'b000},
-             debug_first_fetch_data);
     $finish;
 end
 

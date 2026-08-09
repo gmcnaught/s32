@@ -13,15 +13,12 @@ reg line_kick = 0;
 reg [8:0] next_line = 0;
 wire line_start, line_done, busy, lb_bank;
 wire [8:0] render_line;
-wire overrun_sticky;
-wire [15:0] overrun_count;
 
 s32_tile_line_scheduler scheduler (
     .clk(clk), .rst(rst), .line_kick(line_kick),
     .next_line(next_line), .line_done(line_done),
     .line_start(line_start), .render_line(render_line),
-    .lb_bank(lb_bank), .busy(busy),
-    .overrun_sticky(overrun_sticky), .overrun_count(overrun_count)
+    .lb_bank(lb_bank), .busy(busy)
 );
 
 // CPU-domain sources and the core's per-line snapshots.
@@ -179,8 +176,8 @@ initial begin
             fail("stalled tile transaction completed without an ACK");
         check_held;
     end
-    if (!overrun_sticky || overrun_count !== 16'd1 || starts != 1)
-        fail("stalled scanline deadline accounting was incorrect");
+    if (starts != 1)
+        fail("stalled scanline accepted a second line");
 
     // Release SDRAM with repeatable three-cycle backpressure and wait for the
     // real tilemap FSM to pulse completion.
@@ -206,8 +203,6 @@ initial begin
         fail("real line_done plus boundary did not launch line 6");
     if (line_done)
         fail("tilemap line_done was not a one-cycle pulse");
-    if (overrun_count !== 16'd1)
-        fail("done plus boundary was miscounted as an overrun");
     line_kick = 1'b0;
     @(posedge clk);
     @(negedge clk);

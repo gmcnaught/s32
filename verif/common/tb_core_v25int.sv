@@ -120,7 +120,6 @@ endgenerate
 reg fbe_ack;
 always @(posedge clk_ram) fbe_ack <= fbe_req;
 
-wire dbg_halted_w;   // s32_core debug_halted port (Verilator-safe observation)
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram), .clk_v25(clk_v25),
@@ -149,8 +148,7 @@ s32_core core (
     .adc_ch(adc_a), .trk_dv(tdv_a), .trk_dx(tdx_a), .trk_dy(tdy_a), .trk_btn(tbt_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
     .rgb_a(), .rgb_b(), .ce_pix(), .hs(), .vs(), .hb(), .vb(),
-    .audio_l(), .audio_r(), .out_lamps(),
-    .debug_pc(), .debug_halted(dbg_halted_w), .debug_status(), .debug_first_rom(), .debug_hcnt()
+    .audio_l(), .audio_r(), .out_lamps()
 );
 
 // -------------------------------------------------------------------------
@@ -211,7 +209,7 @@ integer cyc = 0;
 integer halt_cycle = -1;
 always @(posedge clk_sys) if (!rst) begin
     cyc <= cyc + 1;
-    if (dbg_halted_w && halt_cycle < 0) halt_cycle <= cyc;
+    if (core.v60.halted && halt_cycle < 0) halt_cycle <= cyc;
 end
 
 initial begin
@@ -220,12 +218,12 @@ initial begin
     // Run long enough for the V25 (10 MHz derived) to boot its firmware and for
     // the V60 poll loops to observe the wake bytes.
     repeat (4_000_000) @(posedge clk_sys);
-    $display("V25_INT p5_reads=%0d halted=%0d halt_cycle=%0d", p5_reads, dbg_halted_w, halt_cycle);
+    $display("V25_INT p5_reads=%0d halted=%0d halt_cycle=%0d", p5_reads, core.v60.halted, halt_cycle);
     // p5_reads>0  : the real V25 fetched its program through s32_core's SDRAM p5.
     // halted+late : both V60 poll loops exited, i.e. the firmware's mailbox writes
     //               reached the V60 over the real core bus (not a fall-through).
     // Exact wake-byte fidelity is locked by tb_v25_firmware (isolation).
-    if (p5_reads > 0 && dbg_halted_w && halt_cycle > 2000)
+    if (p5_reads > 0 && core.v60.halted && halt_cycle > 2000)
         $display("V25 INTEGRATION PASS");
     else
         $display("V25 INTEGRATION FAIL");

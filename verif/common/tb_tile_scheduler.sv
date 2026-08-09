@@ -20,15 +20,12 @@ wire       line_start;
 wire [8:0] render_line;
 wire       lb_bank;
 wire       busy;
-wire       overrun_sticky;
-wire [15:0] overrun_count;
 
 s32_tile_line_scheduler dut (
     .clk(clk), .rst(rst),
     .line_kick(line_kick), .next_line(next_line),
     .line_done(line_done), .line_start(line_start),
-    .render_line(render_line), .lb_bank(lb_bank), .busy(busy),
-    .overrun_sticky(overrun_sticky), .overrun_count(overrun_count)
+    .render_line(render_line), .lb_bank(lb_bank), .busy(busy)
 );
 
 // This is the same capture relationship used by s32_core: source controls
@@ -106,8 +103,6 @@ initial begin
     @(posedge clk);
     @(negedge clk);
     hold_check(9'd5, 1'b1, 16'ha55a);
-    if (!overrun_sticky || overrun_count !== 16'd1)
-        fail("missed deadline telemetry was not recorded once");
     if (start_count != 1)
         fail("busy renderer accepted a second line");
 
@@ -148,8 +143,6 @@ initial begin
     @(negedge clk);
     if (!line_start || !busy || render_line !== 9'd7 || lb_bank !== 1'b1)
         fail("simultaneous done/boundary was not accepted");
-    if (overrun_count !== 16'd1)
-        fail("simultaneous done/boundary was counted as an overrun");
     line_done = 1'b0;
     line_kick = 1'b0;
     @(posedge clk);

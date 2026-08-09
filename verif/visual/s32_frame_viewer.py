@@ -45,6 +45,7 @@ last_size = -1
 last_mtime = -1.0
 observed_size = -1
 observed_mtime = -1.0
+observed_path: Path | None = None
 stable_polls = 0
 change_count = 0
 last_checksum: str | None = None
@@ -71,7 +72,7 @@ def publish(state: str, frame: int = -1, checksum: str | None = None) -> None:
 
 
 def poll() -> None:
-    global last_path, last_size, last_mtime, observed_size, observed_mtime
+    global last_path, last_size, last_mtime, observed_size, observed_mtime, observed_path
     global stable_polls, change_count, last_checksum, display_frame, live_frame
     candidates = []
     if args.live_file:
@@ -89,9 +90,10 @@ def poll() -> None:
         newest = max(candidates, key=frame_number)
         size = newest.stat().st_size
         mtime = newest.stat().st_mtime
-        if newest == last_path and size == observed_size and mtime == observed_mtime:
+        if newest == observed_path and size == observed_size and mtime == observed_mtime:
             stable_polls += 1
         else:
+            observed_path = newest
             observed_size = size
             observed_mtime = mtime
             stable_polls = 0
@@ -144,6 +146,7 @@ def key_bit(event: tk.Event) -> int | None:
         "Left": 0x80, "Right": 0x40, "Up": 0x20, "Down": 0x10,
         "z": 0x01, "x": 0x02, "c": 0x04,
         "a": 0x01, "s": 0x02, "d": 0x04,
+        "q": 0x400, "e": 0x800,
     }.get(event.keysym)
 
 

@@ -75,10 +75,7 @@ s32_sprite #(.VERIFY_SROM(1'b1)) dut (
     .clk(clk), .rst(rst), .is_multi32(1'b0), .retain_previous(1'b0),
     .verify_srom(1'b1),
     .srom_bank_mask(sprite_bank_mask[1:0]),
-    .present(vblank), .vblank(vblank), .rendering(rendering),
-    .debug_first_rom_desc(), .debug_first_rom_valid(),
-    .debug_last_desc(), .debug_last_draw_desc(),
-    .debug_activity(), .debug_state(), .debug_counts(),
+    .present(vblank), .vblank(vblank),
     .ctl_we(ctl_we), .ctl_addr(ctl_addr), .ctl_wdata(ctl_wdata),
     .ctl_rdata(), .ctl_raddr(3'd0),
     .slist_addr(slist_addr), .slist_data(slist_q),
@@ -93,6 +90,7 @@ s32_sprite #(.VERIFY_SROM(1'b1)) dut (
     .fb_er_y(fb_er_y), .fb_er_ack(fb_er_ack),
     .disp_buf(disp_buf), .scan_buf(), .scan_buf_prev(), .scan_dual()
 );
+assign rendering = dut.rs != 0;
 
 integer errors = 0;
 integer cycles = 0;

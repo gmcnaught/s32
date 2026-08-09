@@ -24,16 +24,13 @@ wire        m_req, m_we, m_ack;
 wire [23:1] m_addr;
 wire [15:0] m_wdata, m_rdata;
 wire [1:0]  m_be;
-wire [31:0] dbg_pc;
-wire        dbg_halted;
 
 s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .clk(clk), .ce(1'b1), .rst(rst),
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(dbg_pc), .dbg_halted(dbg_halted)
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
@@ -82,17 +79,17 @@ begin
 
     rst = 1'b0;
     cycles = 0;
-    while (!dbg_halted && cycles < 2000) begin
+    while (!cpu.halted && cycles < 2000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
 
-    if (!dbg_halted || dbg_pc !== 32'h0000_0100 ||
+    if (!cpu.halted || cpu.pc !== 32'h0000_0100 ||
         cpu.r[31] !== 32'h0000_7ff8 ||
         {ram[16'h3ffd], ram[16'h3ffc]} !== 32'h0000_0000) begin
         errors = errors + 1;
         $display("NO-FP RESERVED %02x FAIL halt=%0d pc=%08x sp=%08x saved_pc=%08x",
-                 op, dbg_halted, dbg_pc, cpu.r[31],
+                 op, cpu.halted, cpu.pc, cpu.r[31],
                  {ram[16'h3ffd], ram[16'h3ffc]});
     end
     else $display("NO-FP RESERVED %02x PASS cycles=%0d", op, cycles);

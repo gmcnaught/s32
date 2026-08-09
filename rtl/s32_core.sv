@@ -8,15 +8,15 @@ import s32_pkg::*;
 
 // Fixed-clock dedicated revisions can use the single-port synchronous V60
 // cache. Keep this preprocessing choice local to this compilation unit.
-// Both dedicated profiles (segas32v25: ga2/arabfgt; segas32: Sonic and
-// future non-V25 games) use it: fixed CE spacing (no CPU Turbo in either
+// Both production profiles (segas32v25 and the descriptor-driven segas32
+// family) use it: fixed CE spacing (no CPU Turbo in either
 // profile) is common to both, and the arbiter feeding this cache's SDRAM p0
 // port grants a real protection-ROM-read request instead of the old
 // hardwired prot_rom_grant=0 (2026-08-06, see the s32_ga_rom_cache
 // instantiation below) -- the structural blocker that used to make this
 // cache unsafe under a game like Sonic (PROT_SONIC does drive
 // prot_rom_grant) is fixed, not just avoided by scope.
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
 `define S32_AREA_ROM_CACHE
 `elsif S32_GAME_ONLY_STD
 `define S32_AREA_ROM_CACHE
@@ -136,40 +136,7 @@ module s32_core #(
 
     output signed [15:0] audio_l,
     output signed [15:0] audio_r,
-
-    output      [7:0] out_lamps,    // misc outputs (coin counters etc)
-
-    // Hardware bring-up visibility. These signals are selected by the
-    // top-level Debug Video option and do not alter the emulated board.
-    output     [31:0] debug_pc,
-    output            debug_halted,
-    output     [23:0] debug_status,
-    output     [15:0] debug_first_rom,
-    output      [8:0] debug_hcnt,
-    output      [8:0] debug_vcnt,
-    output    [127:0] debug_sprite_desc,
-    output            debug_sprite_desc_valid,
-    output    [127:0] debug_sprite_last_desc,
-    output    [127:0] debug_sprite_last_draw_desc,
-    output     [23:0] debug_sprite_activity,
-    output     [31:0] debug_sprite_state,
-    output     [63:0] debug_sprite_counts,
-    output            debug_sprite_rendering,
-    output     [47:0] debug_sprram_cpu,
-    output     [47:0] debug_pal_rd,    // clk_sys palette shadow {0x410,0x200,0x000}
-    output     [23:0] debug_fb_underrun,// PF-6: {sticky?0xff:0, underrun_count[15:0]}
-    // In-game debug OSD: sprite pipeline health (s32_sprite_health_debug).
-    output     [31:0] debug_spr_list,    // {list_odd[15:0], list_even[15:0]}
-    output     [31:0] debug_spr_draw,    // {draw_odd[15:0], draw_even[15:0]}
-    output     [31:0] debug_spr_sprwr,   // {sprwr_odd[15:0], sprwr_even[15:0]}
-    output     [31:0] debug_spr_latency, // {w1lat[15:0], w0lat[15:0]} clk_ram ticks since vblank
-    output     [31:0] debug_spr_health,  // {frames_since_publish,overrun_count,render_pass_count,{7'b0,collision_sticky}}
-    output     [15:0] debug_spr_publish, // saturating publish-event count
-    output     [23:0] debug_tile_overrun,// PF-6: {sticky?0xff:0, overrun_count[15:0]}
-    output     [15:0] debug_mixer_sprpx, // saturating opaque-sprite-pixel count reaching the mixer
-    output     [15:0] debug_cam,        // spidman world-camera {page, display_lo}
-    output     [23:0] debug_v25,        // V25 bring-up: {ce[3:0],wake,mb!=0,unm,io,rd_cnt,mb_last}
-    output     [89:0] debug_v25_img     // {sweep_done, first_valid, hash[23:0], first_line[63:0]}
+    output      [7:0] out_lamps
 );
 
 // 2026-08-06: this repository ships two dedicated-game profiles sharing
@@ -179,20 +146,16 @@ module s32_core #(
 // the trackball and generic protection HLE live (GAME_ONLY_STD) --
 // segas32v25's games are both PROT_NONE and have no trackball board.
 // S32_GAME_ONLY_STD implies GAME_ONLY; a profile never needs to define both.
-`ifdef S32_PROFILE_V25
-localparam V25_GAME_ONLY = 1'b1;
+`ifdef S32_REAL_V25
 localparam GAME_ONLY     = 1'b1;
 localparam GAME_ONLY_STD = 1'b0;
 `elsif S32_GAME_ONLY_STD
-localparam V25_GAME_ONLY = 1'b0;
 localparam GAME_ONLY     = 1'b1;
 localparam GAME_ONLY_STD = 1'b1;
 `elsif S32_GAME_ONLY
-localparam V25_GAME_ONLY = 1'b1;
 localparam GAME_ONLY     = 1'b1;
 localparam GAME_ONLY_STD = 1'b0;
 `else
-localparam V25_GAME_ONLY = 1'b0;
 localparam GAME_ONLY     = 1'b0;
 localparam GAME_ONLY_STD = 1'b0;
 `endif
@@ -201,13 +164,14 @@ localparam GAME_ONLY_STD = 1'b0;
 // loaded and validated, but fixing these board straps at elaboration lets
 // Quartus remove unrelated runtime-select muxes. Other profiles remain
 // descriptor-led.
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
 wire       cfg_multi32           = 1'b0;
 wire       cfg_has_v25           = 1'b1;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = 1'b0;
 wire       cfg_has_track         = 1'b0;
 wire       cfg_has_ppi           = 1'b1;
+wire       cfg_has_dsp_hle       = 1'b0;
 wire       cfg_dual_pcb          = 1'b0;
 wire       cfg_dual_comm_ff      = 1'b0;
 wire       cfg_comm_link_hle     = 1'b0;
@@ -217,11 +181,14 @@ wire [1:0] cfg_sprite_bank_mask  = 2'b11;
 wire       cfg_flip_y            = 1'b0;
 `elsif S32_PROFILE_STANDARD
 wire       cfg_multi32           = 1'b0;
+// Standard profiles never compile the real CPU/QIP. These descriptor bits
+// select only the lightweight s32_v25 mailbox HLE below.
 wire       cfg_has_v25           = board.has_v25;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
+wire       cfg_has_dsp_hle       = board.has_dsp_hle;
 wire       cfg_dual_pcb          = board.dual_pcb;
 wire       cfg_dual_comm_ff      = board.dual_comm_ff;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
@@ -236,6 +203,7 @@ wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
+wire       cfg_has_dsp_hle       = board.has_dsp_hle;
 wire       cfg_dual_pcb          = board.dual_pcb;
 wire       cfg_dual_comm_ff      = board.dual_comm_ff;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
@@ -267,8 +235,6 @@ wire        wr_stb;
 
 wire        irq_n;
 wire [7:0]  irq_vector;
-wire [31:0] v60_debug_pc;
-wire        v60_debug_halted;
 
 // dedicated wide instruction-fetch port (FAST_IFETCH): the prefetch reads whole
 // 8-byte ROM icache lines here at clk_sys latency, bypassing the ce-gated 16-bit
@@ -306,12 +272,9 @@ s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAM
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
-    .nmi_n(1'b1),
-    .dbg_pc(v60_debug_pc), .dbg_halted(v60_debug_halted)
+    .nmi_n(1'b1)
 );
 
-assign debug_pc     = v60_debug_pc;
-assign debug_halted = v60_debug_halted;
 
 s32_v60_bus vbus (
     .clk(clk_sys), .ce(ce_cpu), .rst(rst),
@@ -411,24 +374,6 @@ s32_big_dpram #(
 always @(posedge clk_sys)
     pr_ack <= pr_req;
 
-`ifndef S32_RELEASE_MINIMAL
-// Venom/Scorpion trigger diagnostic (spidman): snoop the game's world-camera
-// variable at 0x208032 (work-RAM word 0x4019).  Low byte 0x208032 sources the
-// display scroll (correct on hardware); high byte 0x208033 is the page counter
-// that scripted events gate on.  Capturing the last-written bytes lets a debug
-// view show whether the core's page runs ahead of the display (the suspected
-// low->high carry divergence).  Snoop only; no effect on operation.
-reg [15:0] dbg_cam;
-initial dbg_cam = 16'h0000;
-always @(posedge clk_sys)
-    if (m_req && m_we && sel_wram && wram_a == 'h4019) begin
-        if (m_be[0]) dbg_cam[7:0]  <= m_wdata[7:0];   // 0x208032 (display low)
-        if (m_be[1]) dbg_cam[15:8] <= m_wdata[15:8];  // 0x208033 (page/high)
-    end
-assign debug_cam = dbg_cam;
-`else
-assign debug_cam = 16'h0000;
-`endif
 
 // ---------------------------------------------------------------------------
 // video subsystem
@@ -481,36 +426,12 @@ s32_big_dpram #(
     .wren_b(1'b0), .q_b(sprlist_q)
 );
 
-`ifndef S32_RELEASE_MINIMAL
-// Record completed CPU writes, not every cycle of a held V60 bus request.
-// Packed output = {count, seen/BE/pad, last word address, last data}.
-wire       debug_sprram_seen;
-wire [7:0] debug_sprram_count;
-wire [15:0] debug_sprram_addr;
-wire [15:0] debug_sprram_data;
-wire [1:0] debug_sprram_be;
-s32_sprite_write_debug sprite_write_debug (
-    .clk(clk_sys), .rst(rst),
-    .wr_stb(wr_stb && m_we && sel_sprram),
-    .wr_addr(A[16:1]), .wr_data(m_wdata), .wr_be(m_be),
-    .seen(debug_sprram_seen), .count(debug_sprram_count),
-    .last_addr(debug_sprram_addr), .last_data(debug_sprram_data),
-    .last_be(debug_sprram_be)
-);
-assign debug_sprram_cpu = {debug_sprram_count,
-                           debug_sprram_seen, debug_sprram_be, 5'b00000,
-                           debug_sprram_addr, debug_sprram_data};
-`else
-assign debug_sprram_cpu = 48'h000000000000;
-`endif
 
 // CRT timing
 wire mode_416;
 wire mode_416_active;
 wire vbl_start, vbl_end;
 wire [8:0] hcnt, vcnt;
-assign debug_hcnt = hcnt;
-assign debug_vcnt = vcnt;
 s32_video crt (
     .clk(clk_sys), .rst(video_rst), .mode_416(mode_416),
     .mode_active(mode_416_active),
@@ -529,8 +450,6 @@ wire [8:0]  render_line;
 wire        tm_lb_bank;
 wire        tm_line_done;
 wire        tm_line_busy;
-wire        tm_line_overrun_sticky;
-wire [15:0] tm_line_overrun_count;
 wire [7:0]  io0_ph;
 // Snapshot of CPU-domain video controls used for one complete rendered line.
 // These registers are captured at the line-start boundary below.
@@ -616,9 +535,7 @@ s32_tile_line_scheduler tile_line_scheduler (
     .clk(clk_ram), .rst(rst),
     .line_kick(tm_render_kick), .next_line(tm_next_line),
     .line_done(tm_line_done), .line_start(line_start_r),
-    .render_line(render_line), .lb_bank(tm_lb_bank), .busy(tm_line_busy),
-    .overrun_sticky(tm_line_overrun_sticky),
-    .overrun_count(tm_line_overrun_count)
+    .render_line(render_line), .lb_bank(tm_lb_bank), .busy(tm_line_busy)
 );
 
 always @(posedge clk_ram) begin
@@ -709,17 +626,8 @@ wire [1:0] disp_buf;
 wire [1:0] spr_scan_buf;
 wire [1:0] spr_scan_buf_prev;
 wire       spr_scan_dual;
-// In-game debug OSD: sprite pipeline health telemetry (see s32_sprite.sv's
-// s32_sprite_health_debug submodule for field definitions).
-wire [15:0] spr_dbg_list_even, spr_dbg_list_odd;
-wire [15:0] spr_dbg_draw_even, spr_dbg_draw_odd;
-wire  [7:0] spr_dbg_render_pass_count, spr_dbg_overrun_count;
-wire [15:0] spr_dbg_w0lat, spr_dbg_w1lat;
-wire [15:0] spr_dbg_sprwr_even, spr_dbg_sprwr_odd;
-wire  [7:0] spr_dbg_frames_since_publish;
-wire        spr_dbg_collision_sticky;
 s32_sprite #(
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
     .VERIFY_SROM(1'b1)
 `else
     .VERIFY_SROM(1'b0)
@@ -734,14 +642,7 @@ s32_sprite #(
     // Publish completed physical frames at VBLANK start, before the line-0
     // prefetch. MAME schedules logical erase/swap/render just after VBLANK
     // ends; GA2 builds its next list during VBLANK, so that trigger stays late.
-    .present(vbl_start), .vblank(vbl_end), .rendering(debug_sprite_rendering),
-    .debug_first_rom_desc(debug_sprite_desc),
-    .debug_first_rom_valid(debug_sprite_desc_valid),
-    .debug_last_desc(debug_sprite_last_desc),
-    .debug_last_draw_desc(debug_sprite_last_draw_desc),
-    .debug_activity(debug_sprite_activity),
-    .debug_state(debug_sprite_state),
-    .debug_counts(debug_sprite_counts),
+    .present(vbl_start), .vblank(vbl_end),
     .ctl_we(wr_stb && m_we && sel_sprctl && m_be[0]),
     .ctl_addr(A[3:1]), .ctl_wdata(m_wdata[7:0]),
     .ctl_rdata(sprctl_q), .ctl_raddr(A[3:1]),
@@ -755,24 +656,8 @@ s32_sprite #(
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf), .fb_er_y(fb_er_y),
     .fb_er_ack(fb_er_ack),
     .disp_buf(disp_buf), .scan_buf(spr_scan_buf),
-    .scan_buf_prev(spr_scan_buf_prev), .scan_dual(spr_scan_dual),
-    .debug_list_even(spr_dbg_list_even), .debug_list_odd(spr_dbg_list_odd),
-    .debug_draw_even(spr_dbg_draw_even), .debug_draw_odd(spr_dbg_draw_odd),
-    .debug_render_pass_count(spr_dbg_render_pass_count),
-    .debug_overrun_count(spr_dbg_overrun_count),
-    .debug_w0lat(spr_dbg_w0lat), .debug_w1lat(spr_dbg_w1lat),
-    .debug_sprwr_even(spr_dbg_sprwr_even), .debug_sprwr_odd(spr_dbg_sprwr_odd),
-    .debug_publish_count(debug_spr_publish),
-    .debug_frames_since_publish(spr_dbg_frames_since_publish),
-    .debug_buffer_collision_sticky(spr_dbg_collision_sticky),
-    .dbg_sprram_wr(wr_stb && m_we && sel_sprram)
+    .scan_buf_prev(spr_scan_buf_prev), .scan_dual(spr_scan_dual)
 );
-assign debug_spr_list    = {spr_dbg_list_odd, spr_dbg_list_even};
-assign debug_spr_draw    = {spr_dbg_draw_odd, spr_dbg_draw_even};
-assign debug_spr_sprwr   = {spr_dbg_sprwr_odd, spr_dbg_sprwr_even};
-assign debug_spr_latency = {spr_dbg_w1lat, spr_dbg_w0lat};
-assign debug_spr_health  = {spr_dbg_frames_since_publish, spr_dbg_overrun_count,
-                             spr_dbg_render_pass_count, 7'b0, spr_dbg_collision_sticky};
 assign sdr_p2_addr[24] = 1'b1;   // sprites region base 0x1000000
 
 // TM-1: CRT/tilemap screen-width authority is VRAM $1FF00 bit 15, matching
@@ -793,20 +678,6 @@ reg [1:0] fb_rd_buf_r;
 reg [1:0] fb_rd_buf_alt_r;
 reg       fb_rd_dual_r;
 reg [7:0] fb_rd_y_r;
-// Qualification telemetry: a line request still outstanding when its visible
-// scanline starts means the mixer is consuming stale sprite data.  Keep this
-// synthesizable and hierarchically visible without burdening the release I/O.
-reg       fb_rd_underrun_sticky;
-reg [15:0] fb_rd_underrun_count;
-reg       fb_rd_deadline_seen;
-// PF-6: surface the sprite line-fetch overrun telemetry for an OSD debug view.
-// R = sticky "ever underran" flag, G:B = saturating underrun count.
-assign debug_fb_underrun = {fb_rd_underrun_sticky ? 8'hff : 8'h00, fb_rd_underrun_count};
-// PF-6 (the other half): tm_line_overrun was already computed by
-// s32_tile_line_scheduler but never left s32_core before now -- a mid-line
-// tile-fetch bandwidth exhaustion was invisible on real hardware. Same
-// packing convention as debug_fb_underrun above.
-assign debug_tile_overrun = {tm_line_overrun_sticky ? 8'hff : 8'h00, tm_line_overrun_count};
 // Prefetch only lines that will actually display: kicks during vcnt 0-222
 // fetch lines 1-223 and vcnt 261 fetches next frame's line 0.  The former
 // ungated kick also ran through the 37 vblank lines, fetching nonexistent
@@ -814,7 +685,6 @@ assign debug_tile_overrun = {tm_line_overrun_sticky ? 8'hff : 8'h00, tm_line_ove
 // rationale as the TM-5 tilemap vblank suppression).
 wire fb_rd_kick = ce_pix && hcnt == 9'd16 &&
                   (vcnt < 9'd223 || vcnt == 9'd261);
-wire fb_rd_deadline = ce_pix && hcnt == 9'd0 && vcnt < 9'd224;
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;
@@ -822,21 +692,8 @@ always @(posedge clk_ram) begin
         fb_rd_buf_alt_r <= 2'd0;
         fb_rd_dual_r <= 1'b0;
         fb_rd_y_r   <= 8'd0;
-        fb_rd_underrun_sticky <= 1'b0;
-        fb_rd_underrun_count <= 16'd0;
-        fb_rd_deadline_seen <= 1'b0;
     end
     else begin
-        if (!fb_rd_deadline) fb_rd_deadline_seen <= 1'b0;
-        else if (!fb_rd_deadline_seen) begin
-            fb_rd_deadline_seen <= 1'b1;
-            if (fb_rd_req_r && !fb_rd_ack) begin
-                fb_rd_underrun_sticky <= 1'b1;
-                if (~&fb_rd_underrun_count)
-                    fb_rd_underrun_count <= fb_rd_underrun_count + 1'd1;
-            end
-        end
-
         if (fb_rd_req_r) begin
             if (fb_rd_ack) fb_rd_req_r <= 1'b0;
         end
@@ -871,7 +728,7 @@ assign fb_rd_x   = hcnt;
 // item; v1 shares screen A's fetched line so B's tilemaps/palette/mixer are
 // nonetheless fully independent (the valuable part of B7).
 wire [15:0] fb_rd_pix_b = fb_rd_pix;
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
 `define S32_MIX_PIX_PIPE
 `elsif S32_GAME_ONLY_STD
 `define S32_MIX_PIX_PIPE
@@ -899,7 +756,6 @@ wire [15:0] fb_rd_pix_mix = fb_rd_pix;
 wire  [8:0] mix_disp_x    = mix_disp_x_cdc;
 `endif
 wire [15:0] pal0_cpu_q, pal1_cpu_q;
-wire [47:0] dbg_pal0_entries;
 wire [13:0] mix0_pal_addr, mix1_pal_addr;
 wire [15:0] mix0_pal_q, mix1_pal_q;
 wire [15:0] mix0_q, mix1_q;
@@ -925,10 +781,8 @@ s32_palette pal0 (
     .cpu_we(m_req && m_we && is_pal0),
     .cpu_addr(A[15:1]), .cpu_wdata(m_wdata), .cpu_be(m_be),
     .cpu_rdata(pal0_cpu_q), .mixer_r4e(mix0_r4e),
-    .mix_addr(mix0_pal_addr), .mix_data(mix0_pal_q),
-    .dbg_entries(dbg_pal0_entries)
+    .mix_addr(mix0_pal_addr), .mix_data(mix0_pal_q)
 );
-assign debug_pal_rd = dbg_pal0_entries;
 
 s32_mixer mix0 (
     .clk(clk_ram), .rst(rst),
@@ -942,8 +796,7 @@ s32_mixer mix0 (
     .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),
     .spr_pix(fb_rd_pix_mix),
     .pal_addr(mix0_pal_addr), .pal_data(mix0_pal_q),
-    .rgb(rgb_a),
-    .debug_sprpx(debug_mixer_sprpx)
+    .rgb(rgb_a)
 );
 
 generate
@@ -967,8 +820,7 @@ generate
             .cpu_we(m_req && m_we && is_pal1),
             .cpu_addr(A[15:1]), .cpu_wdata(m_wdata), .cpu_be(m_be),
             .cpu_rdata(pal1_cpu_q), .mixer_r4e(mix1_r4e),
-            .mix_addr(mix1_pal_addr), .mix_data(mix1_pal_q),
-            .dbg_entries()   // Multi 32 screen B not used by the holo diagnostic
+            .mix_addr(mix1_pal_addr), .mix_data(mix1_pal_q)
         );
         s32_mixer mix1 (
             .clk(clk_ram), .rst(rst),
@@ -982,8 +834,7 @@ generate
             .px_nbg3(mix_px_nbg3), .px_bmp(mix_px_bmp),
             .spr_pix(fb_rd_pix_b),
             .pal_addr(mix1_pal_addr), .pal_data(mix1_pal_q),
-            .rgb(rgb_b),
-            .debug_sprpx()   // Multi 32 screen B not used by the holo diagnostic
+            .rgb(rgb_b)
         );
     end
 endgenerate
@@ -1032,6 +883,11 @@ assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] + {3'b000, mpcm_ba[21:1]};
 // below, and the rest of the 0x80xxxx page reads link-not-connected (0xFFFF).
 // ---------------------------------------------------------------------------
 wire       sel_comm_ram = sel_comm && (A[15:12] == 4'h0);
+`ifdef S32_REAL_V25
+wire [7:0]  comm_q = 8'h00;
+wire        comm_cn = 1'b0;
+wire        comm_fg = 1'b0;
+`else
 reg [7:0]  comm_ram [0:2047];
 reg [7:0]  comm_q;
 reg        comm_cn;
@@ -1122,10 +978,6 @@ always @(posedge clk_sys) begin
             comm_link_timer <= comm_link_timer - 16'd1;
     end
 end
-`ifdef SIMULATION
-function automatic [7:0] comm_peek(input [10:0] addr);
-    comm_peek = comm_ram[addr];
-endfunction
 `endif
 
 // ---------------------------------------------------------------------------
@@ -1181,22 +1033,33 @@ wire sel_adc   = sel_ioex && (A[5:3] == 3'b010) && cfg_has_adc;
 wire sel_track = sel_ioex && (A[5:3] <= 3'b010) && cfg_has_track;
 wire sel_ppi   = sel_ioex && (A[5:3] == 3'b100) && cfg_has_ppi;
 genvar t;                         // declare outside the generate-for (Quartus 17.0)
-localparam TRACKBALL_HW = GAME_ONLY_STD || !GAME_ONLY;
 generate
-for (t = 0; t < 3; t = t + 1) begin : tracks
-    s32_upd4701 #(.ENABLE(TRACKBALL_HW)) upd (
-        .clk(clk_sys), .rst(rst),
-        .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
-        .cs(m_req && sel_ioex && m_be[0] &&
-            cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
-        .we(m_we), .addr(A[2:1]),
-        .rdata(trk_q[t]), .buttons(trk_btn[t])
-    );
+`ifdef S32_REAL_V25
+begin : g_no_v25_trackball
+    assign trk_q[0] = 8'hff;
+    assign trk_q[1] = 8'hff;
+    assign trk_q[2] = 8'hff;
 end
+`else
+begin : g_trackball
+    for (t = 0; t < 3; t = t + 1) begin : tracks
+        s32_upd4701 upd (
+            .clk(clk_sys), .rst(rst),
+            .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
+            .cs(m_req && sel_ioex && m_be[0] &&
+                cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
+            .we(m_we), .addr(A[2:1]),
+            .rdata(trk_q[t]), .buttons(trk_btn[t])
+        );
+    end
+end
+`endif
 endgenerate
 generate
-    if (GAME_ONLY_STD || GAME_ONLY) begin : g_no_adc
-        // Neither dedicated production profile has an MSM6253 ADC board.
+    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_adc
+        // Only the real-V25 dedicated shape has no ADC board. The standard
+        // dedicated shape retains the ADC because Slip Stream selects it via
+        // the runtime board descriptor; non-analog games do not select it.
         assign adc_bit = 1'b1;
     end
     else begin : g_extended_analog
@@ -1206,7 +1069,13 @@ generate
         reg [2:0] analog_bank = 3'd0;
         s32_msm6253 adc (
             .clk(clk_sys), .rst(rst),
-            .cs(m_req && sel_adc && m_be[0]), // 0xC00050-57
+            // The core holds m_req across the registered read wait.  Pulse
+            // the converter only when that transaction is accepted: rmux
+            // first captures the current D7, then this one-shot advances the
+            // serial shifter.  Driving CS from raw m_req shifted 0x80 to 0x00
+            // one cycle before rmux sampled it, so Slip Stream saw its neutral
+            // wheel as full-left.
+            .cs(wr_stb && sel_adc && m_be[0]), // 0xC00050-57
             .we(m_we), .addr(A[2:1]),
             .dout_bit(adc_bit),
             .an0(adc_ch[{analog_bank[0], 2'd0}]), .an1(adc_ch[{analog_bank[0], 2'd1}]),
@@ -1247,7 +1116,7 @@ s32_intc intc (
 // ---------------------------------------------------------------------------
 wire        br_trap;
 wire [15:0] br_trap_q;
-wire [15:0] dual_q;
+wire [15:0] dsp_q, dual_q;
 wire        prot_rom_req;
 wire [23:0] prot_rom_addr;
 wire        prot_rom_ack;
@@ -1259,7 +1128,20 @@ wire [23:0] br_rom_addr;
 // PROT_JLEAGUE, PROT_DARKEDGE, PROT_F1LAP): live for segas32.qsf's scope
 // (GAME_ONLY_STD -- Sonic uses PROT_SONIC), unreachable for segas32v25's
 // ga2/arabfgt (both PROT_NONE, no generic protection board at all).
- s32_prot_hle #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) prot (
+generate
+`ifdef S32_REAL_V25
+    begin : g_no_generic_prot
+        assign pr_req       = 1'b0;
+        assign pr_we        = 1'b0;
+        assign pr_addr      = 16'h0000;
+        assign pr_wdata     = 16'h0000;
+        assign pr_be        = 2'b00;
+        assign prot_rom_req = 1'b0;
+        assign prot_rom_addr = 24'h000000;
+    end
+`else
+    begin : g_generic_prot
+        s32_prot_hle #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) prot (
             .clk(clk_sys), .rst(rst), .prot_sel(cfg_prot_sel),
             .cpu_wr(m_req && m_we && (sel_wram || sel_prot_a)),
             .cpu_addr(A), .cpu_wdata(m_wdata),
@@ -1270,13 +1152,30 @@ wire [23:0] br_rom_addr;
             .rom_req(prot_rom_req), .rom_addr(prot_rom_addr),
             .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
         );
+    end
+`endif
+endgenerate
 
-// Burning Rival string-copy responder: no game in either dedicated GAME_ONLY
-// shape uses it (ga2/arabfgt are PROT_NONE; Sonic is PROT_SONIC), so it's
-// tied off for both segas32v25 and segas32, same as the dual-PCB bridge
-// below (g_no_dualpcb).
 generate
-    if (GAME_ONLY) begin : g_game_no_brival
+`ifdef S32_REAL_V25
+    begin : g_no_arescue_dsp
+        assign dsp_q = 16'hffff;
+    end
+`else
+    begin : g_arescue_dsp
+        s32_arescue_dsp dsp (
+            .clk(clk_sys), .rst(rst), .enable(cfg_has_dsp_hle),
+            .cs(m_req && sel_prot_a && A[15:4] == 12'h000), .we(m_we),
+            .be(m_be), .addr(A[2:1]), .wdata(m_wdata), .rdata(dsp_q)
+        );
+    end
+`endif
+endgenerate
+
+// Burning Rival string-copy responder: retained by the standard profile and
+// selected only by PROT_BRIVAL; tied off in the real-V25 profile.
+generate
+    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_game_no_brival
         assign br_trap = 1'b0;
         assign br_trap_q = 16'hffff;
         assign br_rom_req = 1'b0;
@@ -1301,7 +1200,7 @@ generate
 endgenerate
 
 generate
-    if (GAME_ONLY) begin : g_no_dualpcb
+    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_dualpcb
         // Dedicated profiles target boards with no dual-PCB bridge. The
         // array itself now infers M10K correctly (2026-08-05 fix,
         // rtl/prot/s32_prot.sv) so this is no longer a large resource win,
@@ -1322,113 +1221,22 @@ generate
     end
 endgenerate
 
-// Raw V25 core diagnostics (clk_v25 domain in the real build). Declared before
-// the instantiation so no implicit nets are inferred; the HLE build has no
-// corresponding source signals.
-wire v25_dbg_ce_raw, v25_dbg_io_raw, v25_dbg_unm_raw;
-
 `ifdef S32_REAL_V25
-// V25 program-fetch address to SDRAM port 5 — declared before the instantiation
-// that drives .rom_addr so no wrong-width implicit net is inferred (this path was
-// previously never compiled; ModelSim/Verilator both reject the use-before-decl).
 wire [15:3] v25_rom_addr;
 wire        v25_p5_req;
-wire        v25_first_valid;
-wire [63:0] v25_first_data;
-wire [15:3] v25_first_addr;
-
-`ifdef S32_RELEASE_MINIMAL
-// Release profiles start the V25 immediately. The full-image readback/hash is
-// bring-up telemetry only; eliminating it removes the p5 requester mux/state
-// and shortens core loading by roughly 4 ms without changing game-visible RAM.
-wire        sweep_active = 1'b0;
-wire        sweep_done   = 1'b1;
-wire [12:0] sweep_line   = 13'd0;
-wire        sweep_req_r  = 1'b0;
-wire [23:0] sweep_hash   = 24'd0;
-`else
-// ---- MCU image checksum sweep (bring-up diagnostic) ------------------------
-// After every reset release on a V25 board, read the whole 64 KiB program
-// image back through the SAME SDRAM port 5 the V25 fetches from, folding it
-// into a position-dependent 24-bit hash (rotate-left-1 then XOR of the three
-// line thirds).  The V25 is held disabled (enable low) until the sweep hands
-// the port over, so the two never contend; the V60 spends the ~4 ms polling
-// the mailbox it would poll anyway.  The hash is shown in the Debug Video
-// "V25" view and compared against the same fold computed offline from the
-// descrambled ROM — a mismatch proves the image in external SDRAM is corrupt
-// (the per-byte DQM-masked write path is used by nothing else in the design).
-reg         sweep_active, sweep_done;
-reg  [12:0] sweep_line;
-reg         sweep_req_r, sweep_wait;
-reg  [23:0] sweep_hash;
-always @(posedge clk_sys) begin
-    if (rst) begin
-        sweep_active <= 1'b0; sweep_done <= 1'b0;
-        sweep_line <= 13'd0; sweep_req_r <= 1'b0; sweep_wait <= 1'b0;
-        sweep_hash <= 24'd0;
-    end
-    else if (!sweep_done && !sweep_active) begin
-        if (cfg_has_v25) begin
-            sweep_active <= 1'b1;
-            sweep_line   <= 13'd0;
-            sweep_hash   <= 24'd0;
-            sweep_req_r  <= 1'b1;
-            sweep_wait   <= 1'b1;
-        end
-        else sweep_done <= 1'b1;        // no V25: hand the port over at once
-    end
-    else if (sweep_active) begin
-        sweep_req_r <= 1'b0;
-        if (sweep_wait && sdr_p5_ack) begin
-            sweep_hash <= {sweep_hash[22:0], sweep_hash[23]}
-                        ^ sdr_p5_dout[23:0] ^ sdr_p5_dout[47:24]
-                        ^ {8'h00, sdr_p5_dout[63:48]};
-            sweep_wait <= 1'b0;
-        end
-        else if (!sweep_wait) begin
-            if (sweep_line == 13'h1FFF) begin
-                sweep_active <= 1'b0;
-                sweep_done   <= 1'b1;
-            end
-            else begin
-                sweep_line  <= sweep_line + 1'd1;
-                sweep_req_r <= 1'b1;
-                sweep_wait  <= 1'b1;
-            end
-        end
-    end
-end
-`endif
+// V25 program-fetch address to SDRAM port 5.
 
 s32_v25_cpu v25 (
     .clk_v25(clk_v25),
     .pause(pause),
-    .clk(clk_sys), .rst(rst), .enable(cfg_has_v25 && sweep_done),
+    .clk(clk_sys), .rst(rst), .enable(cfg_has_v25),
     .table_sel(cfg_v25_table),
     .prg_wr(v25_prg_wr), .prg_waddr(v25_prg_waddr), .prg_wdata(v25_prg_wdata),
     .rom_req(v25_p5_req), .rom_addr(v25_rom_addr),
-    .rom_data(sdr_p5_dout), .rom_ack(sdr_p5_ack && !sweep_active),
-    .debug_cpu_clk(v25_dbg_ce_raw),
-    .debug_io_seen(v25_dbg_io_raw),
-    .debug_unmapped_seen(v25_dbg_unm_raw),
-    .debug_first_fetch_valid(v25_first_valid),
-    .debug_first_fetch_data(v25_first_data),
-    .debug_first_fetch_addr(v25_first_addr),
+    .rom_data(sdr_p5_dout), .rom_ack(sdr_p5_ack),
     .cs(m_req && sel_v25 && cfg_has_v25 && m_be[0]), .we(m_we),
     .addr(A[11:1]), .wdata(m_wdata[7:0]), .rdata(v25_q)
 );
-`elsif S32_GAME_ONLY
-// 2026-08-06: no game in this dedicated GAME_ONLY-but-not-REAL_V25 shape
-// (segas32.qsf: Sonic and future non-V25 games) ever sets has_v25, so the
-// HLE responder's mailbox (a 2048x8 true-dual-port s32_byte_dpram, real
-// M10K block(s) regardless of its runtime-false enable) would be dead
-// weight -- same exclusion pattern already used for s32_dualpcb/
-// s32_prot_brival in this file. GAME_ONLY alone (without S32_REAL_V25)
-// never actually occurs today since segas32v25.qsf always pairs GAME_ONLY
-// with REAL_V25 (see the top-of-file localparam block), but excluding on
-// GAME_ONLY rather than GAME_ONLY_STD specifically keeps this correct if
-// that ever changes.
-assign v25_q = 8'h00;
 `else
 s32_v25 v25 (
     .clk(clk_sys), .rst(rst), .enable(cfg_has_v25),
@@ -1442,16 +1250,13 @@ s32_v25 v25 (
 // ---------------------------------------------------------------------------
 
 `ifdef S32_REAL_V25
-// Registered so the sweep/V25 mux + base add never sits combinationally on
-// the clk_sys -> clk_ram controller crossing.  Both requesters tolerate the
-// one-cycle latency (the bridge and the sweep wait on sdr_p5_ack levels).
+// Register the V25 request/address before the clk_sys-to-SDRAM bridge.  The
+// cache and SDRAM side tolerate the one-cycle request latency.
 reg        sdr_p5_req_r;
 reg [24:3] sdr_p5_addr_r;
 always @(posedge clk_sys) begin
-    sdr_p5_req_r  <= sweep_active ? sweep_req_r : v25_p5_req;
-    sdr_p5_addr_r <= SDR_MCU_BASE[24:3] +
-                     (sweep_active ? {9'b0, sweep_line}
-                                   : {9'b0, v25_rom_addr});
+    sdr_p5_req_r  <= v25_p5_req;
+    sdr_p5_addr_r <= SDR_MCU_BASE[24:3] + {9'b0, v25_rom_addr};
 end
 assign sdr_p5_req  = sdr_p5_req_r;
 assign sdr_p5_addr = sdr_p5_addr_r;
@@ -1749,15 +1554,15 @@ always @(posedge clk_sys) begin
                 sel_dual:    rmux <= (cfg_dual_pcb &&
                                       (!A[15] || A[14:2] == 13'd0)) ? dual_q
                                                                     : 16'hffff;
-                sel_v25:     if (GAME_ONLY)
+                sel_v25:     if (GAME_ONLY && !GAME_ONLY_STD)
                                  // Open-bus when this board has no V25 (holo,
                                  // spidman): MAME leaves 0xA00000 unmapped
                                  // (audit R20 PF-7).
                                  rmux <= cfg_has_v25 ? {8'hff, v25_q} : 16'hffff;
                              else
                                  rmux <= cfg_has_v25 ? {8'hff, v25_q} :
-                                         16'hffff;
-                sel_prot_a:  rmux <= 16'hffff;
+                                         cfg_has_dsp_hle ? dsp_q : 16'hffff;
+                sel_prot_a:  rmux <= cfg_has_dsp_hle ? dsp_q : 16'hffff;
                 sel_io0:     rmux <= {8'hff, io0_q};
                 sel_io1:     rmux <= {8'hff, io1_q};
                 // MSM6253 serial output is wired to D7, not D0 (MAME
@@ -1783,183 +1588,6 @@ always @(posedge clk_sys) begin
     end
 end
 
-`ifndef S32_RELEASE_MINIMAL
-// V25 bring-up diagnostic (Debug Video "V25").  Classifies the V25-game
-// black screen from the V60-visible mailbox plus three synchronised core
-// flags, without touching operation:
-//   - never executes  -> io_seen stays 0 and every V60 mailbox read is 0x00
-//   - executes garbage-> io/unmapped flags set but no wake string appears
-//   - V25 healthy     -> byte 0xA00100 reads 'w' (0x77): wake string present
-// mb_last samples exactly when the read mux does (rd_wait cycle), so it shows
-// the byte the V60 actually consumed.
-reg  [23:0] dbg_v25_ce_cnt;                 // ~10MHz CE pulses; [23:20] blink
-reg  [7:0]  dbg_v25_mb_last;                // last V60 read of byte 0xA00100
-reg  [7:0]  dbg_v25_rd_cnt;                 // V60 mailbox reads (proves polling)
-reg         dbg_v25_mb_nonzero, dbg_v25_wake;
-reg         v25_dbg_ce_s1, v25_dbg_ce_s2, v25_dbg_ce_s3;
-reg         v25_dbg_io_s1, v25_dbg_io_s2;
-reg         v25_dbg_unm_s1, v25_dbg_unm_s2;
-wire        v25_dbg_rd_sample = m_req && !m_we && sel_v25 && cfg_has_v25 &&
-                                m_be[0] && !ack_r && rd_wait;
-always @(posedge clk_sys) begin
-    if (rst) begin
-        dbg_v25_ce_cnt     <= 24'd0;
-        dbg_v25_mb_last    <= 8'h00;
-        dbg_v25_rd_cnt     <= 8'd0;
-        dbg_v25_mb_nonzero <= 1'b0;
-        dbg_v25_wake       <= 1'b0;
-    end
-    else begin
-        // CE pulses are one clk_v25 (~41ns) wide, so 48MHz sampling sees each.
-        if (v25_dbg_ce_s2 && !v25_dbg_ce_s3) dbg_v25_ce_cnt <= dbg_v25_ce_cnt + 1'b1;
-        if (v25_dbg_rd_sample) begin
-            dbg_v25_rd_cnt <= dbg_v25_rd_cnt + 1'b1;
-            if (v25_q != 8'h00) dbg_v25_mb_nonzero <= 1'b1;
-            if (A[11:1] == 11'h080) begin       // mailbox byte 0xA00100
-                dbg_v25_mb_last <= v25_q;
-                if (v25_q == 8'h77) dbg_v25_wake <= 1'b1;   // 'w'ake up!
-            end
-        end
-    end
-end
-always @(posedge clk_sys) begin
-    v25_dbg_ce_s1  <= v25_dbg_ce_raw;  v25_dbg_ce_s2  <= v25_dbg_ce_s1;
-    v25_dbg_ce_s3  <= v25_dbg_ce_s2;
-    v25_dbg_io_s1  <= v25_dbg_io_raw;  v25_dbg_io_s2  <= v25_dbg_io_s1;
-    v25_dbg_unm_s1 <= v25_dbg_unm_raw; v25_dbg_unm_s2 <= v25_dbg_unm_s1;
-end
-assign debug_v25 = {dbg_v25_ce_cnt[23:20], dbg_v25_wake, dbg_v25_mb_nonzero,
-                    v25_dbg_unm_s2, v25_dbg_io_s2,
-                    dbg_v25_rd_cnt, dbg_v25_mb_last};
-`ifdef S32_REAL_V25
-assign debug_v25_img = {sweep_done, v25_first_valid, sweep_hash, v25_first_data};
-`else
-assign debug_v25_img = 90'd0;
-`endif
-
-// Sticky boot-progress telemetry for first-hardware bring-up. A screenshot of
-// the diagnostic modes preserves enough state to locate a boot stall without
-// requiring SignalTap or changing CPU/memory timing.
-reg [23:0] debug_status_r;
-reg [15:0] debug_first_rom_r;
-reg        debug_first_rom_seen;
-reg [15:0] debug_bus_wait;
-reg [23:0] debug_prev_pc_r;
-reg [23:0] debug_pc_seen_r;
-reg [23:0] debug_pc_hist0_r;
-reg [23:0] debug_pc_hist1_r;
-reg [23:0] debug_pc_hist2_r;
-reg [23:0] debug_pc_hist3_r;
-reg [23:0] debug_pc_hist4_r;
-reg  [7:0] debug_last_irq_vector_r;
-reg [23:0] debug_halt_trace_rgb;
-
-// If the CPU halts unexpectedly, expose eight compact post-mortem clues as
-// 8-pixel bands. The top-level displays one 64-pixel strip over the otherwise
-// unchanged game image, while debug mode 2 repeats the trace across the screen:
-//   current PC, previous PC, five older PCs, last/current IRQ vectors.
-always @(*) begin
-    case (hcnt[5:3])
-        3'd0: debug_halt_trace_rgb = v60_debug_pc[23:0];
-        3'd1: debug_halt_trace_rgb = debug_prev_pc_r;
-        3'd2: debug_halt_trace_rgb = debug_pc_hist0_r;
-        3'd3: debug_halt_trace_rgb = debug_pc_hist1_r;
-        3'd4: debug_halt_trace_rgb = debug_pc_hist2_r;
-        3'd5: debug_halt_trace_rgb = debug_pc_hist3_r;
-        3'd6: debug_halt_trace_rgb = debug_pc_hist4_r;
-        default: debug_halt_trace_rgb = {8'h00, debug_last_irq_vector_r, irq_vector};
-    endcase
-end
-
-assign debug_status = v60_debug_halted ? debug_halt_trace_rgb : debug_status_r;
-assign debug_first_rom = v60_debug_halted ?
-                         {debug_last_irq_vector_r, irq_vector} :
-                         debug_first_rom_r;
-
-always @(posedge clk_sys) begin
-    if (rst) begin
-        debug_status_r       <= 24'h000000;
-        debug_first_rom_r    <= 16'h0000;
-        debug_first_rom_seen <= 1'b0;
-        debug_bus_wait       <= 16'h0000;
-        debug_prev_pc_r      <= 24'hfffff0;
-        debug_pc_seen_r      <= 24'hfffff0;
-        debug_pc_hist0_r     <= 24'hfffff0;
-        debug_pc_hist1_r     <= 24'hfffff0;
-        debug_pc_hist2_r     <= 24'hfffff0;
-        debug_pc_hist3_r     <= 24'hfffff0;
-        debug_pc_hist4_r     <= 24'hfffff0;
-        debug_last_irq_vector_r <= 8'hff;
-    end
-    else begin
-        if (v60_debug_pc[23:0] != debug_pc_seen_r) begin
-            debug_pc_hist4_r <= debug_pc_hist3_r;
-            debug_pc_hist3_r <= debug_pc_hist2_r;
-            debug_pc_hist2_r <= debug_pc_hist1_r;
-            debug_pc_hist1_r <= debug_pc_hist0_r;
-            debug_pc_hist0_r <= debug_prev_pc_r;
-            debug_prev_pc_r  <= debug_pc_seen_r;
-            debug_pc_seen_r  <= v60_debug_pc[23:0];
-        end
-        // Sampling while the controller asserts IRQ avoids routing the CPU's
-        // otherwise-unused irq_ack hierarchy output, which Quartus 17 crashes
-        // while elaborating. The value still identifies the selected source.
-        if (!irq_n)
-            debug_last_irq_vector_r <= irq_vector;
-
-        debug_status_r[0] <= 1'b1;
-        if (c_req)       debug_status_r[1]  <= 1'b1;
-        if (c_ack)       debug_status_r[2]  <= 1'b1;
-        if (m_req)       debug_status_r[3]  <= 1'b1;
-        if (m_ack)       debug_status_r[4]  <= 1'b1;
-        if (sdr_p0_req)  debug_status_r[5]  <= 1'b1;
-        if (sdr_p0_ack)  debug_status_r[6]  <= 1'b1;
-        // Architectural reset PC is 32'hFFFFFFF0 (START_PC); the old 32-bit
-        // compare against 00FFFFF0 never matched, so bit 7 ("PC left the reset
-        // vector") was stuck on from the first cycle.  Compare the bus-visible
-        // 24 bits, which is what the mirror decode actually fetches from.
-        if (v60_debug_pc[23:0] != 24'hfffff0)
-            debug_status_r[7] <= 1'b1;
-        if (v60_debug_pc < 32'h00200000)
-            debug_status_r[8] <= 1'b1;
-        if (m_req && m_we && sel_wram) debug_status_r[9]  <= 1'b1;
-        if (m_req && m_we && sel_vram) debug_status_r[10] <= 1'b1;
-        if (m_req && m_we && is_pal0)  debug_status_r[11] <= 1'b1;
-        if (m_req && m_we && sel_io0)  debug_status_r[12] <= 1'b1;
-        if (m_req && m_we && sel_intc) debug_status_r[13] <= 1'b1;
-        if (io0_cnt1)                  debug_status_r[14] <= 1'b1;
-        if (v60_debug_halted)          debug_status_r[15] <= 1'b1;
-        if (sdr_p1_req)                debug_status_r[16] <= 1'b1;
-        if (sdr_p1_ack)                debug_status_r[17] <= 1'b1;
-        if (sdr_p2_req)                debug_status_r[18] <= 1'b1;
-        if (sdr_p2_ack)                debug_status_r[19] <= 1'b1;
-        if (vbl_start)                 debug_status_r[20] <= 1'b1;
-        if (!irq_n)                    debug_status_r[21] <= 1'b1;
-        // Runaway-PC detector.  Exclude the 16-byte architectural reset-vector
-        // window FFFFFFF0-FFFFFFFF (the only legitimate PC with a non-zero
-        // upper byte); the unqualified check fired at reset on every boot.
-        if (v60_debug_pc[31:24] != 8'h00 && v60_debug_pc[31:4] != 28'hFFFFFFF)
-            debug_status_r[22] <= 1'b1;
-
-        if (m_req && !m_ack) begin
-            if (!(&debug_bus_wait)) debug_bus_wait <= debug_bus_wait + 1'd1;
-            if (&debug_bus_wait)  debug_status_r[23] <= 1'b1;
-        end
-        else debug_bus_wait <= 16'h0000;
-
-        if (sdr_p0_ack && !debug_first_rom_seen) begin
-            debug_first_rom_seen <= 1'b1;
-            debug_first_rom_r    <= sdr_p0_dout;
-        end
-    end
-end
-
-`else
-assign debug_status = 24'h000000;
-assign debug_first_rom = 16'h0000;
-assign debug_v25 = 24'h000000;
-assign debug_v25_img = 90'h000000000000000000000000;
-`endif
 
 endmodule
 

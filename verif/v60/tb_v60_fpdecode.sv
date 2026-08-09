@@ -15,7 +15,7 @@ s32_v60 #(.START_PC(32'h0)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1), .dbg_pc(), .dbg_halted());
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1));
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
     .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),
@@ -76,12 +76,12 @@ initial begin
     repeat (600) @(posedge clk);
     $display("R2=%08x  mem[0x8000]=%04x%04x  mem[0x8100]=%04x%04x  halted=%0d",
         cpu.r[2], ram[(16'h8000>>1)+1], ram[16'h8000>>1],
-        ram[(16'h8100>>1)+1], ram[16'h8100>>1], cpu.dbg_halted);
+        ram[(16'h8100>>1)+1], ram[16'h8100>>1], cpu.halted);
     check(cpu.r[2] === 32'h40800000, "ADDFS R1,R2 -> 4.0");                        // 2.5+1.5
     check({ram[(16'h8000>>1)+1], ram[16'h8000>>1]} === 32'h40900000, "MULFS [R3] -> 4.5"); // 3.0*1.5
     check({ram[(16'h8100>>1)+1], ram[16'h8100>>1]} === 32'hbfc00000, "NEGFS [R4] -> -1.5"); // -R1
     check(negfs_dst_reads == 0, "NEGFS dest never read");
-    check(cpu.dbg_halted, "halted");
+    check(cpu.halted, "halted");
     if (errors == 0) $display("V60 FPDECODE PASS");
     else             $display("V60 FPDECODE FAIL (%0d errors)", errors);
     $finish;

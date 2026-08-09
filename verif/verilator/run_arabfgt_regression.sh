@@ -26,8 +26,8 @@ mkdir -p "$build_dir" "$out_dir"
 "$verilator_safe" --binary --timing -O3 --threads 1 \
   --verilate-jobs 4 --build-jobs 4 $warn \
   +define+SIMULATION +define+S32_REAL_FB_SIM \
-  +define+S32_SYSTEM32_ONLY +define+S32_RELEASE_MINIMAL \
-  +define+S32_PROFILE_STANDARD \
+  +define+S32_SYSTEM32_ONLY \
+  +define+S32_PROFILE_STANDARD +define+S32_GAME_ONLY \
   +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
   "-DMICROCODE_ROM_PATH=\"$microcode\"" \
   --top-module tb_core_romboot --Mdir "$build_dir" -o romboot \

@@ -27,8 +27,7 @@ s32_v60 #(.START_PC(32'h00000000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -156,9 +155,9 @@ initial begin
     check8(cpu.r[6][7:0],  8'h00,   "SUBRDC-final");
     check16(ram[16'h2050>>1], 16'h3532, "CVTDPZ");
     check8(cpu.r[7][7:0],  8'h25,   "CVTDZP");
-    if (cpu.dbg_halted !== 1'b1) begin
+    if (cpu.halted !== 1'b1) begin
         errors = errors + 1;
-        $display("  FAIL cpu not halted (pc=%08x)", cpu.dbg_pc);
+        $display("  FAIL cpu not halted (pc=%08x)", cpu.pc);
     end
 
     if (errors == 0) $display("DECIMAL PASS");
@@ -168,7 +167,7 @@ end
 
 initial begin
     #4000000;
-    $display("DECIMAL FAIL (timeout, pc=%08x)", cpu.dbg_pc);
+    $display("DECIMAL FAIL (timeout, pc=%08x)", cpu.pc);
     $finish;
 end
 

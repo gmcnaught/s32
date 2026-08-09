@@ -13,23 +13,23 @@
 # This profile is every in-scope System 32 game that does NOT have real V25
 # protection hardware -- the real NEC V25 core (rtl/cpu/v25/v25.qip) is not
 # compiled in at all here; games with V25 (ga2, arabfgt) live in
-# segas32v25.qsf instead. Currently scoped to Sonic ONLY (see
-# tools/gen_mra.py:GAMES) -- other non-V25 games (holo/jpark/radm/radr/
-# spidman) return one at a time, same as the prior single-profile roadmap.
+# segas32v25.qsf instead. Currently emits Holosseum, Sonic, Slip Stream, and
+# Spider-Man (see tools/gen_mra.py:GAMES); jpark/radm/radr remain staged and
+# can return only through this same profile, never a per-game revision.
 #
 # GAME_ONLY_STD trim (rtl/s32_core.sv): unlike segas32v25's GAME_ONLY (which
 # strips analog/trackball/generic-protection entirely -- ga2/arabfgt need
-# none of it), this profile needs the trackball (Sonic's rev.C hardware) and
-# the generic protection HLE (Sonic's PROT_SONIC level loader), but still has
-# no use for the MSM6253 ADC, the Burning Rival responder or the dual-PCB
-# bridge, which stay tied off exactly like segas32v25.
+# none of it), this profile needs the trackball (Sonic's rev.C hardware),
+# descriptor-gated MSM6253 ADC (Slip Stream's driving board), and the generic
+# protection HLE (Sonic's PROT_SONIC level loader), but still has no use for
+# the Burning Rival responder or the dual-PCB bridge, which stay tied off
+# exactly like segas32v25.
 #
-# NOT YET TIMING-CLOSED: this file has never been fit. Its resource/timing
-# shape differs meaningfully from segas32v25 (no V25 core/microcode ROM to
-# pay for, but the trackball + protection-HLE logic segas32v25 could not
-# afford is live here) -- SEED/fitter settings below are carried over from
-# segas32v25 as a starting point only and will need their own closure pass
-# on the first real build, not assumed correct.
+# NOT YET TIMING-CLOSED: the recorded seed sweep below fit this profile at
+# 74% ALMs/91% M10Ks but missed setup by 0.083/0.115 ns. Its resource/timing
+# shape differs from segas32v25 (no real V25 core/microcode ROM, but live
+# trackball, ADC, and generic-protection HLE), so its next clean build must be
+# qualified independently rather than inheriting the V25 profile's result.
 set_global_assignment -name TOP_LEVEL_ENTITY sys_top
 
 set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"
@@ -49,13 +49,14 @@ set_global_assignment -name TIMEQUEST_MULTICORNER_ANALYSIS ON
 set_global_assignment -name OPTIMIZE_POWER_DURING_FITTING OFF
 set_global_assignment -name FINAL_PLACEMENT_OPTIMIZATION ALWAYS
 set_global_assignment -name FITTER_EFFORT "FAST FIT"
-# Carried over from segas32v25's area-focused recipe as a starting point;
-# reassess once this profile has an actual fit resource report.
-set_global_assignment -name OPTIMIZATION_MODE "AGGRESSIVE AREA"
+# The latest recorded standard-profile fit used 74% ALMs and 91% M10Ks, with
+# only marginal setup failures after dead logic was removed. Spend the logic
+# headroom on timing-driven synthesis; M10K use is unaffected by this choice.
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
 set_global_assignment -name FITTER_AGGRESSIVE_ROUTABILITY_OPTIMIZATION ALWAYS
 set_global_assignment -name ALLOW_POWER_UP_DONT_CARE OFF
 set_global_assignment -name QII_AUTO_PACKED_REGISTERS NORMAL
-set_global_assignment -name ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION OFF
+set_global_assignment -name ROUTER_LCELL_INSERTION_AND_LOGIC_DUPLICATION ON
 set_global_assignment -name PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF
 set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF
 # 2026-08-06: retried register retiming on the post-optimization netlist
@@ -63,7 +64,7 @@ set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF
 # slack to retiming OFF. Confirmed a genuine no-op regardless of resource
 # shape, same as segas32v25's two earlier tests. Reverted.
 set_global_assignment -name PHYSICAL_SYNTHESIS_REGISTER_RETIMING OFF
-set_global_assignment -name OPTIMIZATION_TECHNIQUE AREA
+set_global_assignment -name OPTIMIZATION_TECHNIQUE SPEED
 set_global_assignment -name MUX_RESTRUCTURE ON
 set_global_assignment -name REMOVE_REDUNDANT_LOGIC_CELLS ON
 set_global_assignment -name AUTO_DELAY_CHAINS_FOR_HIGH_FANOUT_INPUT_PINS ON
@@ -119,9 +120,9 @@ set_global_assignment -name NUM_PARALLEL_PROCESSORS 8
 set_global_assignment -name VERILOG_MACRO "S32_SYSTEM32_ONLY=1"
 set_global_assignment -name VERILOG_MACRO "S32_PROFILE_STANDARD=1"
 set_global_assignment -name VERILOG_MACRO "S32_PCB_TIMING=1"
-# Dedicated-profile trim scoped for a game set that needs the trackball and
-# generic protection HLE but nothing else generic (no ADC/dual-PCB/Burning
-# Rival). See rtl/s32_core.sv's GAME_ONLY_STD localparam and the
+# Dedicated-profile trim scoped for a game set that needs the trackball,
+# descriptor-gated ADC, and generic protection HLE but no dual-PCB/Burning
+# Rival. See rtl/s32_core.sv's GAME_ONLY_STD localparam and the
 # g_game_trackball / g_game_std_protection generate blocks it selects.
 # Do NOT rename this to reference a specific game (PROFILE_CONTRACT.md's
 # routing rule): it describes a hardware-capability shape, not "Sonic".
@@ -135,24 +136,25 @@ set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY_STD=1"
 # so this is a real, not speculative, resource win; verify the actual ALM
 # delta on the next Analysis & Synthesis rather than assuming a figure.
 set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
-set_global_assignment -name VERILOG_MACRO "S32_RELEASE_MINIMAL=1"
 set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
 
+# Standard-profile-only protection responders. segas32v25 omits this source:
+# GA2 and Arabian Fight use the real NEC V25 and none of the generic HLE,
+# dual-PCB, or Burning Rival blocks.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/prot/s32_prot.sv
+
 # --- No real V25 in this profile ---------------------------------------
-# Every game in this profile's scope uses the static HLE responder s32_v25
-# (rtl/prot/s32_prot.sv) -- none has V25 protection hardware. The real V25
-# core (rtl/cpu/v25/v25.qip: s80x86, s32_v25_cpu, s32_v25_rom_cache, its
-# Microcode ROM and program cache) is simply not compiled in: no QIP_FILE
-# line, no S32_REAL_V25, no S80X86_PSEUDO_286_INT, no S32_V25_MLAB_FIFO.
-# cfg_has_v25 is descriptor-driven and 0 for every game here regardless.
+# The lightweight descriptor-selected s32_v25 mailbox HLE remains available,
+# but the real CPU (rtl/cpu/v25/v25.qip: s80x86, s32_v25_cpu, program cache
+# and memories) is not compiled. Generic game protection such as Sonic's
+# level loader remains in s32_prot_hle. There is no V25 QIP_FILE,
+# S32_REAL_V25, S80X86_PSEUDO_286_INT, or S32_V25_MLAB_FIFO in this profile.
 
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB=1"
 
 #enable it only if 8bit indexed mode is used in core
 #set_global_assignment -name VERILOG_MACRO "MISTER_FB_PALETTE=1"
 
-#do not enable DEBUG_NOHDMI in release!
-#set_global_assignment -name VERILOG_MACRO "MISTER_DEBUG_NOHDMI=1"
 
 # disable bilinear filtering when downscaling
 set_global_assignment -name VERILOG_MACRO "MISTER_DOWNSCALE_NN=1"
@@ -164,6 +166,12 @@ set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_DOWNSCALE=1"
 
 # disable adaptive scanline filtering
 set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_ADAPTIVE=1"
+
+# Keep the HDMI datapath lean in both production profiles.  The optional CRT
+# shadow-mask effect is not part of the arcade video signal; compiling it out
+# removes its 256x11 dual-port LUT and multiplier/control stage while leaving
+# direct video, OSD, sync, and scaler output available.
+set_global_assignment -name VERILOG_MACRO "MISTER_DISABLE_SHADOWMASK=1"
 
 #use only 1MB per frame for scaler to free ~21MB DDR3 RAM
 #set_global_assignment -name VERILOG_MACRO "MISTER_SMALL_VBUF=1"

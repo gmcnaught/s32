@@ -28,8 +28,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
@@ -80,14 +79,14 @@ integer cycles = 0;
 initial begin
     repeat (8) @(posedge clk);
     rst = 0;
-    while (!cpu.dbg_halted && cycles < 100000) begin
+    while (!cpu.halted && cycles < 100000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
 
     $display("FETCH PERF: iterations=%0d cycles=%0d reads=%0d r0=%0d halted=%0d",
-        ITERATIONS, cycles, read_txns, cpu.r[0], cpu.dbg_halted);
-    if (cpu.dbg_halted && cpu.r[0] == 0 && cpu.r[1] == 32'h1234_5678 &&
+        ITERATIONS, cycles, read_txns, cpu.r[0], cpu.halted);
+    if (cpu.halted && cpu.r[0] == 0 && cpu.r[1] == 32'h1234_5678 &&
         cycles <= 4000 && read_txns <= 32)
         $display("FETCH PERF PASS");
     else begin

@@ -116,33 +116,39 @@ wire        eep_upload, eep_modified;
 wire  [5:0] eep_rd_addr;
 wire [15:0] eep_rd_data;
 wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick_5;
-wire [15:0] joystick_l_analog_0, joystick_l_analog_1;
+wire [15:0] joystick_l_analog_0, joystick_l_analog_1, joystick_l_analog_2;
+wire [15:0] joystick_r_analog_0;
 wire  [7:0] paddle_0, paddle_1;
 wire [24:0] ps2_mouse;
+wire        core_vs;
 // The two universal RBFs have fixed profile boundaries. The standard image
 // rejects V25/Multi 32 hardware; the V25 image accepts only the two protected
 // System 32 boards and keeps their table selector descriptor-driven.
 always @(*) begin
     active_board = board_desc;
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
     active_board.multi32          = 1'b0;
     active_board.has_v25          = 1'b1;
     active_board.v25_table        = board_desc.v25_table;
     active_board.has_adc          = 1'b0;
     active_board.has_track        = 1'b0;
     active_board.has_ppi          = 1'b1;
+    active_board.has_dsp_hle      = 1'b0;
     active_board.dual_pcb         = 1'b0;
     active_board.prot_sel         = PROT_NONE;
     active_board.sprite_bank_valid = 1'b1;
     active_board.sprite_bank_mask = 2'b11;
     active_board.flip_y           = 1'b0;
     active_board.gun_aim          = 1'b0;
+    active_board.coin_swap        = 1'b0;
     active_board.analog_profile   = ANALOG_CENTERED;
     active_board.gear_toggle      = 1'b0;
     active_board.comm_link_hle    = 1'b0;
     active_board.digital_profile  = DIGITAL_GENERIC;
 `elsif S32_PROFILE_STANDARD
     active_board.multi32          = 1'b0;
+    // The standard image has no real V25 CPU/QIP, but retains the lightweight
+    // descriptor-selected mailbox HLE for non-real-V25 board variants.
     active_board.has_v25          = board_desc.has_v25;
     active_board.v25_table        = board_desc.v25_table;
 `endif
@@ -179,12 +185,6 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
 `endif
     "O[7],Service Mode,Off,On;",
-    "O[12],Pause,Off,On;",
-    "O[14:13],Analog Aim Invert,Off,X,Y,XY;",
-`ifndef S32_RELEASE_MINIMAL
-    "-;",
-    "O[11:8],Debug Video,Off,PC,Bus Status,First ROM,P1 Word,Sprite Post-mortem,Coin/Start/Service,Framebuffer,Palette,FB Underrun,Camera,V25,Sprite Health;",
-`endif
     "-;",
     "R[0],Reset;",
     "J1,B1,B2,B3,B4,B5,B6,Start,Coin,Test,Service;",
@@ -227,12 +227,9 @@ always @(posedge clk_sys) begin
 end
 
 // fractional clock enables (DESIGN.md §3.3)
-// OSD Pause freezes the CPU/sound enables (state preserved, video keeps
-// scanning the same frame — stable for screenshots); audio is muted below.
 reg ce_cpu, ce_z80, ce_fm, ce_pcm;
 reg [15:0] acc_cpu, acc_z80, acc_fm, acc_pcm;
 wire is_multi32 = active_board.multi32;
-wire pause = status[12];
 // CPU Turbo is retired in the single merged profile: s32.sdc's V60 register-
 // to-register multicycle relaxation now applies unconditionally, and that
 // relaxation is only sound with fixed, single-cycle-safe CE spacing (no
@@ -251,9 +248,6 @@ always @(posedge clk_sys) begin
     if (reset) begin
         ce_cpu <= 1'b0; ce_z80 <= 1'b0; ce_pcm <= 1'b0;
         acc_cpu <= 16'd0; acc_z80 <= 16'd0; acc_pcm <= 16'd0;
-    end
-    else if (pause) begin
-        ce_cpu <= 1'b0; ce_z80 <= 1'b0; ce_pcm <= 1'b0;
     end
     else begin
         // cpu: 16.10795/48.317307 (V60); 20/48.317307 (V70)
@@ -318,6 +312,8 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_5(joystick_5),
     .joystick_l_analog_0(joystick_l_analog_0),
     .joystick_l_analog_1(joystick_l_analog_1),
+    .joystick_l_analog_2(joystick_l_analog_2),
+    .joystick_r_analog_0(joystick_r_analog_0),
     .paddle_0(paddle_0),
     .paddle_1(paddle_1),
     .ps2_mouse(ps2_mouse)
@@ -370,77 +366,10 @@ wire [15:0] p0_dout, p3_dout, p4_dout;
 wire [63:0] p1_dout, p5_dout;
 wire[127:0] p2_dout;
 
-`ifdef S32_RELEASE_MINIMAL
-// Production profiles connect the graphics burst ports directly. The removed
-// mux/retry/capture logic was bring-up telemetry and has no game-visible role.
 assign p1_req  = core_p1_req;
 assign p1_addr = core_p1_addr;
 assign p2_req  = core_p2_req;
 assign p2_addr = core_p2_addr;
-`else
-// Read fixed, non-uniform GA2 graphics blocks through the real burst ports.
-// Each returned 16-bit lane is displayed as a 64-pixel colour band by the
-// debug video mux below.  This distinguishes SDRAM burst corruption from the
-// tile/sprite unpackers without changing the normal game path.
-wire debug_tile_probe   = 1'b0;
-wire debug_sprite_probe = 1'b0;
-localparam [24:3] DEBUG_TILE_ADDR = SDR_TILES_BASE[24:3] + 22'd92;
-localparam [24:4] DEBUG_SPR_ADDR  = SDR_SPRITES_BASE[24:4];
-reg         debug_p1_req;
-reg         debug_p1_retry;
-reg         debug_p1_valid, debug_p2_valid;
-reg  [63:0] debug_p1_data;
-reg [127:0] debug_p2_data;
-reg  [24:4] debug_p2_addr;
-
-// On mode-4 exit the tilemap (parked in T_PIXW holding tile_req) recovers
-// because this mux presents a fresh rising edge with the live core address
-// to the controller's request-edge latch — keep that property if reworking.
-assign p1_req  = debug_tile_probe   ? debug_p1_req  : core_p1_req;
-assign p1_addr = debug_tile_probe   ? DEBUG_TILE_ADDR : core_p1_addr;
-// The live sprite probe observes the production port without stealing or
-// delaying requests. This keeps mode 5 cycle-identical to normal rendering.
-assign p2_req  = core_p2_req;
-assign p2_addr = core_p2_addr;
-
-always @(posedge clk_ram) begin
-    if (reset || !debug_tile_probe) begin
-        debug_p1_req   <= 1'b0;
-        debug_p1_retry <= 1'b0;
-        debug_p1_valid <= 1'b0;
-        debug_p1_data  <= 64'd0;
-    end
-    else if (!debug_p1_valid) begin
-        // A tilemap burst latched just before the mux flipped can ack first,
-        // and the core is blind to that ack while the probe holds the port —
-        // so the FIRST result after mode entry is always discarded and the
-        // word re-fetched on a fresh request edge.  The second result is
-        // provably the probe's own (single-outstanding port).  Idempotent
-        // double fetch of a ROM word; costs one extra transaction, once.
-        if (p1_ack && debug_p1_req) begin
-            debug_p1_req <= 1'b0;
-            if (debug_p1_retry) begin
-                debug_p1_valid <= 1'b1;
-                debug_p1_data  <= p1_dout;
-            end
-            else debug_p1_retry <= 1'b1;
-        end
-        else if (!debug_p1_req && !p1_ack)
-            debug_p1_req <= 1'b1;          // (re)issue on a fresh rising edge
-    end
-
-    if (reset || !debug_sprite_probe) begin
-        debug_p2_valid <= 1'b0;
-        debug_p2_data  <= 128'd0;
-        debug_p2_addr  <= 21'd0;
-    end
-    else if (!debug_p2_valid && core_p2_req && p2_ack) begin
-        debug_p2_valid <= 1'b1;
-        debug_p2_data  <= p2_dout;
-        debug_p2_addr  <= core_p2_addr;
-    end
-end
-`endif
 sdram sdram (
     .clk(clk_ram), .init(~pll_locked), .ready(sdram_ready),
     .SDRAM_DQ(SDRAM_DQ), .SDRAM_A(SDRAM_A), .SDRAM_BA(SDRAM_BA),
@@ -479,40 +408,6 @@ s32_fb_if fb (
     .rd_x(fbr_x), .rd_pix(fbr_pix)
 );
 
-`ifndef S32_RELEASE_MINIMAL
-// Live DDR/framebuffer telemetry for the raw sprite diagnostic. These
-// modulo-256 counters are observation-only: no request, acknowledge, or game
-// data path depends on them. Splitting erase traffic from renderer flushes is
-// essential because a sticky DDR-write flag can otherwise be satisfied by the
-// initial clear even when no sprite payload ever reaches memory.
-reg [7:0] fbw_count, fbend_count;
-reg [7:0] ddrwe_count, erase_count, ddrdata_count, fbrack_count;
-reg       fbrack_prev;
-always @(posedge clk_ram) begin
-    if (reset) begin
-        fbw_count     <= 8'd0;
-        fbend_count   <= 8'd0;
-        ddrwe_count   <= 8'd0;
-        erase_count   <= 8'd0;
-        ddrdata_count <= 8'd0;
-        fbrack_count  <= 8'd0;
-        fbrack_prev   <= 1'b0;
-    end
-    else begin
-        if (fbw_valid) fbw_count <= fbw_count + 1'd1;
-        if (fbw_end)   fbend_count <= fbend_count + 1'd1;
-        if (DDRAM_WE && !DDRAM_BUSY) begin
-            if (fbe_req) erase_count <= erase_count + 1'd1;
-            else         ddrwe_count <= ddrwe_count + 1'd1;
-        end
-        if (DDRAM_DOUT_READY)
-            ddrdata_count <= ddrdata_count + 1'd1;
-        fbrack_prev <= fbr_ack;
-        if (fbr_ack && !fbrack_prev)
-            fbrack_count <= fbrack_count + 1'd1;
-    end
-end
-`endif
 //////////////////////////////   INPUTS   /////////////////////////////////////
 // MiSTer logical joystick bits are directions [3:0], six arcade buttons
 // [9:4], Start [10], Coin [11].  GA2's 315-5296 player ports follow MAME:
@@ -523,7 +418,38 @@ endfunction
 wire [7:0] p1a_dig = p_dig(joystick_0);
 wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[5],
                         ~joystick_0[4], 1'b1};
-wire [7:0] sonic_p1a = {p1a_dig[7:3], ~joystick_2[4], p1a_dig[1:0]};
+// SegaSonic action buttons: P1=P1_A[0], P2=P2_A[0], P3=P1_A[2].
+// Every other player-port bit is physically unused on the trackball cabinet.
+wire [7:0] sonic_p1a = {5'b11111, ~joystick_2[4], 1'b1, ~joystick_0[4]};
+wire [7:0] p2a_dig = p_dig(joystick_1);
+wire [7:0] sonic_p2a = {7'b1111111, ~joystick_1[4]};
+`ifdef S32_REAL_V25
+// The V25 release has exactly two supported boards (GA2 and Arabian Fight).
+// Neither has a gun, trackball, ADC or alternate standard-profile cabinet
+// wiring. Keep these ports explicitly driven for the shared core interface,
+// but compile out the corresponding input conditioners and their state.
+wire sonic_controls = 1'b0;
+wire [7:0] core_p1a = p1a_dig;
+wire [7:0] core_p2a = p2a_dig;
+wire [7:0] adc_ch [0:7];
+assign adc_ch[0] = 8'h80;
+assign adc_ch[1] = 8'h80;
+assign adc_ch[2] = 8'h80;
+assign adc_ch[3] = 8'h80;
+assign adc_ch[4] = 8'h80;
+assign adc_ch[5] = 8'h80;
+assign adc_ch[6] = 8'h80;
+assign adc_ch[7] = 8'h80;
+wire trk_dv_a [0:2];
+wire signed [8:0] trk_dx_a [0:2];
+wire signed [8:0] trk_dy_a [0:2];
+wire [7:0] trk_btn [0:2];
+assign trk_dv_a[0] = 1'b0; assign trk_dv_a[1] = 1'b0; assign trk_dv_a[2] = 1'b0;
+assign trk_dx_a[0] = 9'sd0; assign trk_dx_a[1] = 9'sd0; assign trk_dx_a[2] = 9'sd0;
+assign trk_dy_a[0] = 9'sd0; assign trk_dy_a[1] = 9'sd0; assign trk_dy_a[2] = 9'sd0;
+assign trk_btn[0] = 8'h00; assign trk_btn[1] = 8'h00; assign trk_btn[2] = 8'h00;
+`else
+wire sonic_controls = active_board.has_track;
 // Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
 // momentary switch or four-position encoding.  Keep this semantic independent
 // from Rad Rally's separate EPR-14084 communication-board selector.
@@ -532,11 +458,11 @@ reg radr_gear_btn_d = 1'b0;
 always @(posedge clk_sys) begin
     if (reset || !active_board.gear_toggle) begin
         radr_gear <= 1'b0;
-        radr_gear_btn_d <= joystick_0[4];
+        radr_gear_btn_d <= joystick_0[6];
     end
     else begin
-        radr_gear_btn_d <= joystick_0[4];
-        if (joystick_0[4] && !radr_gear_btn_d)
+        radr_gear_btn_d <= joystick_0[6];
+        if (joystick_0[6] && !radr_gear_btn_d)
             radr_gear <= ~radr_gear;
     end
 end
@@ -547,29 +473,32 @@ wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
 // this remains a shared Standard-profile implementation, not a game build.
 wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
                            ~joystick_0[5], ~joystick_0[4], 1'b1};
-wire [7:0] p2a_dig = p_dig(joystick_1);
-`ifdef S32_GAME_ONLY
-// No game in either dedicated profile's scope (segas32v25: ga2/arabfgt;
-// segas32: Sonic) uses a positional gun (jpark, alien3 only).
+`ifdef S32_REAL_V25
+// The real-V25 profile has no positional gun. The standard profile retains
+// this conditioner for descriptor-selected Jurassic Park and Alien3.
 // active_board.gun_aim is loaded from runtime descriptor data, so Quartus
 // cannot prove it constant on its own and would otherwise always pay for
 // the full curve-LUT/divider FSM in s32_gun_aim below regardless of which
 // games a profile ships. Force a real compile-time constant so that module
 // is provably prunable.
 wire gun_aim_active = 1'b0;
-`elsif S32_GAME_ONLY_STD
-wire gun_aim_active = 1'b0;
 `else
 wire gun_aim_active = active_board.gun_aim;
 `endif
-wire [7:0] core_p1a = (active_board.prot_sel == PROT_SONIC) ? sonic_p1a :
+wire alien3_controls = active_board.gun_aim && active_board.coin_swap;
+wire [7:0] alien3_p1a = p1a_dig & {7'h7f, ~joystick_0[10]};
+wire [7:0] alien3_p2a = p2a_dig & {7'h7f, ~joystick_1[10]};
+wire [7:0] core_p1a = sonic_controls ? sonic_p1a :
+                       alien3_controls ? alien3_p1a :
                        (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
                        active_board.gear_toggle ? gear_toggle_p1a :
                        (active_board.digital_profile == DIGITAL_RADM) ? radm_p1a :
                        p1a_dig;
 wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
                            ~joystick_1[5], ~joystick_1[4], 1'b1};
-wire [7:0] core_p2a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
+wire [7:0] core_p2a = sonic_controls ? sonic_p2a :
+                       alien3_controls ? alien3_p2a :
+                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
                        p2a_dig;
 
 // --- Analog-stick positional-gun aiming ------------------------------------
@@ -579,9 +508,9 @@ wire [7:0] core_p2a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
 // inputs use a radial inner deadzone, 95%-throw outer saturation, progressive
 // response, and error-sensitive smoothing in s32_gun_aim. Other analog titles retain the
 // proven per-axis conditioning below. The gun games keep their default
-// inversion through active_board.gun_aim; the OSD toggle permits an override.
-wire aim_inv_x = status[13] ^ active_board.gun_aim;
-wire aim_inv_y = status[14] ^ active_board.gun_aim;
+// inversion through active_board.gun_aim.
+wire aim_inv_x = active_board.gun_aim;
+wire aim_inv_y = active_board.gun_aim;
 localparam signed [8:0] AIM_DZ = 9'sd6;
 
 // signed stick -> offset binary (center 0x80), with centred optional inversion
@@ -645,16 +574,29 @@ end
 wire [7:0] adc_ch [0:7];
 wire driving_analog = (active_board.analog_profile == ANALOG_DRIVING);
 wire pulled_up_adc  = (active_board.analog_profile == ANALOG_ALL_FF);
+// MiSTer reports each analog-stick axis as signed -128..+127. Split the right
+// stick's vertical axis into independent, released-at-zero pedals: up is
+// accelerator and down is brake. Saturating magnitude 127/128 to 255 lets
+// both directions reach the cabinet ADC endpoint without a multiplier.
+wire [7:0] driving_accel;
+wire [7:0] driving_brake;
+s32_driving_controls driving_controls (
+    .right_analog(joystick_r_analog_0),
+    .digital_accel(joystick_0[4]),
+    .digital_brake(joystick_0[5]),
+    .accel(driving_accel),
+    .brake(driving_brake)
+);
 // Driving cabinets wire the wheel, accelerator, and brake to the first three
-// MSM6253 channels. MiSTer's left-stick X is the wheel; the two paddle values
-// are its analog triggers and naturally rest at zero like the real pedals.
+// MSM6253 channels. MiSTer's left-stick X is the wheel; right-stick up/down
+// are the analog pedals, with A/B as full-scale digital fallbacks.
 assign adc_ch[0] = pulled_up_adc ? 8'hff :
                    gun_aim_active ? gun_aim_x[0] : aim_sm[0]; // ANALOG1
 assign adc_ch[1] = pulled_up_adc ? 8'hff :
-                   driving_analog ? paddle_0 :
+                   driving_analog ? driving_accel :
                    gun_aim_active ? gun_aim_y[0] : aim_sm[1]; // ANALOG2
 assign adc_ch[2] = pulled_up_adc ? 8'hff :
-                   driving_analog ? paddle_1 :
+                   driving_analog ? driving_brake :
                    gun_aim_active ? gun_aim_x[1] : aim_sm[2]; // ANALOG3
 assign adc_ch[3] = pulled_up_adc ? 8'hff :
                    driving_analog ? 8'hff :
@@ -664,71 +606,50 @@ assign adc_ch[5] = pulled_up_adc ? 8'hff : driving_analog ? 8'h80 : paddle_1;
 assign adc_ch[6] = pulled_up_adc ? 8'hff : 8'h80;
 assign adc_ch[7] = pulled_up_adc ? 8'hff : 8'h80;
 
-// Trackball via left analog stick (2026-08-06: replaced the PS2-mouse and
-// digital-d-pad-fallback paths entirely -- analog-stick control only, left
-// stick by default, no mouse). Deadzone + linear deflection-to-velocity,
-// sampled once per trk_tick so a stick held at full deflection behaves like
-// a continuously spinning trackball, while a centered stick produces no
-// counts at all (matching a real trackball at rest). MAME marks all three
-// SegaSonic TRACKBALL_X inputs PORT_REVERSE: right deflection must decrement
-// the X counter, left must increment it (Y is not reversed) -- the uPD4701
-// counters themselves stay direction-agnostic; the reversal is applied here
-// at the analog-to-delta conversion, same as the retired mouse path did.
-localparam [7:0] TRK_DEADZONE = 8'd16;
-// 2026-08-06 fix: joystick_l_analog_0/1's bytes are ALREADY signed two's
-// complement with 0 = center (sys/hps_io.sv: "analog -127..+127"), the same
-// format aim_axis's own `raw` input above documents and converts FROM via
-// `raw ^ 8'h80` before treating it as offset-binary. This function instead
-// wants signed math directly, so it must sign-extend raw as-is -- the
-// previous `$signed({1'b0,raw}) - 128` treated raw as if it were already
-// offset-binary (0x80=center), which made a centered/absent stick compute
-// near-maximum velocity and a fully-deflected stick compute zero.
-function automatic signed [8:0] trk_axis_vel(input [7:0] raw);
-    logic signed [8:0] off;
-    logic [7:0] mag, mag_dz, vel;
-begin
-    off    = $signed(raw);                         // -128..127, 0 = center
-    mag    = off[8] ? (-off[7:0]) : off[7:0];
-    mag_dz = (mag > TRK_DEADZONE) ? (mag - TRK_DEADZONE) : 8'd0;
-    vel    = mag_dz >> 3;                          // 0..14 at full deflection
-    trk_axis_vel = off[8] ? -{1'b0, vel} : {1'b0, vel};
+// Each controller's left stick is trackball velocity, not position. One
+// signed delta is injected per video frame. The shared VS edge detector
+// replaces the former 16-bit timer; the three converters are combinational
+// deadzone/subtract/shift logic with no RAM, DSP, multiplier or divider.
+reg core_vs_d = 1'b0;
+always @(posedge clk_sys) begin
+    if (reset) core_vs_d <= 1'b0;
+    else       core_vs_d <= core_vs;
 end
-endfunction
-
-reg [15:0] trk_div = 16'd0;
-always @(posedge clk_sys) trk_div <= trk_div + 1'b1;
-wire trk_tick = (trk_div == 16'd0);       // ~12 injections/frame @48 MHz
+wire trk_tick = core_vs & ~core_vs_d;
 
 wire [7:0] trk_btn [0:2];
 assign trk_btn[0] = {4'b0, ~joystick_0[4], 3'b0};
 assign trk_btn[1] = {4'b0, ~joystick_1[4], 3'b0};
 assign trk_btn[2] = {4'b0, ~joystick_2[4], 3'b0};
 
-// Only two left-analog-stick ports exist at this top level today
-// (joystick_l_analog_0/1, players 1/2). Player 3 has no analog source wired
-// yet -- held at rest until a third analog port is added (NOTE: this only
-// reaches the game on the segas32 profile; S32_GAME_ONLY builds like
-// segas32v25 trim the trackball read decode, s32_core.sv's sel_ioex under
-// GAME_ONLY, regardless).
-wire signed [8:0] trk_velx [0:1];
-wire signed [8:0] trk_vely [0:1];
-assign trk_velx[0] = -trk_axis_vel(joystick_l_analog_0[7:0]);  // X reversed
-assign trk_vely[0] =  trk_axis_vel(joystick_l_analog_0[15:8]); // Y normal
-assign trk_velx[1] = -trk_axis_vel(joystick_l_analog_1[7:0]);
-assign trk_vely[1] =  trk_axis_vel(joystick_l_analog_1[15:8]);
+wire signed [8:0] trk_velx [0:2];
+wire signed [8:0] trk_vely [0:2];
+s32_trackball_stick trk_stick0 (
+    .analog(joystick_l_analog_0), .dx(trk_velx[0]), .dy(trk_vely[0])
+);
+s32_trackball_stick trk_stick1 (
+    .analog(joystick_l_analog_1), .dx(trk_velx[1]), .dy(trk_vely[1])
+);
+s32_trackball_stick trk_stick2 (
+    .analog(joystick_l_analog_2), .dx(trk_velx[2]), .dy(trk_vely[2])
+);
 
 wire trk_dv_a [0:2];
-assign trk_dv_a[0] = trk_tick & ((trk_velx[0] != 9'sd0) | (trk_vely[0] != 9'sd0));
-assign trk_dv_a[1] = trk_tick & ((trk_velx[1] != 9'sd0) | (trk_vely[1] != 9'sd0));
-assign trk_dv_a[2] = 1'b0;
+assign trk_dv_a[0] = sonic_controls & trk_tick &
+                     ((trk_velx[0] != 9'sd0) | (trk_vely[0] != 9'sd0));
+assign trk_dv_a[1] = sonic_controls & trk_tick &
+                     ((trk_velx[1] != 9'sd0) | (trk_vely[1] != 9'sd0));
+assign trk_dv_a[2] = sonic_controls & trk_tick &
+                     ((trk_velx[2] != 9'sd0) | (trk_vely[2] != 9'sd0));
 wire signed [8:0] trk_dx_a [0:2];
 wire signed [8:0] trk_dy_a [0:2];
 assign trk_dx_a[0] = trk_velx[0];
 assign trk_dy_a[0] = trk_vely[0];
 assign trk_dx_a[1] = trk_velx[1];
 assign trk_dy_a[1] = trk_vely[1];
-assign trk_dx_a[2] = 9'sd0;
-assign trk_dy_a[2] = 9'sd0;
+assign trk_dx_a[2] = trk_velx[2];
+assign trk_dy_a[2] = trk_vely[2];
+`endif
 
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.
@@ -741,11 +662,13 @@ wire svc_btn  = joystick_0[13] | joystick_1[13];
 // the third MiSTer player: mirroring P1 here would assert Start1+Start3 and
 // Coin1+Coin3 together.
 wire [7:0] svc12_generic = ~{
-                     (active_board.prot_sel == PROT_SONIC) ? joystick_2[10] : 1'b0,
-                     (active_board.prot_sel == PROT_SONIC) ? joystick_2[11] : 1'b0,
+                     sonic_controls ? joystick_2[10] : 1'b0,
+                     sonic_controls ? joystick_2[11] : 1'b0,
                      joystick_1[10], joystick_0[10],
                      joystick_1[11], joystick_0[11], test_btn, svc_btn};
-wire [7:0] svc12 = svc12_generic;
+wire [7:0] svc12_alien3 = ~{2'b00, 2'b00, joystick_0[11],
+                             joystick_1[11], test_btn, svc_btn};
+wire [7:0] svc12 = alien3_controls ? svc12_alien3 : svc12_generic;
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
 // EEPROM DO line inside s32_core.  Some games poll the PCB push switches
@@ -784,39 +707,8 @@ wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
 
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
-wire ce_pix_core, core_hs, core_vs, core_hb, core_vb;
+wire ce_pix_core, core_hs, core_hb, core_vb;
 wire signed [15:0] aud_l, aud_r;
-`ifndef S32_RELEASE_MINIMAL
-wire [31:0] core_debug_pc;
-wire        core_debug_halted;
-wire [23:0] core_debug_status;
-wire [15:0] core_debug_first_rom;
-wire  [8:0] core_debug_hcnt;
-wire  [8:0] core_debug_vcnt;
-wire [127:0] core_debug_sprite_desc;
-wire         core_debug_sprite_desc_valid;
-wire [127:0] core_debug_sprite_last_desc;
-wire [127:0] core_debug_sprite_last_draw_desc;
-wire  [23:0] core_debug_sprite_activity;
-wire  [31:0] core_debug_sprite_state;
-wire  [63:0] core_debug_sprite_counts;
-wire         core_debug_sprite_rendering;
-wire  [47:0] core_debug_sprram_cpu;
-wire  [47:0] core_debug_pal_rd;      // clk_sys palette shadow {0x410,0x200,0x000}
-wire  [23:0] core_debug_fb_underrun; // PF-6: sprite line-fetch overrun telemetry
-wire  [15:0] core_debug_cam;         // spidman world-camera {page, display_lo}
-wire  [23:0] core_debug_v25;         // V25 bring-up flags/mailbox snoop
-wire  [89:0] core_debug_v25_img;     // MCU image hash sweep + first fetched line
-// In-game debug OSD: sprite pipeline health (debug page 12).
-wire  [31:0] core_debug_spr_list;
-wire  [31:0] core_debug_spr_draw;
-wire  [31:0] core_debug_spr_sprwr;
-wire  [31:0] core_debug_spr_latency;
-wire  [31:0] core_debug_spr_health;
-wire  [15:0] core_debug_spr_publish;
-wire  [23:0] core_debug_tile_overrun;  // PF-6: tile-fetch line overrun telemetry
-wire  [15:0] core_debug_mixer_sprpx;
-`endif
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
@@ -826,14 +718,13 @@ s32_core core (
     .rst(reset), .video_rst(video_reset),
     .board(active_board),
     .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
-    .pause(pause),
+    // Production profiles have no debug/screenshot pause control. Keep the
+    // core port constant so standalone verification benches can still test
+    // V25 pause semantics without carrying the menu logic into an RBF.
+    .pause(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
-`ifdef S32_RELEASE_MINIMAL
     .sdr_p1_ack(p1_ack),
-`else
-    .sdr_p1_ack(debug_tile_probe ? 1'b0 : p1_ack),
-`endif
     .sdr_p2_req(core_p2_req), .sdr_p2_addr(core_p2_addr), .sdr_p2_dout(p2_dout),
     .sdr_p2_ack(p2_ack),
     .sdr_p3_req(p3_req), .sdr_p3_addr(p3_addr), .sdr_p3_dout(p3_dout), .sdr_p3_ack(p3_ack),
@@ -861,51 +752,11 @@ s32_core core (
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
     .audio_l(aud_l), .audio_r(aud_r),
-    .out_lamps(),
-`ifdef S32_RELEASE_MINIMAL
-    .debug_pc(), .debug_halted(), .debug_status(), .debug_first_rom(),
-    .debug_hcnt(), .debug_vcnt(), .debug_sprite_desc(),
-    .debug_sprite_desc_valid(), .debug_sprite_last_desc(),
-    .debug_sprite_last_draw_desc(), .debug_sprite_activity(),
-    .debug_sprite_state(), .debug_sprite_counts(), .debug_sprite_rendering(),
-    .debug_sprram_cpu(), .debug_pal_rd(), .debug_fb_underrun(),
-    .debug_cam(), .debug_v25(), .debug_v25_img(),
-    .debug_spr_list(), .debug_spr_draw(), .debug_spr_sprwr(),
-    .debug_spr_latency(), .debug_spr_health(), .debug_spr_publish(),
-    .debug_tile_overrun(), .debug_mixer_sprpx()
-`else
-    .debug_pc(core_debug_pc), .debug_halted(core_debug_halted),
-    .debug_status(core_debug_status), .debug_first_rom(core_debug_first_rom),
-    .debug_hcnt(core_debug_hcnt), .debug_vcnt(core_debug_vcnt),
-    .debug_sprite_desc(core_debug_sprite_desc),
-    .debug_sprite_desc_valid(core_debug_sprite_desc_valid),
-    .debug_sprite_last_desc(core_debug_sprite_last_desc),
-    .debug_sprite_last_draw_desc(core_debug_sprite_last_draw_desc),
-    .debug_sprite_activity(core_debug_sprite_activity),
-    .debug_sprite_state(core_debug_sprite_state),
-    .debug_sprite_counts(core_debug_sprite_counts),
-    .debug_sprite_rendering(core_debug_sprite_rendering),
-    .debug_sprram_cpu(core_debug_sprram_cpu),
-    .debug_pal_rd(core_debug_pal_rd),
-    .debug_fb_underrun(core_debug_fb_underrun),
-    .debug_cam(core_debug_cam),
-    .debug_v25(core_debug_v25),
-    .debug_v25_img(core_debug_v25_img),
-    .debug_spr_list(core_debug_spr_list),
-    .debug_spr_draw(core_debug_spr_draw),
-    .debug_spr_sprwr(core_debug_spr_sprwr),
-    .debug_spr_latency(core_debug_spr_latency),
-    .debug_spr_health(core_debug_spr_health),
-    .debug_spr_publish(core_debug_spr_publish),
-    .debug_tile_overrun(core_debug_tile_overrun),
-    .debug_mixer_sprpx(core_debug_mixer_sprpx)
-`endif
+    .out_lamps()
 );
 
-// Mute during OSD Pause: ce_fm keeps the jt12 rings ticking (state must not
-// be poisoned), so silence the held DAC output instead.
-assign AUDIO_L = pause ? 16'sd0 : aud_l;
-assign AUDIO_R = pause ? 16'sd0 : aud_r;
+assign AUDIO_L = aud_l;
+assign AUDIO_R = aud_r;
 
 //////////////////////////////   VIDEO   //////////////////////////////////////
 `ifdef S32_SYSTEM32_ONLY
@@ -913,263 +764,10 @@ wire [23:0] game_rgb = rgb_a;
 `else
 wire [23:0] game_rgb = status[6] ? rgb_b : rgb_a;
 `endif
-`ifndef S32_RELEASE_MINIMAL
-wire [15:0] debug_p1_word = debug_p1_data[{core_debug_hcnt[7:6], 4'b0000} +: 16];
-// Mode 5 is a four-band sprite post-mortem. Every cell is 16 pixels wide so
-// one screenshot gives stable, exact RGB values even if p2 never requests.
-//   y=  0..55 : summary, CPU sprite-RAM writes, activity/state/counts
-//   y= 56..111: last decoded descriptor (D0..D7 tags, words 0..7)
-//   y=112..167: last draw descriptor    (E0..E7 tags, words 0..7)
-//   y=168..223: first ROM descriptor (F0..F7), data (A0..A7), addr/flags
-// Summary cells x=0,16,...,160 are: signature; CPU write count/status/address
-// high; CPU address-low/data; activity; state-low; "ST"/state-high;
-// swap/decode/END counts; JUMP/zero/draw counts; fromRAM/ROM-request/flags;
-// first p2 physical address; and p2-valid/descriptor-valid/rendering as
-// full-intensity R/G/B. CPU status byte = {seen, last_BE[1:0], 5'b0}.
-// Descriptor cell RGB = {tag, word[15:8], word[7:0]}, word 0 first.
-wire [4:0] debug_p2_cell = core_debug_hcnt[8:4];
-wire [2:0] debug_p2_word_sel = core_debug_hcnt[6:4];
-wire [15:0] debug_p2_last_word =
-    core_debug_sprite_last_desc[{debug_p2_word_sel, 4'b0000} +: 16];
-wire [15:0] debug_p2_draw_word =
-    core_debug_sprite_last_draw_desc[{debug_p2_word_sel, 4'b0000} +: 16];
-wire [15:0] debug_p2_first_word =
-    core_debug_sprite_desc[{debug_p2_word_sel, 4'b0000} +: 16];
-wire [15:0] debug_p2_rom_word =
-    debug_p2_data[{debug_p2_word_sel, 4'b0000} +: 16];
-wire [7:0] debug_p2_flags = {5'b00000, core_debug_sprite_rendering,
-                            core_debug_sprite_desc_valid, debug_p2_valid};
-reg [23:0] debug_p2_rgb;
-always @(*) begin
-    debug_p2_rgb = 24'h000000;
-    if (core_debug_vcnt < 9'd56) begin
-        case (debug_p2_cell)
-            5'd0: debug_p2_rgb = 24'h533205; // "S2", diagnostic revision 5
-            5'd1: debug_p2_rgb = core_debug_sprram_cpu[47:24];
-            5'd2: debug_p2_rgb = core_debug_sprram_cpu[23:0];
-            5'd3: debug_p2_rgb = core_debug_sprite_activity;
-            5'd4: debug_p2_rgb = core_debug_sprite_state[23:0];
-            5'd5: debug_p2_rgb = {16'h5354, core_debug_sprite_state[31:24]};
-            5'd6: debug_p2_rgb = {core_debug_sprite_counts[7:0],
-                                  core_debug_sprite_counts[15:8],
-                                  core_debug_sprite_counts[23:16]};
-            5'd7: debug_p2_rgb = {core_debug_sprite_counts[31:24],
-                                  core_debug_sprite_counts[39:32],
-                                  core_debug_sprite_counts[47:40]};
-            5'd8: debug_p2_rgb = {core_debug_sprite_counts[55:48],
-                                  core_debug_sprite_counts[63:56],
-                                  debug_p2_flags};
-            5'd9: debug_p2_rgb = {3'b000, debug_p2_addr};
-            5'd10: debug_p2_rgb = {debug_p2_valid ? 8'hff : 8'h00,
-                                   core_debug_sprite_desc_valid ? 8'hff : 8'h00,
-                                   core_debug_sprite_rendering ? 8'hff : 8'h00};
-            default: debug_p2_rgb = 24'h000000;
-        endcase
-    end
-    else if (core_debug_vcnt < 9'd112) begin
-        if (debug_p2_cell < 5'd8)
-            debug_p2_rgb = {8'hd0 + {5'b00000, debug_p2_word_sel},
-                            debug_p2_last_word};
-        else if (debug_p2_cell == 5'd8) debug_p2_rgb = core_debug_sprite_activity;
-        else if (debug_p2_cell == 5'd9) debug_p2_rgb = core_debug_sprite_state[23:0];
-    end
-    else if (core_debug_vcnt < 9'd168) begin
-        if (debug_p2_cell < 5'd8)
-            debug_p2_rgb = {8'he0 + {5'b00000, debug_p2_word_sel},
-                            debug_p2_draw_word};
-        else if (debug_p2_cell == 5'd8) debug_p2_rgb = core_debug_sprite_activity;
-        else if (debug_p2_cell == 5'd9) debug_p2_rgb = core_debug_sprite_state[23:0];
-    end
-    else begin
-        if (debug_p2_cell < 5'd8)
-            debug_p2_rgb = {8'hf0 + {5'b00000, debug_p2_word_sel},
-                            debug_p2_first_word};
-        else if (debug_p2_cell < 5'd16)
-            debug_p2_rgb = {8'ha0 + {5'b00000, debug_p2_word_sel},
-                            debug_p2_rom_word};
-        else if (debug_p2_cell == 5'd16) debug_p2_rgb = {3'b000, debug_p2_addr};
-        else if (debug_p2_cell == 5'd17) debug_p2_rgb = {16'h0000, debug_p2_flags};
-        else if (debug_p2_cell == 5'd18) debug_p2_rgb = core_debug_sprite_activity;
-        else if (debug_p2_cell == 5'd19) debug_p2_rgb = core_debug_sprite_state[23:0];
-    end
-end
-reg input_coin_seen, input_start_seen;
-always @(posedge clk_sys) begin
-    if (reset) begin
-        input_coin_seen  <= 1'b0;
-        input_start_seen <= 1'b0;
-    end
-    else begin
-        if (!svc12[2]) input_coin_seen  <= 1'b1;
-        if (!svc12[4]) input_start_seen <= 1'b1;
-    end
-end
-
-// Three 32-pixel bands expose live state:
- //   R/G/B band 0 = renderer pixels / run ends / {write buf, read buf}
- //   R/G/B band 1 = non-erase writes / erase writes / line acknowledgements
- //   R/G/B band 2 = returned DDR beats / current erase line / read line
- // The remainder is the raw 16-bit sprite framebuffer pixel.
-wire [23:0] debug_fb_rgb = core_debug_hcnt < 9'd32 ?
-                              {fbw_count, fbend_count,
-                               4'b0000, fbw_buf, fbr_buf} :
-                           core_debug_hcnt < 9'd64 ?
-                              {ddrwe_count, erase_count, fbrack_count} :
-                           core_debug_hcnt < 9'd96 ?
-                              {ddrdata_count, fbe_y, fbr_y} :
-                              {8'h00, fbr_pix};
-
-// Palette-readback diagnostic (audit R20 palette suspects).  Three horizontal
-// bands show the clk_sys native content of palette entries 0x000 (top),
-// 0x200 (middle — the Holosseum backdrop) and 0x410 (bottom — sprite base),
-// converted xBBBBBGGGGGRRRRR -> RGB888.  Comparing the middle band (clk_sys
-// shadow of 0x200) against the normal game backdrop (clk_ram read of 0x200)
-// splits the fault: middle-band black + game background blue => a below-RTL
-// read/storage divergence; both blue => a write-side value fault.
-wire [15:0] dbg_pal_sel = (core_debug_vcnt < 9'd74)  ? core_debug_pal_rd[15:0]  :
-                          (core_debug_vcnt < 9'd149) ? core_debug_pal_rd[31:16] :
-                                                       core_debug_pal_rd[47:32];
-wire [4:0] dbg_pr = dbg_pal_sel[4:0], dbg_pg = dbg_pal_sel[9:5], dbg_pb = dbg_pal_sel[14:10];
-wire [23:0] debug_pal_rgb = {dbg_pr, dbg_pr[4:2], dbg_pg, dbg_pg[4:2], dbg_pb, dbg_pb[4:2]};
-
-// Camera-var view: GREEN = display low byte 0x208032 (should ramp smoothly as
-// you walk right); MAGENTA = page byte 0x208033 scaled (should step up only at
-// page boundaries).  If magenta jumps up almost immediately while green is
-// still low, the core's page is running ahead of the display -> the carry
-// divergence behind the early Venom/Scorpion triggers.
-wire [7:0] cam_page = core_debug_cam[15:8];
-wire [7:0] cam_lo   = core_debug_cam[7:0];
-wire [7:0] cam_mag  = {cam_page[2:0], 5'h00};
-wire [23:0] debug_cam_rgb = {cam_mag, cam_lo, cam_mag};
-
-// V25 view, three horizontal bands (core_debug_v25 =
-// {ce[3:0], wake, mb_nonzero, unmapped, io, rd_cnt[7:0], mb_last[7:0]}):
-//   top:    RED flickers ~10Hz while the V25 is being clocked;
-//           GREEN solid = firmware touched internal I/O (it executes);
-//           BLUE solid  = unmapped access seen (executing garbage).
-//   middle: gray level = the byte the V60 last read from 0xA00100
-//           (0x00 black = V25 silent; 'w' 0x77 = wake string present).
-//   bottom: RED changes while the V60 polls the mailbox;
-//           GREEN solid = wake byte confirmed  ->  V25 fully healthy;
-//           BLUE solid  = some nonzero mailbox byte was read.
-wire [7:0] v25_mb_last  = core_debug_v25[7:0];
-wire [7:0] v25_rd_cnt   = core_debug_v25[15:8];
-wire       v25_io       = core_debug_v25[16];
-wire       v25_unm      = core_debug_v25[17];
-wire       v25_mb_nz    = core_debug_v25[18];
-wire       v25_wake     = core_debug_v25[19];
-wire [3:0] v25_ce_blink = core_debug_v25[23:20];
-wire [63:0] v25_first_line = core_debug_v25_img[63:0];
-wire [23:0] v25_img_hash   = core_debug_v25_img[87:64];
-wire        v25_first_vld  = core_debug_v25_img[88];
-wire        v25_sweep_done = core_debug_v25_img[89];
-// Bands top→bottom: status flags / image hash as a solid colour / the first
-// fetched 8-byte line as 8 grey stripes (32px each, repeating) / last V60
-// mailbox-0x100 byte / V60 poll activity.
-wire  [2:0] v25_seg = core_debug_hcnt[7:5];
-wire  [7:0] v25_seg_byte = v25_first_line[{v25_seg, 3'b000} +: 8];
-// Registered: the band/stripe muxes must not deepen the already-critical
-// clk_sys video cone.  One clk_sys of latency shifts band edges by a sixth
-// of a pixel — invisible.
-reg [23:0] debug_v25_rgb;
-always @(posedge clk_sys) debug_v25_rgb <=
-    (core_debug_vcnt < 9'd40)  ? {{v25_ce_blink, 4'h0},
-                                  v25_io  ? 8'hff : 8'h00,
-                                  v25_unm ? 8'hff : 8'h00} :
-    (core_debug_vcnt < 9'd80)  ? (v25_sweep_done
-                                    ? {v25_img_hash[23:16], v25_img_hash[15:8],
-                                       v25_img_hash[7:0]}
-                                    : 24'h400040) :
-    (core_debug_vcnt < 9'd140) ? (v25_first_vld
-                                    ? {v25_seg_byte, v25_seg_byte, v25_seg_byte}
-                                    : 24'h400000) :
-    (core_debug_vcnt < 9'd180) ? {v25_mb_last, v25_mb_last, v25_mb_last} :
-                                 {v25_rd_cnt,
-                                  v25_wake  ? 8'hff : 8'h00,
-                                  v25_mb_nz ? 8'hff : 8'h00};
-
-// Debug page 12: sprite-pipeline health (in-game debug OSD). Eight 28-line
-// horizontal bands top to bottom. Each band's left half (hcnt<160) and
-// right half (hcnt>=160) show two related counters as {8'h00,value16} RGB
-// (R always 0, G:B = the 16-bit value big-endian, so a screenshot pixel
-// probe reads it directly as one 16-bit number). See docs/ for the
-// decode legend; brief summary:
-//   band 0: list-walk entries this field   | L=even field  R=odd field
-//   band 1: draw commands this field       | L=even field  R=odd field
-//   band 2: CPU sprite-RAM writes/field     | L=even field  R=odd field
-//   band 3: vblank->write latency (clk_ram) | L=first write R=last write
-//   band 4: R=frames-since-publish G=overrun-count(sticky-class) B=render-passes-this-field;
-//           a solid magenta 16px marker at the far left means
-//           buffer_collision_sticky has fired at least once (arabfgt-floor-
-//           flicker-class bug: renderer wrote into a buffer being scanned)
-//   band 5: cumulative buffer-publish count (saturating)
-//   band 6: tile-fetch line overrun (PF-6): R=sticky "ever overran" (0xff/0x00), G:B=count
-//   band 7: opaque sprite pixels reaching the mixer this field (general
-//           "is content reaching the screen at all" check)
-wire [15:0] dbg12_list_l  = core_debug_spr_list[15:0];
-wire [15:0] dbg12_list_r  = core_debug_spr_list[31:16];
-wire [15:0] dbg12_draw_l  = core_debug_spr_draw[15:0];
-wire [15:0] dbg12_draw_r  = core_debug_spr_draw[31:16];
-wire [15:0] dbg12_sprwr_l = core_debug_spr_sprwr[15:0];
-wire [15:0] dbg12_sprwr_r = core_debug_spr_sprwr[31:16];
-wire [15:0] dbg12_w0lat   = core_debug_spr_latency[15:0];
-wire [15:0] dbg12_w1lat   = core_debug_spr_latency[31:16];
-wire        dbg12_collision = core_debug_spr_health[0];
-wire [23:0] dbg12_health_rgb = {core_debug_spr_health[31:8]};
-reg [23:0] debug_p12_rgb;
-always @(*) begin
-    if (core_debug_vcnt < 9'd28)
-        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_list_l : dbg12_list_r};
-    else if (core_debug_vcnt < 9'd56)
-        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_draw_l : dbg12_draw_r};
-    else if (core_debug_vcnt < 9'd84)
-        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_sprwr_l : dbg12_sprwr_r};
-    else if (core_debug_vcnt < 9'd112)
-        debug_p12_rgb = {8'h00, core_debug_hcnt < 9'd160 ? dbg12_w0lat : dbg12_w1lat};
-    else if (core_debug_vcnt < 9'd140)
-        debug_p12_rgb = (core_debug_hcnt < 9'd16 && dbg12_collision) ? 24'hff00ff
-                                                                      : dbg12_health_rgb;
-    else if (core_debug_vcnt < 9'd168)
-        debug_p12_rgb = {8'h00, core_debug_spr_publish};
-    else if (core_debug_vcnt < 9'd196)
-        debug_p12_rgb = core_debug_tile_overrun;
-    else
-        debug_p12_rgb = {8'h00, core_debug_mixer_sprpx};
-end
-
-wire [23:0] debug_rgb = status[11:8] == 4'd1 ? core_debug_pc[23:0] :
-                        status[11:8] == 4'd2 ? core_debug_status :
-                        status[11:8] == 4'd3 ? {8'h00, core_debug_first_rom} :
-                        status[11:8] == 4'd4 ? (debug_p1_valid ? {8'h00, debug_p1_word} : 24'hC00000) :
-                        status[11:8] == 4'd5 ? debug_p2_rgb :
-                        status[11:8] == 4'd6 ? {input_coin_seen ? 8'hff : 8'h00,
-                                               input_start_seen ? 8'hff : 8'h00,
-                                               ~svc12} :
-                        status[11:8] == 4'd7 ? debug_fb_rgb :
-                        status[11:8] == 4'd8 ? debug_pal_rgb :
-                        status[11:8] == 4'd9 ? core_debug_fb_underrun :
-                        status[11:8] == 4'd10 ? debug_cam_rgb :
-                        status[11:8] == 4'd11 ? debug_v25_rgb :
-                        status[11:8] == 4'd12 ? debug_p12_rgb :
-                                                   game_rgb;
-`endif
-// Valid sync continues throughout startup. The solid colour identifies the
-// exact gate holding game logic: blue=download, red=ROM completion,
-// yellow=external/OSD reset. Normal game RGB takes over after boot.
-// debug_rgb (compiled only outside S32_RELEASE_MINIMAL) already falls back
-// to game_rgb when status[11:8]==0, so this substitution is transparent
-// when no debug page is selected. Previously debug_rgb was computed but
-// never actually reached the video output -- none of the debug pages,
-// including the ones added here, were ever visible on real hardware.
-`ifndef S32_RELEASE_MINIMAL
-wire [23:0] rgb_out = ioctl_download ? 24'h0000C0 :
-                        ~rom_loaded   ? 24'hC00000 :
-                        video_reset   ? 24'hC0C000 : debug_rgb;
-`else
-wire [23:0] rgb_out = ioctl_download ? 24'h0000C0 :
-                        ~rom_loaded   ? 24'hC00000 :
-                        video_reset   ? 24'hC0C000 : game_rgb;
-`endif
+// The core stays reset until ROM/SDRAM are ready and therefore emits a stable
+// blank raster during startup. Do not add diagnostic colour muxes to the
+// production video path.
+wire [23:0] rgb_out = game_rgb;
 
 assign CE_PIXEL = ce_pix_core;
 assign VGA_R  = rgb_out[23:16];

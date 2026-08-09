@@ -177,6 +177,7 @@ function Run-HdlTest {
 
     $library = New-WorkLibrary $Name
     $arguments = @("-sv", "-work", $library)
+    $arguments += "+define+SIMULATION"
     foreach ($define in $Defines) { $arguments += "+define+$define" }
     $arguments += Resolve-Sources $Sources
     [void](Invoke-NativeCapture $script:Vlog $arguments "vlog ($Name)")
@@ -320,7 +321,7 @@ function Run-Differential {
         "rtl/cpu/v60/s32_v60_bus.sv",
         "verif/v60/tb_v60_diff.sv"
     )
-    [void](Invoke-NativeCapture $script:Vlog (@("-sv", "-work", $library) + $sources) "vlog ($name)")
+    [void](Invoke-NativeCapture $script:Vlog (@("-sv", "-work", $library, "+define+SIMULATION") + $sources) "vlog ($name)")
     [void](Invoke-NativeCapture $script:PythonExe @("verif/cosim/v60_ref.py") "V60 reference self-test")
 
     $testDirectory = Split-Path -Parent $library
@@ -455,14 +456,12 @@ try {
     $arabMraOutput = @(Invoke-NativeCapture $PythonExe @("verif/check_arabianfight_release.py") "Arabian Fight release MRA check")
     Assert-Marker $arabMraOutput "ARABIAN FIGHT RELEASE PASS" "Arabian Fight release MRA check"
     Run-HdlTest "t08_ga2_path" "tb_core_ga2path" ($FullCoreSources + "verif/common/tb_core_ga2path.sv") "GA2 PATH PASS" @(
-        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING",
-        "S32_RELEASE_MINIMAL"
+        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING"
     ) @("-novopt")
     Run-HdlTest "t08_ga_rom_cache" "tb_ga_rom_cache" @(
         "rtl/s32_pkg.sv", "rtl/s32_core.sv", "verif/common/tb_ga_rom_cache.sv"
     ) "PASS: Golden Axe ROM cache directed/reference tests passed" @(
-        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING",
-        "S32_RELEASE_MINIMAL"
+        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING"
     )
 
     Write-Tier 9 "framebuffer interface directed test (runs / shadow RMW / erase / read)"
@@ -590,6 +589,16 @@ try {
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")
 
+    Write-Tier 35 "three-player left-stick to trackball velocity"
+    Run-HdlTest "t35_trackball_stick" "tb_trackball_stick" @(
+        "rtl/io/s32_io.sv", "verif/common/tb_trackball_stick.sv"
+    ) "TRACKBALL STICK PASS"
+
+    Write-Tier 35 "Slip Stream right-stick pedals and digital fallbacks"
+    Run-HdlTest "t35_driving_controls" "tb_driving_controls" @(
+        "rtl/io/s32_driving_controls.sv", "verif/common/tb_driving_controls.sv"
+    ) "PASS: Slip Stream driving controls"
+
     Write-Tier 35 "MAME-backed uPD4701 trackball origin and per-byte latch semantics"
     Run-HdlTest "t35_upd4701_mame" "tb_upd4701_mame" @(
         "rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_upd4701_mame.sv"
@@ -599,6 +608,11 @@ try {
     Run-HdlTest "t36_brival_protection" "tb_brival_protection" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_brival_protection.sv"
     ) "BRIVAL PROTECTION PASS"
+
+    Write-Tier 36 "MAME-backed Air Rescue DSP command and byte-lane contract"
+    Run-HdlTest "t36_arescue_protection" "tb_arescue_protection" @(
+        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_arescue_protection.sv"
+    ) "AIR RESCUE PROTECTION PASS"
 
     Write-Tier 37 "MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
     Run-HdlTest "t37_radm_msm6253" "tb_radm_msm6253" @(

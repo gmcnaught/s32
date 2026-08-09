@@ -34,7 +34,8 @@ fi
 "$VERILATOR_SAFE" status
 if [[ "${ROMBOOT_SKIP_BUILD:-0}" != 1 ]]; then
   "$VERILATOR_SAFE" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 $WARN \
-    +define+SIMULATION +define+S32_REAL_FB_SIM \
+    +define+SIMULATION +define+S32_REAL_FB_SIM +define+S32_SYSTEM32_ONLY \
+    +define+S32_PROFILE_STANDARD +define+S32_GAME_ONLY_STD \
     --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f scratch/romboot.f
 fi
 SIM="$PWD/$MDIR/romboot"

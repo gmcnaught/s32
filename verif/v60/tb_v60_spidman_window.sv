@@ -24,8 +24,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -105,7 +104,7 @@ initial begin
 
     repeat (8) @(posedge clk);
     rst = 0;
-    wait (cpu.dbg_halted);
+    wait (cpu.halted);
     repeat (4) @(posedge clk);
 
     if (ram[16'h8032 >> 1] == 16'h0100 &&

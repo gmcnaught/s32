@@ -40,6 +40,16 @@ if (-not $NoBuild) {
     & $BuildScript -ModelDirectory $ModelDirectory
 }
 if (-not (Test-Path -LiteralPath $executable)) { throw "Missing visual executable: $executable" }
+
+# Keep the model on the same UCRT64 ABI it was built against.  The safe
+# launcher may sanitize PATH, so executable-local runtime DLLs are deliberate.
+foreach ($runtimeDll in @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")) {
+    $runtimeSource = Join-Path "C:\msys64\ucrt64\bin" $runtimeDll
+    if (-not (Test-Path -LiteralPath $runtimeSource)) {
+        throw "Missing UCRT64 runtime DLL: $runtimeSource"
+    }
+    Copy-Item -LiteralPath $runtimeSource -Destination $ModelDirectory -Force
+}
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 
 $liveFile = Join-Path $OutputDirectory "live.ppm"

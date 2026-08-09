@@ -113,6 +113,74 @@ module s32_eeprom_ram (
 );
 
 `ifdef ALTERA_RESERVED_QIS
+`ifdef S32_V25_MLAB_EEPROM
+// Cyclone V MLABs do not support the true-dual-port shape used below.  The
+// EEPROM has only one writer, so keep two coherent simple-dual-port replicas:
+// one supplies the serial engine's read view and one supplies NVRAM upload.
+// This preserves simultaneous reads while releasing the otherwise mostly
+// empty M10K in the RAM-constrained real-V25 production profile.
+wire [15:0] q_a_mem;
+reg         q_a_write_forward = 1'b0;
+reg  [15:0] q_a_write_data = 16'h0000;
+
+always @(posedge clk) begin
+    q_a_write_forward <= wren_a;
+    q_a_write_data    <= data_a;
+end
+
+// Port A of the original true-dual-port RAM returned NEW_DATA on a write.
+assign q_a = q_a_write_forward ? q_a_write_data : q_a_mem;
+
+altsyncram ram_serial (
+    .clock0(clk), .address_a(address_a), .data_a(data_a), .wren_a(wren_a),
+    .clock1(clk), .address_b(address_a), .q_b(q_a_mem),
+    .aclr0(1'b0), .aclr1(1'b0), .addressstall_a(1'b0),
+    .addressstall_b(1'b0), .byteena_a(1'b1), .clocken0(1'b1),
+    .clocken1(1'b1), .clocken2(1'b1), .clocken3(1'b1),
+    .rden_a(1'b1), .rden_b(1'b1), .eccstatus()
+);
+defparam
+    ram_serial.operation_mode = "DUAL_PORT",
+    ram_serial.intended_device_family = "Cyclone V",
+    ram_serial.lpm_type = "altsyncram",
+    ram_serial.numwords_a = 64,
+    ram_serial.widthad_a = 6,
+    ram_serial.width_a = 16,
+    ram_serial.width_byteena_a = 1,
+    ram_serial.numwords_b = 64,
+    ram_serial.widthad_b = 6,
+    ram_serial.width_b = 16,
+    ram_serial.address_reg_b = "CLOCK1",
+    ram_serial.outdata_reg_b = "UNREGISTERED",
+    ram_serial.power_up_uninitialized = "FALSE",
+    ram_serial.ram_block_type = "MLAB",
+    ram_serial.read_during_write_mode_mixed_ports = "OLD_DATA";
+
+altsyncram ram_upload (
+    .clock0(clk), .address_a(address_a), .data_a(data_a), .wren_a(wren_a),
+    .clock1(clk), .address_b(address_b), .q_b(q_b),
+    .aclr0(1'b0), .aclr1(1'b0), .addressstall_a(1'b0),
+    .addressstall_b(1'b0), .byteena_a(1'b1), .clocken0(1'b1),
+    .clocken1(1'b1), .clocken2(1'b1), .clocken3(1'b1),
+    .rden_a(1'b1), .rden_b(1'b1), .eccstatus()
+);
+defparam
+    ram_upload.operation_mode = "DUAL_PORT",
+    ram_upload.intended_device_family = "Cyclone V",
+    ram_upload.lpm_type = "altsyncram",
+    ram_upload.numwords_a = 64,
+    ram_upload.widthad_a = 6,
+    ram_upload.width_a = 16,
+    ram_upload.width_byteena_a = 1,
+    ram_upload.numwords_b = 64,
+    ram_upload.widthad_b = 6,
+    ram_upload.width_b = 16,
+    ram_upload.address_reg_b = "CLOCK1",
+    ram_upload.outdata_reg_b = "UNREGISTERED",
+    ram_upload.power_up_uninitialized = "FALSE",
+    ram_upload.ram_block_type = "MLAB",
+    ram_upload.read_during_write_mode_mixed_ports = "OLD_DATA";
+`else
 altsyncram ram (
     .clock0(clk),
     .address_a(address_a),
@@ -168,6 +236,7 @@ defparam
     ram.width_byteena_a = 1,
     ram.width_byteena_b = 1,
     ram.wrcontrol_wraddress_reg_b = "CLOCK1";
+`endif
 `else
 reg [15:0] mem [0:63];
 reg [15:0] q_a_r;
@@ -777,6 +846,39 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
+// MiSTer signed left-stick to SegaSonic trackball velocity. The 16-count
+// deadzone removes controller drift; subtract-and-slice gives a linear 0..14
+// count/frame response with no multiplier or divider. MAME reverses all three
+// Sonic X axes, while Y remains normal.
+module s32_trackball_stick (
+    input      [15:0] analog,       // {signed Y, signed X}, zero centred
+    output signed [8:0] dx,
+    output signed [8:0] dy
+);
+
+localparam [7:0] DEADZONE = 8'd16;
+
+function automatic signed [8:0] axis_velocity(input [7:0] raw);
+    reg signed [8:0] offset;
+    reg        [7:0] magnitude;
+    reg        [7:0] adjusted;
+begin
+    offset    = {raw[7], raw};
+    magnitude = raw[7] ? ((~raw) + 8'd1) : raw;
+    adjusted  = (magnitude > DEADZONE) ? magnitude - DEADZONE : 8'd0;
+    axis_velocity = offset[8] ? -$signed({4'b0000, adjusted[7:3]}) :
+                                $signed({4'b0000, adjusted[7:3]});
+end
+endfunction
+
+wire signed [8:0] x_velocity = axis_velocity(analog[7:0]);
+assign dx = -x_velocity;
+assign dy = axis_velocity(analog[15:8]);
+
+endmodule
+
+// ---------------------------------------------------------------------------
+
 module s32_upd4701 #(
     parameter ENABLE = 1'b1
 ) (

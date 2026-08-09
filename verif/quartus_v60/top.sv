@@ -15,9 +15,7 @@ module v60_probe (
     input             irq_n,
     input       [7:0] irq_vector,
     output            irq_ack,
-    input             nmi_n,
-    output     [31:0] dbg_pc,
-    output            dbg_halted
+    input             nmi_n
 );
 
 s32_v60 #(
@@ -37,9 +35,7 @@ s32_v60 #(
     .irq_n(irq_n),
     .irq_vector(irq_vector),
     .irq_ack(irq_ack),
-    .nmi_n(nmi_n),
-    .dbg_pc(dbg_pc),
-    .dbg_halted(dbg_halted)
+    .nmi_n(nmi_n)
 );
 
 endmodule

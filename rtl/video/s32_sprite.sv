@@ -27,20 +27,6 @@ module s32_sprite #(
     input             present,      // start-of-vblank pulse: publish completed frame
     input             vblank,       // end-of-vblank pulse (1 clk_sys wide =
                                     // 2 clk_ram samples; edge-detected below)
-    output reg        rendering,
-
-    // Observation-only descriptor captured for the first production sprite
-    // ROM request after reset. No renderer state depends on these outputs.
-    output reg [127:0] debug_first_rom_desc,
-    output reg         debug_first_rom_valid,
-    // Sticky bring-up telemetry. The last descriptor is every decoded
-    // command; last_draw is the last type-00 command, including zero-sized
-    // draws. Counts saturate so long-running hardware never aliases to zero.
-    output reg [127:0] debug_last_desc,
-    output reg [127:0] debug_last_draw_desc,
-    output reg  [23:0] debug_activity,
-    output      [31:0] debug_state,
-    output      [63:0] debug_counts,
 
     // sprite control registers (0x500000, byte regs 0..7)
     input             ctl_we,
@@ -77,25 +63,8 @@ module s32_sprite #(
     output reg  [1:0] disp_buf,     // game-visible logical A/B selector
     output reg  [1:0] scan_buf,     // newest physical buffer the mixer reads
     output reg  [1:0] scan_buf_prev,// preceding completed field
-    output reg        scan_dual,    // both scan buffers contain valid fields
+    output reg        scan_dual     // both scan buffers contain valid fields
 
-    // In-game debug OSD (S32 debug video pages; observational only, does not
-    // feed back into any renderer decision). See s32_sprite_health_debug
-    // below for field definitions.
-    output     [15:0] debug_list_even, debug_list_odd,
-    output     [15:0] debug_draw_even, debug_draw_odd,
-    output      [7:0] debug_render_pass_count,
-    output      [7:0] debug_overrun_count,
-    output     [15:0] debug_w0lat, debug_w1lat,
-    output     [15:0] debug_sprwr_even, debug_sprwr_odd,
-    output     [15:0] debug_publish_count,
-    output      [7:0] debug_frames_since_publish,
-    output             debug_buffer_collision_sticky,
-
-    // CPU sprite-RAM write strobe, forwarded from s32_core's own bus decode
-    // (this module has no CPU write port of its own; sprite RAM is written
-    // directly by the CPU on its own dual-port RAM port — see s32_core.sv).
-    input              dbg_sprram_wr
 );
 
 // control registers
@@ -199,14 +168,6 @@ reg [12:0] list_idx;                 // entry index (16-byte units)
 // same bound, a missing END or a self-referential JUMP traps this FSM forever
 // and leaves the last displayed framebuffer frozen while the V60 keeps going.
 reg [13:0] list_count;
-reg [7:0] debug_swap_count;
-reg [7:0] debug_decode_count;
-reg [7:0] debug_end_count;
-reg [7:0] debug_jump_count;
-reg [7:0] debug_zero_count;
-reg [7:0] debug_draw_count;
-reg [7:0] debug_fromram_count;
-reg [7:0] debug_romreq_count;
 reg [15:0] clip_l, clip_t, clip_r, clip_b;   // in-clip rect
 reg        clip_en, clipout_en;
 reg [15:0] cout_l, cout_t, cout_r, cout_b;
@@ -267,22 +228,6 @@ reg        do_clipout_row; // clip-out rect covers this row's y
 // MAME visits every word even if strong downscale emits no pixel from it.
 reg [9:0]  end_scan_word;
 
-// Exact screenshot packing used by Debug Video mode 5.
-// state  = {list_count[13:0], list_idx[12:0], FSM[4:0]}
-// counts = {romreq, fromRAM, draw, zero, jump, END, decode, swap}
-// activity[23:0] = {ctl-write, done, fb-busy, scale-done, scale-start,
-//                    watchdog, fb-end, pixel, fb-start, ROM-ack, ROM-request,
-//                    row, fromRAM, draw, zero, clip, JUMP, END, decode, fetch,
-//                    swap, erase-ack, erase-start, vblank}
-assign debug_state  = {list_count, list_idx, rs};
-assign debug_counts = {debug_romreq_count, debug_fromram_count,
-                       debug_draw_count, debug_zero_count,
-                       debug_jump_count, debug_end_count,
-                       debug_decode_count, debug_swap_count};
-
-function automatic [7:0] debug_sat_inc(input [7:0] value);
-    debug_sat_inc = (&value) ? value : value + 8'd1;
-endfunction
 
 // Pixel address/position stage.  R_PIXEL verifies the source cache and
 // registers these inexpensive coordinates; R_EMIT performs the wide dynamic
@@ -342,25 +287,12 @@ endfunction
 
 always @(posedge clk) begin
     if (rst) begin
-        rs <= R_IDLE; rendering <= 0;
+        rs <= R_IDLE;
         disp_buf <= 2'b00;
         scan_buf <= 2'b00;
         scan_buf_prev <= 2'b00;
         scan_dual <= 1'b0;
         scan_seen <= 1'b0;
-        debug_first_rom_desc <= 128'd0;
-        debug_first_rom_valid <= 1'b0;
-        debug_last_desc <= 128'd0;
-        debug_last_draw_desc <= 128'd0;
-        debug_activity <= 24'd0;
-        debug_swap_count <= 8'd0;
-        debug_decode_count <= 8'd0;
-        debug_end_count <= 8'd0;
-        debug_jump_count <= 8'd0;
-        debug_zero_count <= 8'd0;
-        debug_draw_count <= 8'd0;
-        debug_fromram_count <= 8'd0;
-        debug_romreq_count <= 8'd0;
         srom_verify_data <= 128'd0;
         srom_retry_count <= 16'd0;
         list_count <= 0;
@@ -394,10 +326,7 @@ always @(posedge clk) begin
         // CPU control writes
         if (ctl_we) begin
             ctl[ctl_addr] <= ctl_wdata;
-            debug_activity[23] <= 1'b1;
         end
-        if (vblank_rise) debug_activity[0] <= 1'b1;
-        if (fb_busy) debug_activity[21] <= 1'b1;
 
         // The logical controller swap intentionally remains 50 us after
         // vblank ends, matching MAME and preserving CPU-visible status timing.
@@ -474,7 +403,6 @@ always @(posedge clk) begin
                 logic [1:0] erase_work;
                 render_after_erase <= 1'b0;
                 erase_after_swap <= 1'b0;
-                rendering <= 1'b0;
                 fb_er_y <= 0;
                 erase_mon <= 1'b0;
                 if (is_multi32) begin
@@ -508,8 +436,6 @@ always @(posedge clk) begin
             next_work = choose_work_buf(scan_buf, scan_buf_prev,
                                         retain_previous && scan_dual,
                                         ready_buf, ready_valid);
-            debug_activity[3] <= 1'b1;
-            debug_swap_count <= debug_sat_inc(debug_swap_count);
             disp_buf <= {1'b0, ~disp_buf[0]}; // bit0 is the sole A/B selector
             publish_on_done <= 1'b1;
             if (is_multi32)
@@ -525,7 +451,6 @@ always @(posedge clk) begin
                     erase_buf_sel <= {1'b0, disp_buf[0]};
                 erase_after_swap <= 1'b0;
                 render_after_erase <= 1'b1;
-                rendering <= 1'b0;
                 fb_er_y <= 8'd0;
                 erase_mon <= 1'b0;
                 rs <= R_ERASE;
@@ -536,7 +461,6 @@ always @(posedge clk) begin
             end
         end
         R_RENDER: begin
-            rendering <= 1'b1;
             list_idx <= 0;
             list_count <= 0;
             jump_xoff <= 0; jump_yoff <= 0;
@@ -546,14 +470,12 @@ always @(posedge clk) begin
             rs <= R_FETCH;
         end
         R_ERASE: begin
-            debug_activity[1] <= 1'b1;
             fb_er_req <= 1'b1;
             fb_er_buf <= is_multi32 ? {erase_mon, erase_buf_sel[0]}
                                     : erase_buf_sel;
             rs <= R_ERASEW;
         end
         R_ERASEW: if (fb_er_ack) begin
-            debug_activity[2] <= 1'b1;
             fb_er_req <= 0;
             if (fb_er_y == 8'd223) begin
                 if (is_multi32 && !erase_mon) begin
@@ -578,7 +500,6 @@ always @(posedge clk) begin
         // (slist_data is a registered BRAM read: q lags addr by one clk,
         //  so prime the pipeline one cycle before sampling)
         R_FETCH: begin
-            debug_activity[4] <= 1'b1;
             swi <= 0;
             slist_addr <= {list_idx, 3'b000};
             rs <= R_FETCHP;
@@ -597,29 +518,18 @@ always @(posedge clk) begin
         end
 
         R_DECODE: begin
-            debug_activity[5] <= 1'b1;
-            debug_decode_count <= debug_sat_inc(debug_decode_count);
-            debug_last_desc <= {sw[7], sw[6], sw[5], sw[4],
-                                sw[3], sw[2], sw[1], sw[0]};
             if (list_count == 14'd8192) begin
                 // Bounded-list overdraw: abandon this frame and return to
                 // R_IDLE so the next vblank can start a fresh sprite pass.
-                rendering <= 1'b0;
-                debug_activity[18] <= 1'b1;
                 rs <= R_DONE;
             end
             else begin
             list_count <= list_count + 1'd1;
             case (sw[0][15:14])
             2'b11: begin
-                rendering <= 0;
-                debug_activity[6] <= 1'b1;
-                debug_end_count <= debug_sat_inc(debug_end_count);
                 rs <= R_DONE;
             end                                                   // end of list
             2'b10: begin                                          // jump
-                debug_activity[7] <= 1'b1;
-                debug_jump_count <= debug_sat_inc(debug_jump_count);
                 if (sw[0][13]) begin
                     jump_yoff <= {20'b0, sw[1][11:0]};
                     jump_xoff <= {20'b0, sw[2][11:0]};
@@ -628,7 +538,6 @@ always @(posedge clk) begin
                 rs <= R_FETCH;
             end
             2'b01: begin                                          // set clip
-                debug_activity[8] <= 1'b1;
                 // MAME: bit12 of word0 gates clip-in (words 0-3: y0,y1,x0,x1
                 // sext12); bit13 gates clip-out (words 4-7)
                 if (sw[0][12]) begin
@@ -651,11 +560,7 @@ always @(posedge clk) begin
                 rs <= R_FETCH;
             end
             default: begin                                        // draw sprite
-                debug_last_draw_desc <= {sw[7], sw[6], sw[5], sw[4],
-                                         sw[3], sw[2], sw[1], sw[0]};
                 if (d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0) begin
-                    debug_activity[9] <= 1'b1;
-                    debug_zero_count <= debug_sat_inc(debug_zero_count);
                     // Inline indirect tables occupy the following two list
                     // entries even when the draw itself has zero dimensions.
                     list_idx <= list_idx + 1'd1
@@ -667,13 +572,6 @@ always @(posedge clk) begin
                     // uses (size-1)/2, which matters for even-width sprites.
                     // 10=start, 01=end.
                     logic signed [13:0] xx, yy;
-                    debug_activity[10] <= 1'b1;
-                    debug_activity[19] <= 1'b1;
-                    debug_draw_count <= debug_sat_inc(debug_draw_count);
-                    if (d_fromram) begin
-                        debug_activity[11] <= 1'b1;
-                        debug_fromram_count <= debug_sat_inc(debug_fromram_count);
-                    end
                     // MAME uses int arithmetic after sign-extending both
                     // 12-bit values.  Explicitly widen before addition so
                     // large negative offsets cannot wrap back onscreen.
@@ -713,7 +611,6 @@ always @(posedge clk) begin
         // clocks after scale_start.  One following clock transfers the pair
         // atomically before any row or indirect-table work can consume them.
         R_SCALE: if (scale_done) begin
-            debug_activity[20] <= 1'b1;
             ystep <= scale_yquot;
             xstep <= scale_xquot;
             rs <= d_ind ? R_INDTAB : R_ROW;
@@ -741,7 +638,6 @@ always @(posedge clk) begin
         R_ROW: begin
             logic signed [13:0] scry;
             logic [12:0] sy_now;
-            debug_activity[12] <= 1'b1;
             scry = d_flipy ? (y0 + $signed({4'b0000, d_dsth})
                               - 14'sd1 - $signed({4'b0000, dy}))
                            : (y0 + $signed({4'b0000, dy}));
@@ -769,7 +665,6 @@ always @(posedge clk) begin
                 do_clipout_row <= clipout_en && scry >= $signed(cout_t)
                                              && scry <= $signed(cout_b);
                 fb_wr_start <= 1'b1;
-                debug_activity[15] <= 1'b1;
                 fb_wr_buf <= is_multi32 ? {d_mon, ~disp_buf[0]} : work_buf;
                 // MAME applies latched controller flip while scanning the
                 // displayed sprite framebuffer.  Mirroring writes into the
@@ -784,19 +679,11 @@ always @(posedge clk) begin
 
         // fetch 128-bit chunk of source row when needed
         R_ROWDATA: begin
-            debug_activity[13] <= 1'b1;
-            debug_romreq_count <= debug_sat_inc(debug_romreq_count);
-            if (!debug_first_rom_valid) begin
-                debug_first_rom_desc <= {sw[7], sw[6], sw[5], sw[4],
-                                         sw[3], sw[2], sw[1], sw[0]};
-                debug_first_rom_valid <= 1'b1;
-            end
             srom_req <= 1'b1;
             srom_addr <= rowbase;
             rs <= R_ROWDATAW;
         end
         R_ROWDATAW: if (srom_ack) begin
-            debug_activity[14] <= 1'b1;
             srom_req <= 0;
             if (VERIFY_SROM && verify_srom) begin
                 srom_verify_data <= srom_data;
@@ -815,13 +702,11 @@ always @(posedge clk) begin
             rs <= R_ROM_VERIFY;
         end
         R_ROM_VERIFY: begin
-            debug_romreq_count <= debug_sat_inc(debug_romreq_count);
             srom_req <= 1'b1;
             srom_addr <= rowbase;
             rs <= R_ROM_VERIFYW;
         end
         R_ROM_VERIFYW: if (srom_ack) begin
-            debug_activity[14] <= 1'b1;
             srom_req <= 1'b0;
             if (srom_data == srom_verify_data) begin
                 pixrow <= srom_data;
@@ -908,7 +793,6 @@ always @(posedge clk) begin
                 (!d_flipx && scrx > clip_x_max) ||
                 ( d_flipx && scrx < clip_x_min)) begin
                 fb_wr_end <= 1'b1;
-                debug_activity[17] <= 1'b1;
                 dy <= dy + 1'd1;
                 yacc <= yacc + ystep;
                 rs <= R_ROW;
@@ -956,7 +840,6 @@ always @(posedge clk) begin
             end
             else if (!d_opaque && scan_end) begin
                 fb_wr_end <= 1'b1;
-                debug_activity[17] <= 1'b1;
                 dy <= dy + 1'd1;
                 yacc <= yacc + ystep;
                 rs <= R_ROW;
@@ -1023,7 +906,6 @@ always @(posedge clk) begin
                 outpix = d_color | {8'b0, pix};
             end
             fb_wr_valid <= gate_clip && gate_draw;
-            if (gate_clip && gate_draw) debug_activity[16] <= 1'b1;
             fb_wr_pix   <= outpix;   // shadow runs RMW in fb_if
             fb_wr_x     <= ctl_latched[2][0]
                          ? (hpix - 9'd1 - pixel_scrx[8:0])
@@ -1032,7 +914,6 @@ always @(posedge clk) begin
             if (pixel_piw == pixel_piw_last && !d_opaque &&
                 (d_bpp8 ? (pen8 == 8'hff) : (pen4 == 4'hf))) begin
                 fb_wr_end <= 1'b1;
-                debug_activity[17] <= 1'b1;
                 dy <= dy + 1'd1;
                 yacc <= yacc + ystep;
                 rs <= R_ROW;
@@ -1047,7 +928,6 @@ always @(posedge clk) begin
         end
 
         R_DONE: begin
-            debug_activity[22] <= 1'b1;
             // A later completed frame supersedes an older unpresented one.
             // This can drop a frame after a genuine render overrun, but it can
             // never expose a partial buffer or write into the scanned buffer.
@@ -1063,210 +943,9 @@ always @(posedge clk) begin
     end
 end
 
-// In-game debug OSD: pure observational wires into s32_sprite_health_debug,
-// none of them feed back into any renderer decision above. Each matches an
-// existing FSM condition exactly so it fires on precisely the same cycle as
-// the counter/state it shadows.
-`ifndef S32_RELEASE_MINIMAL
-wire debug_list_pulse   = (rs == R_DECODE);                 // mirrors debug_decode_count (unconditional in R_DECODE)
-wire debug_draw_pulse   = (rs == R_DECODE) && (list_count != 14'd8192) &&
-                           (sw[0][15:14] == 2'b00) &&
-                           !(d_srcw == 0 || d_srch == 0 || d_dstw == 0 || d_dsth == 0);
-wire debug_render_start_pulse = (rs == R_IDLE) && (vblank_rise || vblank_pending);
-wire debug_overrun_pulse      = vblank_rise && (rs != R_IDLE); // mirrors the vblank_pending set condition
-wire debug_publish_pulse      = present_rise && !is_multi32 && ready_valid;
-wire debug_renderer_busy      = (rs != R_IDLE);
-
-s32_sprite_health_debug health_dbg (
-    .clk(clk), .rst(rst),
-    .vblank_rise(vblank_rise),
-    .list_pulse(debug_list_pulse),
-    .draw_pulse(debug_draw_pulse),
-    .render_start_pulse(debug_render_start_pulse),
-    .overrun_pulse(debug_overrun_pulse),
-    .publish_pulse(debug_publish_pulse),
-    .sprram_wr(dbg_sprram_wr),
-    .work_buf(work_buf), .scan_buf(scan_buf), .scan_buf_prev(scan_buf_prev),
-    .renderer_busy(debug_renderer_busy),
-    .list_even(debug_list_even), .list_odd(debug_list_odd),
-    .draw_even(debug_draw_even), .draw_odd(debug_draw_odd),
-    .render_pass_count(debug_render_pass_count),
-    .overrun_count(debug_overrun_count),
-    .w0lat(debug_w0lat), .w1lat(debug_w1lat),
-    .sprwr_even(debug_sprwr_even), .sprwr_odd(debug_sprwr_odd),
-    .publish_count(debug_publish_count),
-    .frames_since_publish(debug_frames_since_publish),
-    .buffer_collision_sticky(debug_buffer_collision_sticky)
-);
-`else
-assign debug_list_even = 16'h0000;
-assign debug_list_odd = 16'h0000;
-assign debug_draw_even = 16'h0000;
-assign debug_draw_odd = 16'h0000;
-assign debug_render_pass_count = 8'h00;
-assign debug_overrun_count = 8'h00;
-assign debug_w0lat = 16'h0000;
-assign debug_w1lat = 16'h0000;
-assign debug_sprwr_even = 16'h0000;
-assign debug_sprwr_odd = 16'h0000;
-assign debug_publish_count = 16'h0000;
-assign debug_frames_since_publish = 8'h00;
-assign debug_buffer_collision_sticky = 1'b0;
-`endif
 
 endmodule
 
-// In-game debug OSD: sprite pipeline health telemetry, observational only.
-// Counters are per-field: `_even`/`_odd` latch the last two COMPLETED
-// fields' totals (tagged by a toggle flipped once per vblank_rise), so a
-// screenshot mid-count on real hardware still shows two full, stable
-// samples rather than a live-changing partial count. w0lat/w1lat measure
-// vblank-to-first/last-sprite-RAM-write latency in clk_ram ticks, letting
-// you see whether the CPU is building the list early or right up against
-// the R_DELAY deadline. buffer_collision_sticky catches the class of bug
-// behind the arabfgt floor-flicker investigation: the renderer's work
-// target (work_buf) equalling a buffer currently being scanned out while
-// busy, which would tear or corrupt live video.
-module s32_sprite_health_debug (
-    input             clk,
-    input             rst,
-    input             vblank_rise,
-
-    input             list_pulse,          // one list entry decoded (R_DECODE)
-    input             draw_pulse,          // one non-zero-size draw command committed
-    input             render_start_pulse,  // R_IDLE leaving to begin a swap/erase/render pass
-    input             overrun_pulse,       // vblank arrived while still busy (SP-3 stress)
-    input             publish_pulse,       // a completed frame was published to scan_buf
-
-    input             sprram_wr,           // CPU wrote a sprite-RAM word this cycle
-    input       [1:0] work_buf,
-    input       [1:0] scan_buf,
-    input       [1:0] scan_buf_prev,
-    input             renderer_busy,       // rs != R_IDLE
-
-    output reg [15:0] list_even, list_odd,
-    output reg [15:0] draw_even, draw_odd,
-    output reg  [7:0] render_pass_count,   // saturating, this field
-    output reg  [7:0] overrun_count,       // saturating, cumulative since reset
-    output reg [15:0] w0lat, w1lat,        // clk_ram ticks since vblank_rise
-    output reg [15:0] sprwr_even, sprwr_odd,
-    output reg [15:0] publish_count,       // saturating, cumulative since reset
-    output reg  [7:0] frames_since_publish,// saturating, since the last publish_pulse
-    output reg        buffer_collision_sticky
-);
-
-reg        field_odd;
-reg [15:0] list_cur, draw_cur, sprwr_cur;
-reg [23:0] since_vblank;      // free-running clk_ram tick count since vblank_rise
-reg        w0_latched;
-
-function automatic [15:0] sat_inc16(input [15:0] v);
-    sat_inc16 = (&v) ? v : v + 16'd1;
-endfunction
-function automatic [7:0] sat_inc8(input [7:0] v);
-    sat_inc8 = (&v) ? v : v + 8'd1;
-endfunction
-
-always @(posedge clk) begin
-    if (rst) begin
-        field_odd <= 1'b0;
-        list_cur <= 16'd0; draw_cur <= 16'd0; sprwr_cur <= 16'd0;
-        list_even <= 16'd0; list_odd <= 16'd0;
-        draw_even <= 16'd0; draw_odd <= 16'd0;
-        sprwr_even <= 16'd0; sprwr_odd <= 16'd0;
-        render_pass_count <= 8'd0;
-        overrun_count <= 8'd0;
-        publish_count <= 16'd0;
-        frames_since_publish <= 8'd0;
-        buffer_collision_sticky <= 1'b0;
-        since_vblank <= 24'd0;
-        w0lat <= 16'd0; w1lat <= 16'd0;
-        w0_latched <= 1'b0;
-    end
-    else begin
-        since_vblank <= since_vblank + 24'd1;
-
-        if (list_pulse) list_cur <= sat_inc16(list_cur);
-        if (draw_pulse) draw_cur <= sat_inc16(draw_cur);
-        if (render_start_pulse) render_pass_count <= sat_inc8(render_pass_count);
-        if (overrun_pulse) overrun_count <= sat_inc8(overrun_count);
-
-        if (sprram_wr) begin
-            sprwr_cur <= sat_inc16(sprwr_cur);
-            if (!w0_latched) begin
-                w0lat <= since_vblank[15:0];
-                w0_latched <= 1'b1;
-            end
-            w1lat <= since_vblank[15:0];  // always the latest -> ends up "last"
-        end
-
-        if (publish_pulse) begin
-            publish_count <= sat_inc16(publish_count);
-            frames_since_publish <= 8'd0;
-        end
-        else if (vblank_rise && !(&frames_since_publish)) begin
-            frames_since_publish <= frames_since_publish + 8'd1;
-        end
-
-        // A work-in-progress renderer target landing on a buffer that is
-        // currently on screen (either scan slot) would tear or corrupt live
-        // video. Sticky: once seen, stays set until reset.
-        if (renderer_busy &&
-            (work_buf == scan_buf || work_buf == scan_buf_prev))
-            buffer_collision_sticky <= 1'b1;
-
-        if (vblank_rise) begin
-            since_vblank <= 24'd0;
-            w0_latched <= 1'b0;
-            field_odd <= ~field_odd;
-            if (field_odd) begin
-                list_odd  <= list_cur;  draw_odd  <= draw_cur;  sprwr_odd  <= sprwr_cur;
-            end
-            else begin
-                list_even <= list_cur;  draw_even <= draw_cur;  sprwr_even <= sprwr_cur;
-            end
-            list_cur <= 16'd0; draw_cur <= 16'd0; sprwr_cur <= 16'd0;
-            render_pass_count <= 8'd0;
-        end
-    end
-end
-
-endmodule
-
-// Observation-only CPU sprite-RAM write recorder. Kept as a tiny standalone
-// block so its saturation and last-write semantics have direct unit coverage.
-module s32_sprite_write_debug (
-    input             clk,
-    input             rst,
-    input             wr_stb,
-    input      [15:0] wr_addr,
-    input      [15:0] wr_data,
-    input       [1:0] wr_be,
-    output reg        seen,
-    output reg  [7:0] count,
-    output reg [15:0] last_addr,
-    output reg [15:0] last_data,
-    output reg  [1:0] last_be
-);
-
-always @(posedge clk) begin
-    if (rst) begin
-        seen      <= 1'b0;
-        count     <= 8'd0;
-        last_addr <= 16'd0;
-        last_data <= 16'd0;
-        last_be   <= 2'd0;
-    end
-    else if (wr_stb) begin
-        seen      <= 1'b1;
-        count     <= (&count) ? count : count + 8'd1;
-        last_addr <= wr_addr;
-        last_data <= wr_data;
-        last_be   <= wr_be;
-    end
-end
-
-endmodule
 
 //============================================================================
 // Shared unsigned sprite-scale divider.

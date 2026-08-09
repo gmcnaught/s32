@@ -30,8 +30,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
@@ -158,10 +157,10 @@ begin
     rst = 1;
     repeat (8) @(posedge clk);
     rst = 0;
-    for (cycles = 0; cycles < 4000 && !cpu.dbg_halted; cycles = cycles + 1)
+    for (cycles = 0; cycles < 4000 && !cpu.halted; cycles = cycles + 1)
         @(posedge clk);
 
-    if (cpu.dbg_halted &&
+    if (cpu.halted &&
         cpu.r[10] == (admit ? 32'hc0de_c0de : 32'hdead_f00d) &&
         ptr_lo_reads >= 1 && ptr_hi_reads >= 1 && cam_y_reads >= 1 &&
         (!admit || cam_x_reads >= 1)) begin
@@ -173,7 +172,7 @@ begin
     else begin
         fail = fail + 1;
         $display("  FAIL %0s halted=%0d pc=%08x r0=%08x r10=%08x reads ptr=%0d/%0d cam=%0d/%0d",
-                 name, cpu.dbg_halted, cpu.dbg_pc, cpu.r[0], cpu.r[10],
+                 name, cpu.halted, cpu.pc, cpu.r[0], cpu.r[10],
                  ptr_lo_reads, ptr_hi_reads, cam_x_reads, cam_y_reads);
     end
 end

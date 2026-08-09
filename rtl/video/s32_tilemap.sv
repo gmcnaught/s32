@@ -628,9 +628,7 @@ module s32_tile_line_scheduler (
     output reg        line_start,
     output reg  [8:0] render_line,
     output reg        lb_bank,
-    output reg        busy,
-    output reg        overrun_sticky,
-    output reg [15:0] overrun_count
+    output reg        busy
 );
 
 reg kick_active;
@@ -642,8 +640,6 @@ always @(posedge clk) begin
         lb_bank        <= 1'b0;
         busy           <= 1'b0;
         kick_active    <= 1'b0;
-        overrun_sticky <= 1'b0;
-        overrun_count  <= 16'd0;
     end
     else begin
         line_start <= 1'b0;
@@ -662,11 +658,6 @@ always @(posedge clk) begin
                 lb_bank     <= next_line[0];
                 line_start  <= 1'b1;
                 busy        <= 1'b1;
-            end
-            else begin
-                overrun_sticky <= 1'b1;
-                if (overrun_count != 16'hffff)
-                    overrun_count <= overrun_count + 1'd1;
             end
         end
     end

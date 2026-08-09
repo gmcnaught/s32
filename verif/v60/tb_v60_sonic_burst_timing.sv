@@ -20,6 +20,15 @@ module tb_v60_sonic_burst_timing;
 reg clk = 0, rst = 1;
 always #10 clk = ~clk;
 
+// Match the production 48.3 MHz clk_sys : 16.1 MHz V60 relationship.  The
+// overlap mode lets the sequential RTL engine use idle clk_sys slots for
+// internal work, but returns to the board-rate enable whenever a logical data
+// transaction is active.  The external bus adapter is board-rate in both
+// modes, so this cannot shorten a PCB memory cycle.
+reg [1:0] bus_phase = 0;
+reg       use_overlap = 0;
+wire      ce_bus = (bus_phase == 0);
+
 wire c_req, c_we, c_ack;
 wire [31:0] c_addr, c_wdata, c_rdata;
 wire [1:0] c_size;
@@ -27,18 +36,24 @@ wire m_req, m_we, m_ack;
 wire [23:1] m_addr;
 wire [15:0] m_wdata, m_rdata;
 wire [1:0] m_be;
+wire ce_exec = use_overlap
+             ? (ce_bus || (!c_req && !c_ack))
+             : ce_bus;
+always @(posedge clk) begin
+    if (rst || bus_phase == 2) bus_phase <= 0;
+    else                       bus_phase <= bus_phase + 1'd1;
+end
 
 s32_v60 #(.START_PC(32'h0000_0000)) cpu (
-    .clk(clk), .ce(1'b1), .rst(rst),
+    .clk(clk), .ce(ce_exec), .rst(rst),
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
-    .clk(clk), .ce(1'b1), .rst(rst),
+    .clk(clk), .ce(ce_bus), .rst(rst),
     .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),
     .c_wdata(c_wdata), .c_rdata(c_rdata), .c_ack(c_ack),
     .m_req(m_req), .m_we(m_we), .m_addr(m_addr), .m_wdata(m_wdata),
@@ -50,7 +65,11 @@ reg ack_r;
 assign m_rdata = ram[m_addr[16:1]];
 assign m_ack = ack_r;
 always @(posedge clk) begin
-    ack_r <= m_req & ~ack_r;
+    // The system-side acknowledgement is level-held until m_req drops.  This
+    // matters when the adapter itself advances only on the 1-in-3 V60 enable:
+    // a one-clk_sys pulse can otherwise fall entirely between adapter edges.
+    if (!m_req)     ack_r <= 1'b0;
+    else if (!ack_r) ack_r <= 1'b1;
     if (m_req && m_we && !ack_r) begin
         if (m_be[0]) ram[m_addr[16:1]][7:0]  <= m_wdata[7:0];
         if (m_be[1]) ram[m_addr[16:1]][15:8] <= m_wdata[15:8];
@@ -104,8 +123,9 @@ task run_test_a;
         cycles = 0;
         while (writes < 2000 && cycles < 200000) @(posedge clk);
         cyclesA = cycles; writesA = writes;
-        $display("[bench] A (mov.h+dbr fill loop, real PC 0x0998DE): %0d elements in %0d clk_sys cycles = %0.2f cyc/elem",
-                  writesA, cyclesA, cyclesA * 1.0 / writesA);
+        $display("[bench] %s A (mov.h+dbr fill loop, real PC 0x0998DE): %0d elements in %0d clk_sys cycles = %0.2f V60-clk/elem",
+                  use_overlap ? "overlap" : "baseline", writesA, cyclesA,
+                  writesA ? cyclesA * 1.0 / (3.0 * writesA) : 0.0);
     end
 endtask
 
@@ -130,12 +150,20 @@ task run_test_b;
         cycles = 0;
         while (writes < 2000 && cycles < 200000) @(posedge clk);
         cyclesB = cycles; writesB = writes;
-        $display("[bench] B (movcu.h string op, real PC 0x0009A516): %0d elements in %0d clk_sys cycles = %0.2f cyc/elem",
-                  writesB, cyclesB, cyclesB * 1.0 / writesB);
+        $display("[bench] %s B (movcu.h string op, real PC 0x0009A516): %0d elements in %0d clk_sys cycles = %0.2f V60-clk/elem",
+                  use_overlap ? "overlap" : "baseline", writesB, cyclesB,
+                  writesB ? cyclesB * 1.0 / (3.0 * writesB) : 0.0);
     end
 endtask
 
 initial begin
+    integer baselineA, baselineB;
+    use_overlap = 0;
+    run_test_a;
+    baselineA = cyclesA;
+    run_test_b;
+    baselineB = cyclesB;
+    use_overlap = 1;
     run_test_a;
     run_test_b;
     // Evidence-backed physical floor (docs/v60-authenticity-from-manual.md:
@@ -144,12 +172,21 @@ initial begin
     // ~6 clk_sys/element.  This bench reports the actual number so the plan's
     // budget check (Phase 1) can be made on real data instead of assumption.
     $display("[bench] evidence-backed floor (1R+1W @ 3clk min bus cycle) = ~6 cyc/elem");
-    $display("[bench] DONE");
+    if (writesA != 2000 || writesB != 2000) begin
+        $display("SONIC BURST TIMING FAIL (incomplete write burst)");
+    end
+    else if (cyclesA * 100 > baselineA * 60 ||
+             cyclesB * 100 > baselineB * 85) begin
+        $display("SONIC BURST TIMING FAIL (overlap throughput regressed)");
+    end
+    else begin
+        $display("SONIC BURST TIMING PASS");
+    end
     $finish;
 end
 
 initial begin
-    #10000000;
+    #30000000;
     $display("[bench] TIMEOUT");
     $finish;
 end

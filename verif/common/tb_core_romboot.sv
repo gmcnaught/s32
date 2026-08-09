@@ -19,8 +19,10 @@
 //                   PPM from this same full-core Verilator run
 //    +COINAT=<n>     assert P1 coin active-low starting at harness frame n
 //    +COINLEN=<n>    coin assertion length in frames, default 1
+//    +COIN2AT/LEN    optional second deterministic coin pulse
 //    +STARTAT=<n>    assert P1 start active-low starting at harness frame n
 //    +STARTLEN=<n>   start assertion length in frames, default 1
+//    +START2AT/LEN   optional second deterministic start pulse
 //    +P1AT<n>=<f>    start P1 digital event slot n (0..3) at frame f
 //    +P1LEN<n>=<n>   event length in frames, default 1
 //    +P1MASK<n>=<h>  P1A bits to pull low: L/R/U/D=80/40/20/10,
@@ -418,6 +420,7 @@ integer spr_cmd_cnt = 0, srom_req_cnt = 0;
 reg [15:0] spr_jump_prev [0:1];
 reg        spr_jump_seen [0:1];
 reg        spr_list_log;
+localparam logic [4:0] SPR_R_DECODE = 5'd8;
 initial begin
     spr_list_log = $test$plusargs("SPRLIST");
     spr_jump_seen[0] = 1'b0;
@@ -429,7 +432,7 @@ always @(posedge clk_ram) begin
     // Report a command-list jump only when it changes for that framebuffer
     // parity.  This keeps long real-ROM runs concise while exposing the exact
     // list target consumed after each sprite-update pulse.
-    if (spr_list_log && core.sprite.rs == core.sprite.R_DECODE &&
+    if (spr_list_log && core.sprite.rs == SPR_R_DECODE &&
         core.sprite.sw[0][15:14] == 2'b10) begin
         if (!spr_jump_seen[core.sprite.disp_buf[0]] ||
             spr_jump_prev[core.sprite.disp_buf[0]] != core.sprite.sw[0]) begin
@@ -456,7 +459,7 @@ always @(posedge clk_sys) begin
             if (core.m_rdata[7:0] != 8'hff) begin
                 p1a_active_samples = p1a_active_samples + 1;
                 $display("[input-sampled] frame %0d: P1A read=%04x pc=%08x",
-                    cur_frame, core.m_rdata, core.v60.dbg_pc);
+                    cur_frame, core.m_rdata, core.v60.pc);
             end
         end
         if ({core.A[23:1], 1'b0} == 24'hc00008) begin
@@ -465,12 +468,12 @@ always @(posedge clk_sys) begin
             if (!core.m_rdata[2]) begin
                 coin_active_samples = coin_active_samples + 1;
                 $display("[input-sampled] frame %0d: P1 coin read=%04x pc=%08x",
-                    cur_frame, core.m_rdata, core.v60.dbg_pc);
+                    cur_frame, core.m_rdata, core.v60.pc);
             end
             if (!core.m_rdata[4]) begin
                 start_active_samples = start_active_samples + 1;
                 $display("[input-sampled] frame %0d: P1 start read=%04x pc=%08x",
-                    cur_frame, core.m_rdata, core.v60.dbg_pc);
+                    cur_frame, core.m_rdata, core.v60.pc);
             end
         end
     end
@@ -480,7 +483,9 @@ end
 reg  [7:0] in_p1a_r = 8'hff;
 reg  [7:0] in_portc_r = 8'hff;
 reg  [7:0] in_svc12_r = 8'hff;
-integer coin_at, coin_len, start_at, start_len;
+integer coin_at, coin_len, coin2_at, coin2_len;
+integer start_at, start_len, start2_at, start2_len;
+integer accel_at, accel_len, accel_value;
 integer p1_at [0:3];
 integer p1_len [0:3];
 integer p1_mask [0:3];
@@ -498,8 +503,15 @@ reg signed [8:0] trk0_dy = 9'sd0;
 initial begin
     if (!$value$plusargs("COINAT=%d", coin_at)) coin_at = -1;
     if (!$value$plusargs("COINLEN=%d", coin_len)) coin_len = 1;
+    if (!$value$plusargs("COIN2AT=%d", coin2_at)) coin2_at = -1;
+    if (!$value$plusargs("COIN2LEN=%d", coin2_len)) coin2_len = 1;
     if (!$value$plusargs("STARTAT=%d", start_at)) start_at = -1;
     if (!$value$plusargs("STARTLEN=%d", start_len)) start_len = 1;
+    if (!$value$plusargs("START2AT=%d", start2_at)) start2_at = -1;
+    if (!$value$plusargs("START2LEN=%d", start2_len)) start2_len = 1;
+    if (!$value$plusargs("ACCELAT=%d", accel_at)) accel_at = -1;
+    if (!$value$plusargs("ACCELLEN=%d", accel_len)) accel_len = 1;
+    if (!$value$plusargs("ACCELVALUE=%h", accel_value)) accel_value = 8'hff;
     if (!$value$plusargs("P1AT0=%d", p1_at[0])) p1_at[0] = -1;
     if (!$value$plusargs("P1LEN0=%d", p1_len[0])) p1_len[0] = 1;
     if (!$value$plusargs("P1MASK0=%h", p1_mask[0])) p1_mask[0] = 0;
@@ -534,7 +546,10 @@ initial if (!$value$plusargs("ADC0=%h", adc0_override)) adc0_override = -1;
 assign adc_a[0] = (adc0_override >= 0) ? adc0_override[7:0] :
                   (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
 assign adc_a[1] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
-                  (board.analog_profile == ANALOG_DRIVING) ? 8'h00 : 8'h80;
+                  (board.analog_profile == ANALOG_DRIVING) ?
+                  (((accel_at >= 0 && cur_frame >= accel_at &&
+                     cur_frame < accel_at + accel_len) || input_mask_value[10]) ?
+                   accel_value[7:0] : 8'h00) : 8'h80;
 assign adc_a[2] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
                   (board.analog_profile == ANALOG_DRIVING) ? 8'h00 : 8'h80;
 generate
@@ -561,7 +576,7 @@ always @(posedge clk_sys) begin
         core.m_req && core.m_ack &&
         !core.ack_d && {core.A[23:3], 3'b000} == 24'hc00040) begin
         $display("[track] f=%0d pc=%08x rw=%s a=%06x d=%04x be=%b",
-            cur_frame, core.v60.dbg_pc, core.m_we ? "w" : "r",
+            cur_frame, core.v60.pc, core.m_we ? "w" : "r",
             {core.A[23:1], 1'b0}, core.m_we ? core.m_wdata : core.m_rdata,
             core.m_be);
         track_log_n = track_log_n + 1;
@@ -628,8 +643,7 @@ s32_core core (
     .trk_btn(tbt_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
     .rgb_a(rgb_a), .rgb_b(), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
-    .audio_l(audio_l), .audio_r(audio_r), .out_lamps(),
-    .debug_pc(), .debug_halted(), .debug_status(), .debug_first_rom(), .debug_hcnt()
+    .audio_l(audio_l), .audio_r(audio_r), .out_lamps()
 );
 
 // MAME's v60_device::device_start() gives R0..R30 a deterministic zero
@@ -711,17 +725,16 @@ always @(posedge clk_sys) begin
     end
 end
 
-// stuck-PC watchdog (+ one-shot deep state dump on a long freeze)
 reg [31:0] last_pc = 0;
 integer same_pc = 0;
 reg dumped = 0, resumed = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.dbg_pc == last_pc) same_pc = same_pc + 1;
-    else begin same_pc = 0; last_pc = core.v60.dbg_pc; end
+    if (core.v60.pc == last_pc) same_pc = same_pc + 1;
+    else begin same_pc = 0; last_pc = core.v60.pc; end
     if (same_pc == 500000 && !dumped) begin
         dumped = 1;
         $display("[FROZEN] pc=%08x st=%0d cur_op=%02x subop=%02x cls=%0d",
-            core.v60.dbg_pc, core.v60.st, core.v60.cur_op, core.v60.subop, core.v60.cls);
+            core.v60.pc, core.v60.st, core.v60.cur_op, core.v60.subop, core.v60.cls);
         $display("[FROZEN] str_cnt=%08x str_src=%08x str_dst=%08x bit_len=%08x",
             core.v60.str_cnt, core.v60.str_src, core.v60.str_dst, core.v60.bit_len);
         $display("[FROZEN] op1=%08x op2=%08x r0=%08x r1=%08x r3=%08x r26=%08x sp=%08x",
@@ -730,13 +743,13 @@ always @(posedge clk_sys) if (ce_cpu) begin
     end
     if (dumped && !resumed && same_pc == 0) begin
         resumed = 1;
-        $display("[UNFROZEN] pc=%08x resumed after stuck-PC watchdog", core.v60.dbg_pc);
+        $display("[UNFROZEN] pc=%08x resumed after stuck-PC watchdog", core.v60.pc);
     end
 end
 
 // frame capture: with +DUMPAT=<frame#> (+DUMPN=<count>, default 1) write
 // active-video pixels of those frames as PPM files (dump<frame>.ppm in cwd)
-integer dump_at, dump_n, dump_fd = 0, dump_x, dump_y, dump_every;
+integer dump_at, dump_n, dump_fd = 0, dump_x, dump_y, dump_every, live_every;
 reg dumping = 0;
 integer dump_nonblack = 0;
 integer dump_frame = -1;
@@ -754,6 +767,8 @@ initial begin
     if (!$value$plusargs("DUMPN=%d", dump_n)) dump_n = 1;
     // +DUMPEVERY=<n>: dump every n-th frame (stride) — maps the attract cycle
     if (!$value$plusargs("DUMPEVERY=%d", dump_every)) dump_every = 1;
+    if (!$value$plusargs("LIVEEVERY=%d", live_every)) live_every = 1;
+    if (live_every < 1) $fatal(1, "LIVEEVERY must be >= 1");
     if (!$value$plusargs("LIVEPPM=%s", live_ppm_path)) live_ppm_path = "";
     live_ppm = (live_ppm_path != "");
     if (live_ppm) live_ready_path = {live_ppm_path, ".ready"};
@@ -867,11 +882,34 @@ end
 // those spawn stores or diverges — and with what data (sim reads back 0x56e0/0x20).
 integer obj8_fd = 0;
 initial obj8_fd = $fopen("sim_obj8_writes.txt", "w");
+integer arab_obj_fd = 0;
+initial arab_obj_fd = $fopen("arab_player_object_writes.txt", "w");
 always @(posedge clk_sys) begin
+    if (sprdump_cur >= 1550 && sprdump_cur <= 1680 &&
+        core.v60.pc == 32'h00ff7351) begin
+        $fwrite(arab_obj_fd,
+            "PHYS frame=%0d out=%04x p30=%08x p34=%08x p7a=%08x a=%04x c=%04x c2=%04x ba=%04x scale=%04x r24=%08x\n",
+            sprdump_cur, core.work_ram.mem[16'h0304],
+            {core.work_ram.mem[16'h030d], core.work_ram.mem[16'h030c]},
+            {core.work_ram.mem[16'h030f], core.work_ram.mem[16'h030e]},
+            {core.work_ram.mem[16'h0332], core.work_ram.mem[16'h0331]},
+            core.work_ram.mem[16'h02f9], core.work_ram.mem[16'h02fa],
+            core.work_ram.mem[16'h0355], core.work_ram.mem[16'h0351],
+            core.work_ram.mem[16'h4253], core.v60.r[24]);
+        $fflush(arab_obj_fd);
+    end
+    if (sprdump_cur >= 1550 && sprdump_cur <= 1680 &&
+        core.m_req && core.m_we && core.sel_wram &&
+        core.wram_a >= 16'h02f4 && core.wram_a <= 16'h0307) begin
+        $fwrite(arab_obj_fd, "frame=%0d pc=%08x wa=%04x data=%04x be=%b r24=%08x\n",
+            sprdump_cur, core.v60.pc, core.wram_a, core.m_wdata, core.m_be,
+            core.v60.r[24]);
+        $fflush(arab_obj_fd);
+    end
     if (core.m_req && core.m_we && core.sel_wram &&
         core.wram_a >= 16'h02d0 && core.wram_a <= 16'h02d7) begin
         $fwrite(obj8_fd, "frame=%0d pc=%08x wa=%04x data=%04x be=%b\n",
-            sprdump_cur, core.v60.dbg_pc, core.wram_a, core.m_wdata, core.m_be);
+            sprdump_cur, core.v60.pc, core.wram_a, core.m_wdata, core.m_be);
         $fflush(obj8_fd);
     end
 end
@@ -890,12 +928,9 @@ always @(posedge clk_ram) if (regtrace &&
         core.vram.cpu_we && (core.vram.cpu_addr == 16'hff80 || core.vram.cpu_addr == 16'hff81))
     $display("[regw] f=%0d addr=%04x data=%04x be=%b pc=%08x -> r1ff%02x",
         cur_frame, core.vram.cpu_addr, core.vram.cpu_wdata, core.vram.cpu_be,
-        core.v60.dbg_pc,
+        core.v60.pc,
         (core.vram.cpu_addr[0] ? 8'h02 : 8'h00));
 reg vb_d, hb_d;
-// +OVLOG=1: dump tilemap line-render overrun + sprite-fb underrun counters per frame
-integer ovlog;
-initial if (!$value$plusargs("OVLOG=%d", ovlog)) ovlog = 0;
 // +SPRLOG=1: per-frame sprite-render telemetry (pixels written, FSM state at
 // frame boundary = did the render finish?, and the displayed buffer). Diagnoses
 // the arabfgt period-2 sprite flicker (render truncation / buffer divergence).
@@ -946,10 +981,6 @@ always @(posedge clk_sys) begin
             burst_pal_prev = n_pal_wr;
             burst_vram_prev = n_vram_wr;
         end
-        // +OVLOG=1: per-frame tilemap line-overrun + sprite-fb underrun telemetry
-        if (ovlog) $display("[ov] f=%0d tile_overrun sticky=%b cnt=%0d  fb_underrun sticky=%b cnt=%0d",
-            cur_frame, core.tm_line_overrun_sticky, core.tm_line_overrun_count,
-            core.fb_rd_underrun_sticky, core.fb_rd_underrun_count);
         // +SPRLOG: sprite render telemetry. rs = FSM state at frame boundary
         // (0=R_IDLE means render finished; 5..23 = still walking list = overran).
         if (sprlog) $display("[spr] f=%0d disp_buf=%0d rs=%0d px=%0d runs=%0d",
@@ -1003,7 +1034,8 @@ always @(posedge clk_sys) begin
             if (dump_nonblack != 0) dump_nonblack_seen = 1'b1;
             $display("[dump] wrote frame %0d nonblack=%0d", cur_frame-1, dump_nonblack);
         end
-        if (live_ppm || (dump_at >= 0 && cur_frame >= dump_at &&
+        if ((live_ppm && (cur_frame % live_every == 0)) ||
+            (dump_at >= 0 && cur_frame >= dump_at &&
             ((cur_frame - dump_at) % dump_every == 0) &&
             ((cur_frame - dump_at) / dump_every < dump_n))) begin
             if (live_ppm) begin
@@ -1076,8 +1108,8 @@ initial begin
 end
 wire obj_pc_range = ((core.v60.pc >= 32'h00130600 && core.v60.pc < 32'h00130680) ||
                      (core.v60.pc >= 32'h00132900 && core.v60.pc < 32'h001329b0));
-wire obj_dbgpc_range = ((core.v60.dbg_pc >= 32'h00130600 && core.v60.dbg_pc < 32'h00130680) ||
-                        (core.v60.dbg_pc >= 32'h00132900 && core.v60.dbg_pc < 32'h001329b0));
+wire obj_dbgpc_range = ((core.v60.pc >= 32'h00130600 && core.v60.pc < 32'h00130680) ||
+                        (core.v60.pc >= 32'h00132900 && core.v60.pc < 32'h001329b0));
 always @(posedge clk_sys) if (ce_cpu) begin
     if (obj_tr_at >= 0 && cur_frame >= obj_tr_at && obj_pc_range &&
         core.v60.st == 7'd3 && obj_i_n < obj_tr_max) begin
@@ -1100,10 +1132,10 @@ always @(posedge clk_sys) begin
         obj_bus_n = obj_bus_n + 1;
         if (core.m_we)
             $display("[objbus] f=%0d pc=%08x W [%06x] data=%04x be=%b",
-                cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_wdata, core.m_be);
+                cur_frame, core.v60.pc, core.A[23:0], core.m_wdata, core.m_be);
         else
             $display("[objbus] f=%0d pc=%08x R [%06x] data=%04x be=%b",
-                cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_rdata, core.m_be);
+                cur_frame, core.v60.pc, core.A[23:0], core.m_rdata, core.m_be);
     end
 end
 
@@ -1114,23 +1146,9 @@ always @(posedge clk_sys) begin
         core.A[23:16] == 8'hC0 && io_log_n < 120) begin
         io_log_n = io_log_n + 1;
         $display("[io] pc=%08x wr [%06x] = %04x be=%b",
-            core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+            core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
     end
 end
-integer eep_log_n = 0, eep_skip;
-reg [3:0] eep_prev = 0;
-initial if (!$value$plusargs("EEPSKIP=%d", eep_skip)) eep_skip = 0;
-always @(posedge clk_sys) begin
-    if ({core.eeprom.cs, core.eeprom.sk, core.eeprom.di, core.eeprom.dout} != eep_prev) begin
-        eep_log_n = eep_log_n + 1;
-        if (eep_log_n >= eep_skip && eep_log_n < eep_skip + 30000)
-            $display("[eep] cs=%b sk=%b di=%b do=%b es=%0d bitcnt=%0d",
-                core.eeprom.cs, core.eeprom.sk, core.eeprom.di, core.eeprom.dout,
-                core.eeprom.es, core.eeprom.bitcnt);
-        eep_prev = {core.eeprom.cs, core.eeprom.sk, core.eeprom.di, core.eeprom.dout};
-    end
-end
-
 // intc write log: what vectors/mask does the game program?
 integer intc_log_n = 0;
 always @(posedge clk_sys) begin
@@ -1138,7 +1156,7 @@ always @(posedge clk_sys) begin
         core.A[23:16] == 8'hD0 && intc_log_n < 40) begin
         intc_log_n = intc_log_n + 1;
         $display("[intc] pc=%08x wr [%06x] = %04x be=%b",
-            core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+            core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
     end
 end
 
@@ -1147,7 +1165,7 @@ integer ldpr_n = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.st == 7'd10 && core.v60.cur_op == 8'h12 && ldpr_n < 16) begin
         ldpr_n = ldpr_n + 1;
-        $display("[ldpr] pc=%08x op1=%08x op2=%08x", core.v60.dbg_pc, core.v60.op1, core.v60.op2);
+        $display("[ldpr] pc=%08x op1=%08x op2=%08x", core.v60.pc, core.v60.op1, core.v60.op2);
     end
 end
 
@@ -1155,7 +1173,7 @@ end
 reg [31:0] sbr_prev = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.sbr != sbr_prev) begin
-        $display("[sbr] pc=%08x sbr %08x -> %08x", core.v60.dbg_pc, sbr_prev, core.v60.sbr);
+        $display("[sbr] pc=%08x sbr %08x -> %08x", core.v60.pc, sbr_prev, core.v60.sbr);
         sbr_prev = core.v60.sbr;
     end
 end
@@ -1164,7 +1182,7 @@ end
 integer exc_log_n = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.st == 7'd79 && core.v60.bus_ack &&
-        (exc_log_n < 12 || core.v60.exc_vector < 8'h40)) begin
+        exc_log_n < 12) begin
         exc_log_n = exc_log_n + 1;
         $display("[exc] vec=%02x sbr=%08x sp=%08x retpc=%08x handler=[%08x]=%08x cur_op=%02x",
             core.v60.exc_vector, core.v60.sbr, core.v60.r[31], core.v60.exc_retpc,
@@ -1180,10 +1198,14 @@ end
 reg derailed = 0;
 reg booted = 0;
 always @(posedge clk_sys) if (ce_cpu && !rst) begin
-    if (core.v60.dbg_pc[31:24] == 8'h00) booted <= 1'b1;
-    if (booted && !derailed && core.v60.dbg_pc[31:24] != 8'h00) begin
+    // Raw pc is still zero on the first post-reset CE before the V60 loads its
+    // architectural reset vector.  Do not arm on that transient: the first
+    // real System 32 instruction must be fetched from the top 1 MiB ROM.
+    if (core.v60.pc >= 32'h00f0_0000 && core.v60.pc <= 32'h00ff_ffff)
+        booted <= 1'b1;
+    if (booted && !derailed && core.v60.pc[31:24] != 8'h00) begin
         derailed = 1;
-        $display("[DERAIL] pc=%08x sp=%08x sbr=%08x psw=%08x", core.v60.dbg_pc,
+        $display("[DERAIL] pc=%08x sp=%08x sbr=%08x psw=%08x", core.v60.pc,
             core.v60.r[31], core.v60.sbr, core.v60.psw);
         dump_trace;
         $display("ROMBOOT DONE");
@@ -1197,13 +1219,13 @@ reg [31:0] jt_to   [0:47];
 integer jt_n = 0;
 reg [31:0] prev_pc = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.dbg_pc != prev_pc) begin
-        if ((core.v60.dbg_pc > prev_pc + 24) || (core.v60.dbg_pc < prev_pc)) begin
+    if (core.v60.pc != prev_pc) begin
+        if ((core.v60.pc > prev_pc + 24) || (core.v60.pc < prev_pc)) begin
             jt_from[jt_n % 48] <= prev_pc;
-            jt_to[jt_n % 48]   <= core.v60.dbg_pc;
+            jt_to[jt_n % 48]   <= core.v60.pc;
             jt_n = jt_n + 1;
         end
-        prev_pc <= core.v60.dbg_pc;
+        prev_pc <= core.v60.pc;
     end
 end
 
@@ -1214,7 +1236,7 @@ always @(posedge clk_sys) begin
     if (core.m_req && core.m_ack && core.m_we && !core.ack_d &&
         {core.A[23:1],1'b0} == watch_a[23:0])
         $display("[watch] pc=%08x wr [%06x] = %04x be=%b",
-            core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+            core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
 end
 
 // DIAGNOSTIC (radm/radr goal): find the caller of 0x070dca (the object-walk
@@ -1224,14 +1246,14 @@ end
 integer callerstack2_n = 0;
 reg [31:0] callerstack2_prev_pc = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.dbg_pc == 32'h070dca && callerstack2_prev_pc != 32'h070dca && callerstack2_n < 20) begin
+    if (core.v60.pc == 32'h070dca && callerstack2_prev_pc != 32'h070dca && callerstack2_n < 20) begin
         $display("[callerstack2] f=%0d pc=070dca sp=%08x ret_hi=%04x ret_lo=%04x",
             cur_frame, core.v60.r[31],
             core.work_ram.mem[core.v60.r[31][15:1] + 1],
             core.work_ram.mem[core.v60.r[31][15:1]]);
         callerstack2_n = callerstack2_n + 1;
     end
-    callerstack2_prev_pc <= core.v60.dbg_pc;
+    callerstack2_prev_pc <= core.v60.pc;
 end
 
 // DIAGNOSTIC (radm/radr goal): the REAL master init sequence at ROM 0x0661c0
@@ -1247,7 +1269,7 @@ reg bisect2_seen [0:NUM_BISECT2-1];
 initial for (int bj = 0; bj < NUM_BISECT2; bj++) bisect2_seen[bj] = 1'b0;
 always @(posedge clk_sys) if (ce_cpu) begin
     for (int bj = 0; bj < NUM_BISECT2; bj++) begin
-        if (!bisect2_seen[bj] && core.v60.dbg_pc == BISECT2_ADDR[bj]) begin
+        if (!bisect2_seen[bj] && core.v60.pc == BISECT2_ADDR[bj]) begin
             bisect2_seen[bj] <= 1'b1;
             $display("[bisect2] f=%0d REACHED pc=%08x", cur_frame, BISECT2_ADDR[bj]);
         end
@@ -1263,16 +1285,16 @@ integer jt515_n = 0;
 reg [31:0] jt515_prev_pc = 0;
 reg jt515_armed = 1'b0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.dbg_pc == 32'h066253 && jt515_prev_pc != 32'h066253 && jt515_n < 20) begin
+    if (core.v60.pc == 32'h066253 && jt515_prev_pc != 32'h066253 && jt515_n < 20) begin
         $display("[jt515] f=%0d AT pc=066253 r0=%08x", cur_frame, core.v60.r[0]);
         jt515_armed <= 1'b1;
         jt515_n = jt515_n + 1;
     end
-    else if (jt515_armed && core.v60.dbg_pc != jt515_prev_pc) begin
-        $display("[jt515] f=%0d LANDED pc=%08x", cur_frame, core.v60.dbg_pc);
+    else if (jt515_armed && core.v60.pc != jt515_prev_pc) begin
+        $display("[jt515] f=%0d LANDED pc=%08x", cur_frame, core.v60.pc);
         jt515_armed <= 1'b0;
     end
-    jt515_prev_pc <= core.v60.dbg_pc;
+    jt515_prev_pc <= core.v60.pc;
 end
 
 // DIAGNOSTIC (radm/radr goal): the outer retry loop at 0x068205-068243 has
@@ -1289,7 +1311,7 @@ reg bisect3_seen [0:NUM_BISECT3-1];
 initial for (int bk = 0; bk < NUM_BISECT3; bk++) bisect3_seen[bk] = 1'b0;
 always @(posedge clk_sys) if (ce_cpu) begin
     for (int bk = 0; bk < NUM_BISECT3; bk++) begin
-        if (!bisect3_seen[bk] && core.v60.dbg_pc == BISECT3_ADDR[bk]) begin
+        if (!bisect3_seen[bk] && core.v60.pc == BISECT3_ADDR[bk]) begin
             bisect3_seen[bk] <= 1'b1;
             $display("[bisect3] f=%0d REACHED pc=%08x", cur_frame, BISECT3_ADDR[bk]);
         end
@@ -1304,16 +1326,16 @@ integer retrycnt_236 = 0;
 integer retrycnt_243 = 0;
 reg [31:0] retry_prev_pc = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.dbg_pc == 32'h068236 && retry_prev_pc != 32'h068236) begin
+    if (core.v60.pc == 32'h068236 && retry_prev_pc != 32'h068236) begin
         retrycnt_236 = retrycnt_236 + 1;
         if (retrycnt_236 % 200 == 1)
             $display("[retrycnt] f=%0d visits236=%0d visits243=%0d", cur_frame, retrycnt_236, retrycnt_243);
     end
-    if (core.v60.dbg_pc == 32'h068243 && retry_prev_pc != 32'h068243) begin
+    if (core.v60.pc == 32'h068243 && retry_prev_pc != 32'h068243) begin
         retrycnt_243 = retrycnt_243 + 1;
         $display("[retrycnt] f=%0d SUCCESS pc=068243 count=%0d", cur_frame, retrycnt_243);
     end
-    retry_prev_pc <= core.v60.dbg_pc;
+    retry_prev_pc <= core.v60.pc;
 end
 
 // DIAGNOSTIC (radm/radr goal): the table-gen write at 0x067faa
@@ -1325,11 +1347,11 @@ end
 integer r0check_n = 0;
 reg [31:0] r0check_prev_pc = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.dbg_pc == 32'h067fa8 && r0check_prev_pc != 32'h067fa8 && r0check_n < 5) begin
+    if (core.v60.pc == 32'h067fa8 && r0check_prev_pc != 32'h067fa8 && r0check_n < 5) begin
         $display("[r0check] f=%0d pc=067fa8 r0=%08x r11=%08x", cur_frame, core.v60.r[0], core.v60.r[11]);
         r0check_n = r0check_n + 1;
     end
-    r0check_prev_pc <= core.v60.dbg_pc;
+    r0check_prev_pc <= core.v60.pc;
 end
 
 // DIAGNOSTIC (radm/radr goal): has the CPU ever reached a specific PC?
@@ -1343,9 +1365,9 @@ initial if (!$value$plusargs("PCWATCH=%h", pcwatch_a)) pcwatch_a = -1;
 initial if (!$value$plusargs("PCWATCHMAX=%d", pcwatch_max)) pcwatch_max = 20;
 integer pcwatch_last_frame = -1;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (pcwatch_a >= 0 && core.v60.dbg_pc == pcwatch_a[31:0] &&
+    if (pcwatch_a >= 0 && core.v60.pc == pcwatch_a[31:0] &&
         cur_frame != pcwatch_last_frame && pcwatch_n < pcwatch_max) begin
-        $display("[pcwatch] HIT f=%0d pc=%08x", cur_frame, core.v60.dbg_pc);
+        $display("[pcwatch] HIT f=%0d pc=%08x", cur_frame, core.v60.pc);
         pcwatch_n = pcwatch_n + 1;
         pcwatch_last_frame = cur_frame;
     end
@@ -1366,19 +1388,19 @@ always @(posedge clk_sys) begin
         psw_ie_d <= core.v60.psw_ie;
         if (core.irq_n !== irq_n_d) begin
             $display("[irqp] f=%0d pc=%08x irq_n: %b->%b psw_ie=%b vec=%02x st=%0d",
-                cur_frame, core.v60.dbg_pc, irq_n_d, core.irq_n, core.v60.psw_ie,
+                cur_frame, core.v60.pc, irq_n_d, core.irq_n, core.v60.psw_ie,
                 core.irq_vector, core.v60.st);
             irqprobe_n = irqprobe_n + 1;
         end
         if (core.v60.psw_ie && !psw_ie_seen) begin
             psw_ie_seen <= 1'b1;
             $display("[irqp] f=%0d pc=%08x psw_ie first-set irq_n=%b",
-                cur_frame, core.v60.dbg_pc, core.irq_n);
+                cur_frame, core.v60.pc, core.irq_n);
             irqprobe_n = irqprobe_n + 1;
         end
         if (core.v60.exc_is_interrupt && !exc_is_interrupt_d) begin
             $display("[irqp] f=%0d pc=%08x ENTERING EXC/IRQ frame vec=%02x",
-                cur_frame, core.v60.dbg_pc, core.v60.exc_vector);
+                cur_frame, core.v60.pc, core.v60.exc_vector);
             irqprobe_n = irqprobe_n + 1;
         end
         exc_is_interrupt_d <= core.v60.exc_is_interrupt;
@@ -1398,7 +1420,7 @@ always @(posedge clk_sys) begin
         {core.A[23:1],1'b0} >= trace_lo[23:0] &&
         {core.A[23:1],1'b0} <= trace_hi[23:0]) begin
         $display("[memtrace] f=%0d pc=%08x a=%06x d=%04x be=%b op=%02x st=%0d",
-            cur_frame, core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata,
+            cur_frame, core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata,
             core.m_be, core.v60.cur_op, core.v60.st);
     end
 end
@@ -1440,36 +1462,10 @@ always @(posedge clk_sys) begin : vram_backing_verify
                 core.vram.cpu_be[1] ? core.vram.cpu_wdata[15:8] : old_word[15:8],
                 core.vram.cpu_be[0] ? core.vram.cpu_wdata[7:0]  : old_word[7:0]
             };
-            vramverify_pc <= core.v60.dbg_pc;
+            vramverify_pc <= core.v60.pc;
             vramverify_pending <= 1'b1;
         end
     end
-end
-
-// Optional bounded PC-range trace.  This is intentionally instruction-edge
-// only: it can prove whether a ROM helper/caller ran without the volume and
-// slowdown of per-cycle tracing during a long visible gameplay replay.
-integer pctrace_lo, pctrace_hi, pctrace_first, pctrace_last, pctrace_max;
-integer pctrace_n = 0;
-reg [31:0] pctrace_prev = 32'hffff_ffff;
-initial begin
-    if (!$value$plusargs("PCTRACELO=%h", pctrace_lo)) pctrace_lo = -1;
-    if (!$value$plusargs("PCTRACEHI=%h", pctrace_hi)) pctrace_hi = -1;
-    if (!$value$plusargs("PCTRACEFIRST=%d", pctrace_first)) pctrace_first = 0;
-    if (!$value$plusargs("PCTRACELAST=%d", pctrace_last)) pctrace_last = 32'h7fff_ffff;
-    if (!$value$plusargs("PCTRACEMAX=%d", pctrace_max)) pctrace_max = 4096;
-end
-always @(posedge clk_sys) if (ce_cpu && core.v60.dbg_pc != pctrace_prev) begin
-    if (pctrace_lo >= 0 && pctrace_hi >= pctrace_lo &&
-        cur_frame >= pctrace_first && cur_frame <= pctrace_last &&
-        core.v60.dbg_pc >= pctrace_lo && core.v60.dbg_pc <= pctrace_hi &&
-        pctrace_n < pctrace_max) begin
-        $display("[pctrace] f=%0d pc=%08x op=%02x r0=%08x r1=%08x r10=%08x r11=%08x",
-            cur_frame, core.v60.dbg_pc, core.v60.cur_op, core.v60.r[0],
-            core.v60.r[1], core.v60.r[10], core.v60.r[11]);
-        pctrace_n = pctrace_n + 1;
-    end
-    pctrace_prev <= core.v60.dbg_pc;
 end
 
 // +RADMPC: compact instruction-path trace around Rad Mobile's frame wait and
@@ -1478,16 +1474,16 @@ end
 reg [31:0] radm_pc_prev = 32'hffff_ffff;
 always @(posedge clk_sys) begin
     if ($test$plusargs("RADMPC") && ce_cpu &&
-        core.v60.dbg_pc != radm_pc_prev &&
-        ((core.v60.dbg_pc >= 32'h0006_6080 &&
-          core.v60.dbg_pc <  32'h0006_6230) ||
-         (core.v60.dbg_pc >= 32'h0007_0270 &&
-          core.v60.dbg_pc <  32'h0007_02b0))) begin
+        core.v60.pc != radm_pc_prev &&
+        ((core.v60.pc >= 32'h0006_6080 &&
+          core.v60.pc <  32'h0006_6230) ||
+         (core.v60.pc >= 32'h0007_0270 &&
+          core.v60.pc <  32'h0007_02b0))) begin
         $display("[radmpc] f=%0d pc=%08x op=%02x st=%0d r0=%08x r25=%08x f007=%02x",
-            cur_frame, core.v60.dbg_pc, core.v60.cur_op, core.v60.st,
+            cur_frame, core.v60.pc, core.v60.cur_op, core.v60.st,
             core.v60.r[0], core.v60.r[25],
             core.work_ram.mem[16'h7803][15:8]);
-        radm_pc_prev <= core.v60.dbg_pc;
+        radm_pc_prev <= core.v60.pc;
     end
 end
 
@@ -1502,7 +1498,7 @@ always @(posedge clk_sys) begin
                         {core.A[23:1],1'b0} == 24'h20ac2c)) begin
         xdiag_n = xdiag_n + 1;
         $display("[xdiag] f=%0d pc=%08x W [%06x] data=%04x be=%b r0=%08x r1=%08x r26=%08x",
-            cur_frame, core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_wdata,
+            cur_frame, core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata,
             core.m_be, core.v60.r[0], core.v60.r[1], core.v60.r[26]);
     end
 end
@@ -1513,14 +1509,14 @@ always @(posedge clk_sys) begin
     if (core.m_req && !core.m_ack) begin
         hang_cnt = hang_cnt + 1;
         if (hang_cnt == 20000)
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
             $display("[HANG] pc=%08x A=%06x we=%b be=%b st=%0d p0req=%b",
-                core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
+                core.v60.pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
                 core.v60.st, p0_req);
 `else
-            $display("[HANG] pc=%08x A=%06x we=%b be=%b st=%0d rom_ready=%b rom_filling=%b ic_hit=%b p0req=%b",
-                core.v60.dbg_pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
-                core.v60.st, core.rom_ready, core.rom_filling, core.ic_hit, p0_req);
+            $display("[HANG] pc=%08x A=%06x we=%b be=%b st=%0d p0req=%b",
+                core.v60.pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
+                core.v60.st, p0_req);
 `endif
     end
     else hang_cnt = 0;
@@ -1550,7 +1546,7 @@ always @(posedge clk_sys) begin
         spr_log_n < spr_log_max) begin
         spr_log_n = spr_log_n + 1;
         $display("[sprw] f=%0d pc=%08x W [%06x] data=%04x be=%b r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x",
-            cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_wdata,
+            cur_frame, core.v60.pc, core.A[23:0], core.m_wdata,
             core.m_be, core.v60.r[0], core.v60.r[1], core.v60.r[2],
             core.v60.r[3], core.v60.r[4], core.v60.r[5]);
     end
@@ -1573,38 +1569,14 @@ always @(posedge clk_sys) begin
             prot_log_n = prot_log_n + 1;
             if (core.m_we)
                 $display("[prot] f=%0d n=%0d pc=%08x W [%06x] data=%04x be=%b",
-                    cur_frame, prot_txn_n, core.v60.dbg_pc, core.A[23:0],
+                    cur_frame, prot_txn_n, core.v60.pc, core.A[23:0],
                     core.m_wdata, core.m_be);
             else
                 $display("[prot] f=%0d n=%0d pc=%08x R [%06x] data=%04x be=%b",
-                    cur_frame, prot_txn_n, core.v60.dbg_pc, core.A[23:0],
+                    cur_frame, prot_txn_n, core.v60.pc, core.A[23:0],
                     core.m_rdata, core.m_be);
         end
         prot_txn_n = prot_txn_n + 1;
-    end
-end
-
-// Optional dual-PCB bridge timing probe.  This distinguishes a responder
-// value from a stale read-mux value without changing production RTL.  It is
-// deliberately inert unless +DUALLOG=<n> is supplied.
-integer dual_log_max = 0, dual_log_n = 0;
-initial void'($value$plusargs("DUALLOG=%d", dual_log_max));
-always @(posedge clk_sys) begin
-    if (dual_log_max > 0 && dual_log_n < dual_log_max &&
-        core.m_req && core.m_ack && !core.ack_d &&
-        core.A[23:16] == 8'h81) begin
-        dual_log_n = dual_log_n + 1;
-        if (core.m_we)
-            $display("[dual] f=%0d pc=%08x W A=%06x bus=%04x be=%b comm0=%04x written0=%0d phase=%0d heartbeat=%0d",
-                cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_wdata, core.m_be,
-                core.g_dualpcb.dual.comm[0], core.g_dualpcb.dual.comm_written[0],
-                0, 0);
-        else
-            $display("[dual] f=%0d pc=%08x R A=%06x bus=%04x dualq=%04x rmux=%04x be=%b rdwait=%0d ack=%0d comm0=%04x written0=%0d phase=%0d heartbeat=%0d",
-                cur_frame, core.v60.dbg_pc, core.A[23:0], core.m_rdata,
-                core.dual_q, core.rmux, core.m_be, core.rd_wait, core.ack_r,
-                core.g_dualpcb.dual.comm[0], core.g_dualpcb.dual.comm_written[0],
-                0, 0);
     end
 end
 
@@ -1618,7 +1590,7 @@ always @(posedge clk_sys) begin
         core.A[23:20] >= 4'h2 && core.A[23:20] < 4'hF) begin
         rd_a[rd_n % 24]  <= core.A;
         rd_d[rd_n % 24]  <= core.m_rdata;
-        rd_pc[rd_n % 24] <= core.v60.dbg_pc;
+        rd_pc[rd_n % 24] <= core.v60.pc;
         rd_n = rd_n + 1;
     end
 end
@@ -1726,7 +1698,7 @@ always @(posedge clk_sys) begin
     if (core.mix0.reg_we && mixw_n < mixw_max) begin
         mixw_n = mixw_n + 1;
         $display("[mixw] f=%0d pc=%08x mreg[%02x] <= %04x (byte ofs %03x) busA=%06x",
-            cur_frame, core.v60.dbg_pc, core.mix0.reg_addr, core.mix0.reg_wdata,
+            cur_frame, core.v60.pc, core.mix0.reg_addr, core.mix0.reg_wdata,
             {core.mix0.reg_addr, 1'b0}, {core.A[23:1],1'b0});
     end
 end
@@ -1775,6 +1747,9 @@ always @(posedge clk_sys) begin
 end
 
 integer frames, f, p1_ev;
+reg gear_latched = 1'b0;
+reg gear_pressed_d = 1'b0;
+reg gear_pressed;
 integer arab_perf_at, arab_perf_n;
 integer arab_perf_samples = 0, arab_perf_misses = 0;
 reg arab_perf_done = 0;
@@ -1823,6 +1798,21 @@ initial begin
                         p1_mask[p1_ev][7:0]);
             end
         end
+        // The production emu top edge-latches descriptor-selected cabinet
+        // Gear Change inputs (Slip Stream/Rad Rally). Mirror that shared
+        // board behavior in the direct-core harness; feeding P1A bit 0 as a
+        // momentary level leaves the Slip Stream mode selector undecidable.
+        gear_pressed = ~in_p1a_r[0];
+        if (board.gear_toggle) begin
+            if (gear_pressed && !gear_pressed_d)
+                gear_latched = ~gear_latched;
+            gear_pressed_d = gear_pressed;
+            in_p1a_r[0] = ~gear_latched;
+        end
+        else begin
+            gear_latched = 1'b0;
+            gear_pressed_d = 1'b0;
+        end
         if (coin_at >= 0 && coin_len > 0 &&
             f >= coin_at && f < coin_at + coin_len) begin
             in_svc12_r[p1_coin_bit] = 1'b0;
@@ -1830,6 +1820,9 @@ initial begin
                 $display("[input] frames %0d..%0d: P1 coin low (port E bit %0d)",
                     coin_at, coin_at + coin_len - 1, p1_coin_bit);
         end
+        if (coin2_at >= 0 && coin2_len > 0 &&
+            f >= coin2_at && f < coin2_at + coin2_len)
+            in_svc12_r[p1_coin_bit] = 1'b0;
         if (start_at >= 0 && start_len > 0 &&
             f >= start_at && f < start_at + start_len) begin
             in_svc12_r[4] = 1'b0;
@@ -1837,6 +1830,9 @@ initial begin
                 $display("[input] frames %0d..%0d: P1 start low (port E bit 4)",
                     start_at, start_at + start_len - 1);
         end
+        if (start2_at >= 0 && start2_len > 0 &&
+            f >= start2_at && f < start2_at + start2_len)
+            in_svc12_r[4] = 1'b0;
         // +PLAYMAGIC gameplay autopilot: after coin+start, repeatedly tap
         // Button1 (0x01) to confirm the char select, then in gameplay hold Right
         // (0x40) toward the scripted rocks-flame and run a magic (Button3 0x04)
@@ -1908,6 +1904,8 @@ initial begin
             arab_entry_started = 1'b1;
             $display("[arab-entry] start f=%0d n1sx=%04x x=%0d jump=%0d raw=%0d",
                 f, core.tm_scrollx[1], arab_entry_x0, arab_jump_x, arab_raw_x);
+            $display("[arab-entry-state] f=%0d w2005f6=%04x w2005f8=%04x",
+                f, core.work_ram.mem[16'h02fb], core.work_ram.mem[16'h02fc]);
             $fflush();
         end
         if (arabentry && arab_entry_started && !arab_entry_done &&
@@ -1925,6 +1923,8 @@ initial begin
             $display("[arab-entry] end f=%0d n1sx=%04x x=%0d dx=%0d jump=%0d raw=%0d",
                 f, core.tm_scrollx[1], arab_entry_x1, arab_entry_dx,
                 arab_jump_x, arab_raw_x);
+            $display("[arab-entry-state] f=%0d w2005f6=%04x w2005f8=%04x",
+                f, core.work_ram.mem[16'h02fb], core.work_ram.mem[16'h02fc]);
             if (arab_entry_dx < 20) begin
                 arab_entry_failed = 1'b1;
                 $display("ARABIAN FIGHT ENTRY FAIL: neutral-input player advanced only %0d pixels between scene markers (need >=20)",
@@ -1938,13 +1938,13 @@ initial begin
         if (arab_perf_at >= 0 && f >= arab_perf_at &&
             f < arab_perf_at + arab_perf_n) begin
             arab_perf_samples = arab_perf_samples + 1;
-            if (core.v60.dbg_pc != 32'h00fe4244 &&
-                core.v60.dbg_pc != 32'h00fe4248)
+            if (core.v60.pc != 32'h00fe4244 &&
+                core.v60.pc != 32'h00fe4248)
                 arab_perf_misses = arab_perf_misses + 1;
             $display("[arab-perf] f=%0d pc=%08x idle=%0d misses=%0d",
-                f, core.v60.dbg_pc,
-                core.v60.dbg_pc == 32'h00fe4244 ||
-                core.v60.dbg_pc == 32'h00fe4248,
+                f, core.v60.pc,
+                core.v60.pc == 32'h00fe4244 ||
+                core.v60.pc == 32'h00fe4248,
                 arab_perf_misses);
             if (f == arab_perf_at + arab_perf_n - 1) begin
                 arab_perf_done = 1'b1;
@@ -1958,7 +1958,7 @@ initial begin
         end
         if (!quiet) begin
         $display("frame %0d: pc=%08x halted=%0d | wram=%0d vram=%0d pal=%0d spr=%0d io=%0d intc=%0d | irq=%0d exc=%0d vs=%0d sprpx=%0d stuck=%0d protrd=%0d shrd=%0d den=%b nb=%0d v02=%04x v8e=%04x v00=%04x loff=%b",
-            f, core.v60.dbg_pc, core.v60.dbg_halted,
+            f, core.v60.pc, core.v60.halted,
             n_wram_wr, n_vram_wr, n_pal_wr, n_spr_wr, n_io_wr, n_intc_wr,
             n_irq, n_exc, vs_count, spr_px, same_pc, n_prot_rd, n_sh_rd,
             core.io0_cnt1, nb_pix,
@@ -2032,7 +2032,8 @@ initial begin
             $fatal(1, "VERILATOR SCREENSHOT FAIL: completed PPM frame is entirely black");
         $display("VERILATOR SCREENSHOT PASS: frame=%0d nonblack=%0d", dump_frame, dump_nonblack);
     end
-    if (coin_at >= 0 || start_at >= 0 || p1_event_count > 0)
+    if (coin_at >= 0 || coin2_at >= 0 || start_at >= 0 ||
+        start2_at >= 0 || p1_event_count > 0)
         $display("[input-summary] active CPU samples: coin=%0d start=%0d p1a=%0d",
             coin_active_samples, start_active_samples, p1a_active_samples);
     if (coin_at >= 0 && coin_active_samples == 0)
@@ -2121,13 +2122,13 @@ always @(posedge clk_sys) begin
         vbl_cyc <= 0;
     end
     if (ce_cpu && pchist_at >= 0 && cur_frame >= pchist_at && cur_frame < pchist_at + pchist_len) begin
-        pc_hist[core.v60.dbg_pc] = pc_hist[core.v60.dbg_pc] + 1;
+        pc_hist[core.v60.pc] = pc_hist[core.v60.pc] + 1;
         st_hist[core.v60.st] = st_hist[core.v60.st] + 1;
         pc_samples = pc_samples + 1;
         // count instructions = FSM entering S_DECODE (one per fetched opcode)
         if (core.v60.st == 3 /*S_DECODE*/ && st_prev != 3) instr_count = instr_count + 1;
         // WORK-only tally: same cycles/instrs but excluding the idle frame-sync spin
-        if (core.v60.dbg_pc != 32'h0013_3505 && core.v60.dbg_pc != 32'h0013_350b) begin
+        if (core.v60.pc != 32'h0013_3505 && core.v60.pc != 32'h0013_350b) begin
             work_cyc = work_cyc + 1;
             if (core.v60.st == 3 && st_prev != 3) work_instr = work_instr + 1;
             // Stage A take-rate: how often the S_NEXT fast path actually fires.

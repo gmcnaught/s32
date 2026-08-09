@@ -63,10 +63,7 @@ s32_sprite #(.POST_VBLANK_CYCLES(8)) sprite (
     .clk(clk), .rst(rst), .is_multi32(1'b0), .retain_previous(retain_previous),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),
-    .present(present), .vblank(vblank), .rendering(rendering),
-    .debug_first_rom_desc(), .debug_first_rom_valid(),
-    .debug_last_desc(), .debug_last_draw_desc(),
-    .debug_activity(), .debug_state(), .debug_counts(),
+    .present(present), .vblank(vblank),
     .ctl_we(ctl_we), .ctl_addr(ctl_addr[2:0]), .ctl_wdata(ctl_wdata),
     .ctl_rdata(), .ctl_raddr(3'd0),
     .slist_addr(slist_addr), .slist_data(slist_q),
@@ -80,6 +77,7 @@ s32_sprite #(.POST_VBLANK_CYCLES(8)) sprite (
     .fb_er_ack(fbe_ack), .disp_buf(disp_buf), .scan_buf(scan_buf),
     .scan_buf_prev(scan_buf_prev), .scan_dual(scan_dual)
 );
+assign rendering = sprite.rs != 0;
 
 // Non-backpressured DDR so passes complete quickly.
 wire        dd_busy;

@@ -53,8 +53,6 @@ module s32_soundsys #(
 // ---------------------------------------------------------------------------
 wire [15:0] z_addr;
 wire [7:0]  z_dout;
-wire [229:0] z_reg_debug;
-wire [1:0]   z_iset_debug;
 reg  [7:0]  z_din;
 wire        z_mreq_n, z_iorq_n, z_rd_n, z_wr_n, z_m1_n;
 reg         z_int_n;
@@ -86,10 +84,10 @@ T80s z80 (
     .A       (z_addr),
     .DI      (z_din),
     .DO      (z_dout),
-    .REG     (z_reg_debug),
+    .REG     (),
     .DIRSet  (1'b0),
     .DIR     (230'd0),
-    .ISet_out(z_iset_debug)
+    .ISet_out()
 );
 `else
 assign z_addr = 16'h0000; assign z_dout = 8'h00;

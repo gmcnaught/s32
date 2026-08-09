@@ -77,7 +77,7 @@ bind tb_core_romboot spidman_cam_monitor spidman_cam_monitor_i (
     .clk(clk_sys),
     .rst(rst),
     .frame_no(cur_frame),
-    .pc(core.v60.dbg_pc),
+    .pc(core.v60.pc),
     .r0(core.v60.r[0]),
     .r20(core.v60.r[20]),
     .wram_write(core.m_req && core.m_we && core.sel_wram),

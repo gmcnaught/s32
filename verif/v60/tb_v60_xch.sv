@@ -33,7 +33,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(),
-    .nmi_n(1'b1), .dbg_pc(), .dbg_halted()
+    .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -98,7 +98,7 @@ initial begin
 
     repeat (8) @(posedge clk);
     rst = 0;
-    wait (cpu.dbg_halted);
+    wait (cpu.halted);
     repeat (4) @(posedge clk);
 
     $display("R19=%08x R20=%08x R21=%08x mem8000=%04x mem9000=%08x",

@@ -18,20 +18,22 @@ two games that were actually shipping:
   only.
 - `segas32.rbf` / `segas32.qsf`: no real V25 hardware at all (HLE responder
   only, `rtl/prot/s32_prot.sv`'s `s32_v25`), for every other in-scope System
-  32 game. Currently scoped to `sonic` alone (its resource-fit blocker --
+  32 game. Currently scoped to `sonic` and `slipstrm` (Slip Stream uses the
+  descriptor-gated MSM6253 ADC; Sonic's resource-fit blocker --
   the V60 ROM cache's `prot_rom_grant` tie-off assuming no game needed
   generic protection ROM-read arbitration -- is fixed, see
-  `rtl/s32_core.sv`'s `s32_ga_rom_cache` arbiter). Other non-V25 games
-  (`holo`, `jpark`, `radm`, `radr`, `spidman`) return to this profile one at
-  a time, same discipline as the retired single-profile roadmap just applied
-  to two profiles instead of one. This profile has never been fit; its
+  `rtl/s32_core.sv`'s `s32_ga_rom_cache` arbiter). Holo, Spider-Man, Alien3,
+  Air Rescue, Burning Rival, Dark Edge, Jurassic Park, and Rad Rally are
+  restored to this profile; `radm` remains staged. This profile has never been fit; its
   QSF's fitter/seed settings are starting points carried over from
   `segas32v25.qsf`, not validated for its own resource shape.
 
 `rtl/s32_core.sv` is shared by both profiles. The scope trim is now
-three-way: `GAME_ONLY` (dual-PCB/Burning Rival tied off, applies to both
-profiles) and `GAME_ONLY_STD` (additionally keeps the trackball and generic
-protection HLE live, `segas32.qsf` only, implies `GAME_ONLY`). Do not name a
+three-way: `GAME_ONLY` (the real-V25 shape ties off unrelated standard-board
+hardware) and `GAME_ONLY_STD` (keeps the trackball, descriptor-gated ADC,
+positional-gun conditioner, Air Rescue DSP responder, dual-PCB bridge,
+Burning Rival responder, and generic protection HLE live in `segas32.qsf`,
+while still implying `GAME_ONLY`). Do not name a
 macro after a specific game (`S32_SONIC_ONLY` etc.) -- see the routing rule
 below, unchanged since before the merge.
 
@@ -44,16 +46,17 @@ state.
 ## Outputs
 
 - `segas32v25.rbf` / `segas32v25.qsf`: `ga2`, `arabfgt` (real V25).
-- `segas32.rbf` / `segas32.qsf`: `sonic` today; `holo`, `jpark`, `radm`,
-  `radr`, `spidman` return here one at a time (HLE only, no V25 hardware).
+- `segas32.rbf` / `segas32.qsf`: `alien3`, `arescue`, `brival`, `darkedge`,
+  `holo`, `jpark`, `radr`, `slipstrm`, `sonic`, and `spidman` (HLE only, no
+  real V25 hardware). `radm` remains staged.
 - No production image supports Multi 32 sets.
 
 ## User-requested exclusions (2026-08-03)
 
 The following parents are intentionally ignored and must not be emitted as
 MRAs, staged by the active profile sweep, or treated as supported in future
-profile work: `brival`, `darkedge`, `dbzvrvs`, `f1en`, `f1lap`, `slipstrm`,
-`svf`, and `jleague`. Local ROMs and historical captures may remain on disk;
+profile work: `dbzvrvs`, `f1en`, `f1lap`, `svf`, and `jleague`. Local ROMs
+and historical captures may remain on disk;
 they are outside the production profile.
 
 ## Source of truth
@@ -77,14 +80,15 @@ shared ce-gated V60 fetch boundary and never selects a game or RBF.
 | Feature/change | `segas32v25` | `segas32` |
 |---|---:|---:|
 | Shared V60, video, sprite, audio, I/O, loader, and dedicated V60 ROM cache | yes | yes |
-| MSM6253 ADC | no (`GAME_ONLY` tie-off; no game here has an analog board) | no (same tie-off; no game here has an analog board) |
-| Trackball (`s32_upd4701`) | no (no game here has one) | yes, descriptor-driven (`GAME_ONLY_STD`; Sonic's rev.C hardware) |
-| Generic protection HLE (`s32_prot_hle`) | no (both games are `PROT_NONE`) | yes (`GAME_ONLY_STD`; Sonic's `PROT_SONIC`) |
-| Burning Rival responder / dual-PCB bridge | no | no (no game in either profile uses either) |
+| MSM6253 ADC | no (`GAME_ONLY` tie-off; neither V25 game has an analog board) | yes, descriptor-driven for Slip Stream (`ANALOG_DRIVING`); right-stick up/down drive accelerator/brake, A/B are full-scale digital fallbacks, and X toggles gear; inactive games do not select the device |
+| Trackball (`s32_upd4701`) | no (no game here has one) | yes, descriptor-driven (`GAME_ONLY_STD`); all three Sonic players use frame-paced left-stick velocity and exact action/start/coin wiring |
+| Generic protection HLE (`s32_prot_hle`) | no (both games are `PROT_NONE`) | yes (`GAME_ONLY_STD`; descriptor-selected Sonic/Dark Edge paths) |
+| Burning Rival / Air Rescue DSP responders and dual-PCB bridge | no | yes, descriptor-gated for `brival`/`arescue` |
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_REAL_V25=1`), enabled per-game by the descriptor's `has_v25` bit | not compiled in at all; HLE responder `s32_v25` only |
 | V25 table/cadence selection | descriptor-driven (`v25_table`) | n/a (no V25 hardware) |
 | CPU Turbo | removed (V60 timing relies on fixed CE spacing) | removed (same) |
 | Multi 32 second screen/peripheral hardware | no | no |
+| HDMI shadow-mask post-process | compiled out (`MISTER_DISABLE_SHADOWMASK`; optional output effect) | compiled out (same) |
 
 ## Evidence status (2026-08-01)
 
@@ -113,10 +117,10 @@ shared ce-gated V60 fetch boundary and never selects a game or RBF.
 ## Current goal acceptance scope (2026-08-02)
 
 The current user-directed gameplay/attract acceptance matrix covers true parent
-sets only. Clone and regional revisions, all Multi 32 parents, `holo`, and
-`spidman` are excluded from this audit. The remaining active Standard parents
-are `jpark`, `radm`, `radr`, and `sonic`; the two V25 parents remain `ga2` and
-`arabfgt`.
+sets only. Clone and regional revisions and all Multi 32 parents are excluded
+from this audit. The active Standard parents are `alien3`, `arescue`, `brival`,
+`darkedge`, `holo`, `spidman`, `jpark`, `radr`, `slipstrm`, and `sonic`;
+`radm` remains staged, and the two V25 parents remain `ga2` and `arabfgt`.
 
 ## Universal-profile attract evidence (2026-08-01, in progress)
 
@@ -168,14 +172,15 @@ closed. Only 100% counts as proven attract mode.
 
 | Parent | Attract proven? | Progress | Current evidence / next gate |
 |---|---:|---:|---|
-| `holo` | excluded | — | explicitly excluded from the current audit; production routing retained |
+| `holo` | no | historical attract capture retained; reactivated in the standard profile | rerun the combined attract/frame-diff gate |
 | `ga2` | no | 50% | staged V25 parent image; real-V25 attract and MAME frame-diff gate pending |
 | `arabfgt` | no | 50% | staged V25 parent image; real-V25 attract and MAME frame-diff gate pending |
 | `jpark` | no | 50% | 150-frame Verilator smoke; run the corresponding 1200-frame Verilator title window selected from MAME |
 | `radm` | no | not MAME-exact | **2026-08-05 pixel-exact MAME comparison** (`docs/radm-radr-bringup.md`): the earlier "50%/non-black-pixel" gate above did not compare against MAME frames. A 1740-frame sweep vs MAME shows the RTL matches MAME almost exactly at frame 900 (0.49% differing) — both sides show the "Motor warm up now !! Please wait" screen — but MAME transitions off it within the next 60-frame sample while the RTL is still on it at frame 1740 (the end of the capture). Interrupt delivery and the MSM6253 ADC were both traced live against MAME and are confirmed correct/identical; the remaining gap is not yet isolated past "likely another symptom of the known V60 throughput gap" — no RTL change made. |
 | `radr` | no | not MAME-exact | **2026-08-05 pixel-exact MAME comparison** (`docs/radm-radr-bringup.md`) supersedes the "100%/screenshot-gate" verdict below, which also predates any MAME frame comparison. Frames 60-240 match MAME closely (0.67% differing, stable residual — static title/logo screen); from frame 300 onward the RTL diverges from MAME with no nearby-frame rescue (a genuine content divergence, not timing drift), recovering briefly at frame 480 then diverging again from 600 through 1740. Not yet root-caused. Historical context retained below since it reflects real, still-true findings (screenshot gate, IRQ vectors, zero overruns) — it just isn't evidence of MAME-exactness. 420-frame full-core Verilator attract run passed; retained frame-360 Rad Rally capture, `ROMBOOT DONE`, screenshot gate, IRQ-only vectors 40/41, and zero freeze/tile/FB overruns; MAME-derived CN/FG plus EPR-14084 link-status HLE remains descriptor-routed and focused-tested |
+| `slipstrm` | no | MAME gameplay differential stopped at RTL frame 2920 | **2026-08-09 deep trace** (`docs/slipstrm-bringup.md`): fixed a shared V60 RSR return that popped the correct PC but retained the CHLVL handler's stale prefetch window, then proved and fixed an MSM6253 bus-integration error that shifted neutral wheel `0x80` before the read mux sampled D7 (the game stored `0x00` and selected Time Trial instead of MAME's World Championship). Corrected RTL selects World Championship; scene-aligned car selection differs by 192/93,184 pixels (0.2065%) after the known one-pixel horizontal offset. Raw MAME road references through frame 4200 are retained. The corrected run was stopped by request at countdown 3 before 320-wide road output, so road gameplay remains the closing gate. |
 | `sonic` | **yes (attract)** | 100% attract / gameplay: one known cosmetic gap, root-caused and accepted | **Attract gate closed 2026-08-04**: the whole attract cycle is pixel-exact against MAME — 9 sampled 416-wide frames (120–600) and 13 sampled 320-wide frames (660–1380), 0 differing pixels each, no x/y offset (`docs/segasonic-bringup.md`). Gameplay re-measured the same day with MAME's coin/start/button/trackball schedule: exact through RTL frame 1015 (0/71,680 at 955 and 1015), then the floor's palette bank1 (`0x3C01`–`0x3E6F`) reads black. **Root cause closed, not a video/logic bug**: a mixer write-both mirror race — our V60 clears blend-enable (`$4E`) a few cycles earlier, mid-loop, relative to the same palette-fill routine MAME runs; VRAM and palette bank0 are proven bit-identical to MAME. Classified as V60 timing-authenticity (same class as the tracked ga2/arabfgt work), not patched — see `docs/segasonic-bringup.md` for the full trace evidence and why a narrow patch was rejected. |
-| `spidman` | excluded | — | explicitly excluded from the current audit; production routing retained |
+| `spidman` | no | reactivated in the standard profile; current gate not rerun | run the Spider-Man attract gate |
 
 MAME-only timing leads (from the local 0.285 executable; not attract proof for
 the pinned source or RTL) are retained for deterministic run planning:

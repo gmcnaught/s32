@@ -29,8 +29,7 @@ s32_v60 #(.START_PC(32'h0)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'd0), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'd0), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus bus_adapter (
     .clk(clk), .ce(ce), .rst(rst),
@@ -105,11 +104,11 @@ begin
     repeat (2) @(posedge clk);
     rst = 0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 4000) begin
+    while (!cpu.halted && cycles < 4000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
-    if (!cpu.dbg_halted || ram[16'h016c >> 1] !== expected_meter) begin
+    if (!cpu.halted || ram[16'h016c >> 1] !== expected_meter) begin
         $display("FAIL initial=%04x damage=%08x got=%04x expected=%04x R1=%08x R2=%08x",
                  initial_meter, base_damage, ram[16'h016c >> 1],
                  expected_meter, cpu.r[1], cpu.r[2]);
@@ -151,21 +150,21 @@ begin
     repeat (2) @(posedge clk);
     rst = 0;
     cycles = 0;
-    while (!cpu.dbg_halted && cycles < 8000) begin
+    while (!cpu.halted && cycles < 8000) begin
         @(posedge clk);
         cycles = cycles + 1;
-        if (cpu.dbg_pc == 32'd14 && cpu.mdcnt == 32) begin
+        if (cpu.pc == 32'd14 && cpu.mdcnt == 32) begin
             div_op = cpu.mdop;
             div_acc = cpu.mdacc[31:0];
         end
-        if (cpu.dbg_pc == 32'd19) div_result = cpu.r[2];
-        if (cpu.dbg_pc == 32'd19 && cpu.mdcnt == 32) begin
+        if (cpu.pc == 32'd19) div_result = cpu.r[2];
+        if (cpu.pc == 32'd19 && cpu.mdcnt == 32) begin
             mul_op = cpu.mdop;
             mul_acc = cpu.mdacc[31:0];
         end
-        if (cpu.dbg_pc == 32'd23) mul_result = cpu.r[2];
+        if (cpu.pc == 32'd23) mul_result = cpu.r[2];
     end
-    if (!cpu.dbg_halted || cpu.r[2] !== expected_width) begin
+    if (!cpu.halted || cpu.r[2] !== expected_width) begin
         $display("FAIL draw current=%0d max=%0d width=%08x expected=%08x div=%08x mul=%08x",
                  current_hp, max_hp, cpu.r[2], expected_width, div_result, mul_result);
         $display("     div operands op=%08x acc=%08x; mul op=%08x acc=%08x",

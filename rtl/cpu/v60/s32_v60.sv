@@ -87,11 +87,7 @@ module s32_v60 #(
     input             irq_n,         // level, active low
     input       [7:0] irq_vector,    // external vector (s32_intc), +0x40 applied here
     output reg        irq_ack,       // pulses when vector consumed
-    input             nmi_n,
-
-    // debug/trace
-    output reg [31:0] dbg_pc,
-    output            dbg_halted
+    input             nmi_n
 );
 
 // ---------------------------------------------------------------------------
@@ -123,7 +119,6 @@ wire  [1:0] psw_el = psw_rest[25:24];
 wire        psw_is = psw_rest[28];
 
 reg halted;
-assign dbg_halted = halted;
 
 // ---------------------------------------------------------------------------
 // Data/prefetch bus arbiter.  The CPU's DATA accesses drive dbus_* and observe
@@ -827,9 +822,6 @@ if (rst) begin
     dbus_req <= 0; dbus_we <= 0; irq_ack <= 0;
     dbus_addr <= 0; dbus_size <= 0; dbus_wdata <= 0;
     halted <= 0;
-`ifndef S32_RELEASE_MINIMAL
-    dbg_pc <= START_PC;
-`endif
     nmi_seen <= 0;
     nmi_r <= 0;
     xdiv_active <= 0;
@@ -969,9 +961,6 @@ else if (ce) begin
 
     // ------------------------------------------------------------------
     S_DECODE: begin
-`ifndef S32_RELEASE_MINIMAL
-        dbg_pc <= pc;
-`endif
         cur_op <= opcode;
         total_len <= 5'd2;      // default for F12 base
         // exception-frame defaults (A8): 2-word frame returning to current PC;
@@ -1793,8 +1782,14 @@ else if (ce) begin
     // iterative multiply/divide
     S_MULDIV: begin
         if (mdcnt == 0) begin
-            md_finish();
+            // Establish the register-destination/default continuation before
+            // md_finish.  A memory destination changes st to S_WB_MEM from
+            // wb_op2(); that later assignment must win.  The old order wrote
+            // S_NEXT last and silently discarded every memory MUL/DIV/REM
+            // result (Arabian Fight's level-entry speed remained 1 instead of
+            // being scaled to 0x100, leaving the player moving at 1/256 speed).
             st <= S_NEXT;
+            md_finish();
         end
         else begin
             md_step();
@@ -2128,6 +2123,16 @@ else if (ce) begin
         dbus_req <= 0;
         pc <= bus_rdata;
         queue_reg_write(5'd31, r[31] + 4, 32'hffff_ffff);
+        // RSR is a non-sequential control transfer.  Flush the live and
+        // retained prefetch windows at the same edge as the popped PC so an
+        // in-flight fetch from the interrupted handler cannot leave the old
+        // instruction stream visible during S_FILL.
+        fb_valid <= 5'd0;
+        fb_wr    <= 5'd0;
+        fb_base  <= bus_rdata;
+        fb_prev_valid <= 5'd0;
+        pf_epoch <= pf_epoch + 4'd1;
+        pf_suppress <= 1'b0;
         st <= S_FILL; st_after_fill <= S_DECODE;
     end
 

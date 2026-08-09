@@ -166,10 +166,6 @@ endgenerate
 reg fbe_ack;
 always @(posedge clk_ram) fbe_ack <= fbe_req;
 
-wire dbg_halted_w;
-wire [31:0] dbg_pc_w;
-wire [23:0] dbg_v25_w;
-wire [89:0] dbg_v25img_w;
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram), .clk_v25(clk_v25),
@@ -198,10 +194,7 @@ s32_core core (
     .adc_ch(adc_a), .trk_dv(tdv_a), .trk_dx(tdx_a), .trk_dy(tdy_a), .trk_btn(tbt_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
     .rgb_a(), .rgb_b(), .ce_pix(), .hs(), .vs(), .hb(), .vb(),
-    .audio_l(), .audio_r(), .out_lamps(),
-    .debug_pc(dbg_pc_w), .debug_halted(dbg_halted_w), .debug_status(),
-    .debug_first_rom(), .debug_hcnt(), .debug_v25(dbg_v25_w),
-    .debug_v25_img(dbg_v25img_w)
+    .audio_l(), .audio_r(), .out_lamps()
 );
 
 // -------------------------------------------------------------------------
@@ -271,10 +264,9 @@ localparam [24:1] MCU_WBASE = SDR_MCU_BASE[24:1];   // word address of 0x0E00000
 integer w, t;
 integer cyc = 0;
 integer halt_cycle = -1;
-reg dbg_v25img_fail = 0;
 always @(posedge clk_sys) if (!rst) begin
     cyc <= cyc + 1;
-    if (dbg_halted_w && halt_cycle < 0) halt_cycle <= cyc;
+    if (core.v60.halted && halt_cycle < 0) halt_cycle <= cyc;
 end
 
 initial begin
@@ -303,30 +295,8 @@ initial begin
     rst = 0;
     repeat (4_000_000) @(posedge clk_sys);
     $display("V25_SDRAM p5_reads=%0d p0_reads=%0d halted=%0d halt_cycle=%0d",
-             p5_reads, p0_reads, dbg_halted_w, halt_cycle);
-    $display("V25_SDRAM v60_pc=%08x v25dbg={ce=%0h wake=%b mbnz=%b unm=%b io=%b rdcnt=%02x mblast=%02x}",
-             dbg_pc_w, dbg_v25_w[23:20], dbg_v25_w[19], dbg_v25_w[18],
-             dbg_v25_w[17], dbg_v25_w[16], dbg_v25_w[15:8], dbg_v25_w[7:0]);
-`ifndef S32_RELEASE_MINIMAL
-    $display("V25_SDRAM sweep_done=%b hash=%06x (exp 83aa29) first_valid=%b first_line=%016x (exp ffffff0000040002)",
-             dbg_v25img_w[89], dbg_v25img_w[87:64], dbg_v25img_w[88], dbg_v25img_w[63:0]);
-    if (dbg_v25img_w[87:64] !== 24'h83AA29) begin
-        $display("V25_SDRAM FAIL: image sweep hash mismatch");
-        dbg_v25img_fail = 1;
-    end
-`else
-    $display("V25_SDRAM release-minimal sweep_done=%b hash=%06x first_valid=%b first_line=%016x (exp ffffff0000040002)",
-             dbg_v25img_w[89], dbg_v25img_w[87:64], dbg_v25img_w[88], dbg_v25img_w[63:0]);
-    if (dbg_v25img_w[89] !== 1'b1 || dbg_v25img_w[87:64] !== 24'h000000) begin
-        $display("V25_SDRAM FAIL: release-minimal sweep was not compiled out");
-        dbg_v25img_fail = 1;
-    end
-`endif
-    if (dbg_v25img_w[63:0] !== 64'hFFFF_FF00_0004_0002) begin
-        $display("V25_SDRAM FAIL: first fetched line mismatch");
-        dbg_v25img_fail = 1;
-    end
-    if (p5_reads > 0 && dbg_halted_w && halt_cycle > 2000 && !dbg_v25img_fail)
+             p5_reads, p0_reads, core.v60.halted, halt_cycle);
+    if (p5_reads > 0 && core.v60.halted && halt_cycle > 2000)
         $display("V25 SDRAM INTEGRATION PASS");
     else
         $display("V25 SDRAM INTEGRATION FAIL");

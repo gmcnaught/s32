@@ -7,27 +7,83 @@ from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS
 
 
 class BoardDescriptorTests(unittest.TestCase):
-    # 2026-08-05: holo/jpark/radm/radr/spidman moved to IGNORED_PARENTS (see
-    # memory s32-single-profile-roadmap) -- descriptor tests specific to those
-    # games (ADC/gun/digital-profile/gear-toggle/comm-link-HLE encoding) were
-    # removed here, not adapted, since the games themselves are out of scope
-    # for this RBF. Restore alongside whichever game returns first.
     def test_ignored_parents_are_not_profile_descriptors(self) -> None:
         self.assertTrue(IGNORED_PARENTS.isdisjoint(GAMES))
 
+    def test_holo_and_spidman_are_standard_profile_descriptors(self) -> None:
+        self.assertEqual(GAMES["holo"][0] & 0x06, 0x00)
+        self.assertEqual(GAMES["holo"][0] & 0x20, 0x00)
+        self.assertEqual(GAMES["spidman"][0] & 0x20, 0x20)
+
+    def test_promoted_standard_games_keep_their_board_features(self) -> None:
+        self.assertEqual(GAMES["alien3"][:2], bytes.fromhex("080c"))
+        self.assertEqual(GAMES["arescue"][:2], bytes.fromhex("4801"))
+        self.assertEqual(GAMES["brival"][:3], bytes.fromhex("200002"))
+        self.assertEqual(GAMES["darkedge"][:3], bytes.fromhex("200003"))
+        self.assertEqual(GAMES["jpark"][:2], bytes.fromhex("0804"))
+        self.assertEqual(GAMES["radr"][:3], bytes.fromhex("089080"))
+
 
 class ButtonMetadataTests(unittest.TestCase):
-    # 2026-08-05: radm/spidman/sonic button-metadata tests removed alongside
-    # the games themselves (see BoardDescriptorTests note above).
-    pass
+    def test_ga2_magic_is_attack_plus_jump(self) -> None:
+        names, defaults = BUTTONS["ga2"]
+        self.assertEqual(names.split(","),
+                         ["Attack", "Jump", "-", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service", "Pause"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "Start", "Select", "R", "L", "Y"])
+
+    def test_arabian_fight_has_attack_and_jump_buttons(self) -> None:
+        names, defaults = BUTTONS["arabfgt"]
+        self.assertEqual(names.split(","),
+                         ["Attack", "Jump", "-", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service", "Pause"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "Start", "Select", "R", "L", "Y"])
+
+    def test_spiderman_has_two_action_buttons_and_system_controls(self) -> None:
+        names, defaults = BUTTONS["spidman"]
+        self.assertEqual(names.split(","),
+                         ["Attack", "Jump", "-", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "Start", "Select", "R", "L"])
+
+    def test_holosseum_has_only_light_and_heavy_attack(self) -> None:
+        names, defaults = BUTTONS["holo"]
+        self.assertEqual(names.split(","),
+                         ["Light Attack", "Heavy Attack", "-", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "Start", "Select", "R", "L"])
+
+    def test_promoted_games_keep_cabinet_button_counts(self) -> None:
+        expected = {
+            "alien3": 2, "arescue": 2, "brival": 6,
+            "darkedge": 5, "holo": 2, "jpark": 1, "radr": 1,
+        }
+        for parent, count in expected.items():
+            with self.subTest(parent=parent):
+                names, _ = BUTTONS[parent]
+                self.assertEqual(sum(name != "-" for name in names.split(",")[:6]),
+                                 count)
+
+    def test_slip_stream_maps_pedals_and_gear_to_a_b_x(self) -> None:
+        names, defaults = BUTTONS["slipstrm"]
+        self.assertEqual(names.split(","),
+                         ["Accelerate", "Brake", "Gear Change", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "X", "Start", "Select", "R", "L"])
 
 
 class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        # 3 arabfgt + 3 ga2 (segas32v25) + 1 sonic (segas32, restored 2026-08-06)
-        self.assertEqual(len(paths), 7)
+        # Six requested parent families add 17 regional MRAs to the existing
+        # 13-file two-profile set.
+        self.assertEqual(len(paths), 30)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")

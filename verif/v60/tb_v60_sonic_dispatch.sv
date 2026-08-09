@@ -19,8 +19,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -98,9 +97,9 @@ initial begin
     repeat (30000) @(posedge clk);
 
     $display("pc=%08x sp=%08x writes=%0d dst=%04x,%04x,%04x,%04x",
-        cpu.dbg_pc, cpu.r[31], writes, ram[16'h4000], ram[16'h4001],
+        cpu.pc, cpu.r[31], writes, ram[16'h4000], ram[16'h4001],
         ram[16'h4002], ram[16'h4003]);
-    if (cpu.dbg_halted && cpu.r[31] == 32'h0001_0004 && writes == 515 &&
+    if (cpu.halted && cpu.r[31] == 32'h0001_0004 && writes == 515 &&
         ram[16'h4000] == 16'h0900 && ram[16'h4001] == 16'h0901 &&
         ram[16'h4002] == 16'h0902 && ram[16'h4003] == 16'h0000 &&
         ram[16'h41ff] == 16'h0000)

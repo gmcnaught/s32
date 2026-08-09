@@ -157,7 +157,7 @@ initial begin
     repeat (2500000) @(posedge clk_sys);
 
     $display("halted=%0d  marker(wram[0x100])=%04x  vsync_frames=%0d",
-        core.v60.dbg_halted, core.work_ram.sim_peek(16'h0100), vs_count);
+        core.v60.halted, core.work_ram.sim_peek(16'h0100), vs_count);
     $display("video: active_samples=%0d nonblack=%0d x_on_rgb(post-warmup)=%0d | audio x=%0d",
         active_samples, active_nonblack, x_on_rgb, x_on_aud);
     $display("backdrop: vram_1ff5e=%04x line_ctrl=%04x palette_0200=%04x mixer_idx=%04x mixer_pal=%04x",
@@ -170,7 +170,7 @@ initial begin
     // pixels (CPU-programmed tile -> VRAM name fetch -> SDRAM pixel fetch ->
     // line buffer -> mixer priority -> palette -> RGB) over an extended
     // multi-frame window with no X-propagation on the RGB or audio buses.
-    if (core.v60.dbg_halted &&                     // no crash / clean HALT
+    if (core.v60.halted &&                     // no crash / clean HALT
         core.work_ram.sim_peek(16'h0100) == 16'hCAFE && // vblank IRQ -> handler ran
         vs_count >= 3 &&                           // extended multi-frame run
         active_samples > 100000 &&                 // render pipeline live

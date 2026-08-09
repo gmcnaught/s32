@@ -86,6 +86,7 @@ package s32_pkg;
         logic       has_adc;       // MSM6253 analog board
         logic       has_track;     // uPD4701 trackball board
         logic       has_ppi;       // i8255 4/6-player board
+        logic       has_dsp_hle;   // Air Rescue math-DSP command responder
         logic       dual_pcb;      // F1 Exhaust Note bridge responder
         logic [6:0] prot_sel;      // HLE protection select (PROT_*)
         logic       comm_link_hle; // descriptor-selected EPR-14084 link HLE
@@ -95,7 +96,8 @@ package s32_pkg;
         logic       sprite_bank_valid;
         logic [1:0] sprite_bank_mask; // 0/1/3 for 4/8/16 MiB respectively
         logic       flip_y;         // cabinet/game orientation (holo)
-        logic       gun_aim;        // positional-gun analog default-invert (jpark)
+        logic       gun_aim;        // positional-gun analog default-invert (alien3/jpark)
+        logic       coin_swap;      // Alien3 cabinet trigger/start/coin wiring
         logic [1:0] analog_profile; // ADC source/default layout (ANALOG_*)
         logic       dual_comm_ff;   // dual-PCB comm RAM reset state (F1 Exhaust Note)
         logic       gear_toggle;    // edge-latched two-state cabinet gear input

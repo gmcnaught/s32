@@ -29,8 +29,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
-    .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
@@ -153,7 +152,7 @@ initial begin
     chk(cpu.r[4] == 32'h33333333, "JSR reached subroutine (R4)");
     chk(cpu.r[3] == 32'h22222222, "RET returned to mainline (R3)");
     chk(cpu.r[5] == 32'h44444444, "IRQ handler executed (R5)");
-    chk(cpu.dbg_halted, "HALT reached");
+    chk(cpu.halted, "HALT reached");
 
     if (fail == 0) $display("DIRECTED PASS (%0d checks)", pass);
     else           $display("DIRECTED FAIL (%0d/%0d failed)", fail, pass+fail);

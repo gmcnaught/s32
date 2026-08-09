@@ -26,8 +26,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -140,23 +139,42 @@ initial begin
     ab(8'hB8); ab(8'h41); ab(8'h60);             // CMP.B R1,R0: Z=0
     ab(8'h47); ab(8'h80); ab(8'hE4); ab(8'h39); ab(8'h7A); ab(8'h2C);
 
+    // 12: Arabian Fight level-entry movement uses this exact ROM sequence.
+    // It first expands direction 1 to a 32-bit speed, multiplies that memory
+    // destination by 0x100, then applies the resulting fixed-point velocity.
+    // S_MULDIV used to skip memory writeback, leaving speed=1 and advancing
+    // the player only 1/256 as far as MAME/original code intends.
+    movw_imm(5'd24, 32'h0000_2000);              // player-object base
+    ab(8'h1C); ab(8'h80); ab(8'h38); ab(8'h92); ab(8'h00); ab(8'h18); ab(8'h2C);
+    ab(8'h85); ab(8'h80); ab(8'hF4); aw32(32'h0000_0100); ab(8'h18); ab(8'h2C);
+    ab(8'h1C); ab(8'h20); ab(8'h18); ab(8'h0A);
+    ab(8'h85); ab(8'h20); ab(8'h18); ab(8'h2C);
+    ab(8'hBD); ab(8'h20); ab(8'hF4); ab(8'hF8);
+    ab(8'h84); ab(8'h00); ab(8'h18); ab(8'h7A);
+
     ab(8'h00);                                   // HALT
 
     ram[16'h163D] = 16'hAA55;                    // 2C7A=55, 2C7B=AA
     ram[16'h163E] = 16'hCCBB;                    // 2C7C=BB, 2C7D=CC
     ram[16'h163F] = 16'hEEDD;                    // 2C7E=DD, 2C7F=EE
+    ram[16'h2092 >> 1] = 16'h0001;               // object+0x92 direction
+    ram[16'h200A >> 1] = 16'h0100;               // object+0x0A velocity
+    ram[16'h202C >> 1] = 16'hDEAD;               // object+0x2C speed (overwritten)
+    ram[16'h202E >> 1] = 16'hBEEF;
+    ram[16'h207A >> 1] = 16'h0000;               // object+0x7A accumulator
+    ram[16'h207C >> 1] = 16'hFFFF;
 
     repeat (8) @(posedge clk);
     rst = 0;
 
     // run to completion
-    for (i = 0; i < 3000 && !cpu.dbg_halted; i = i + 1) @(posedge clk);
+    for (i = 0; i < 3000 && !cpu.halted; i = i + 1) @(posedge clk);
 
     $display("R6=%08x P7=%01x R8=%08x P9=%01x R10=%08x P11=%01x R12=%08x P13=%01x R14=%08x P15=%01x",
         cpu.r[6], cpu.r[7]&4'hf, cpu.r[8], cpu.r[9]&4'hf, cpu.r[10], cpu.r[11]&4'hf,
         cpu.r[12], cpu.r[13]&4'hf, cpu.r[14], cpu.r[15]&4'hf);
 
-    chk(cpu.dbg_halted, "HALT reached");
+    chk(cpu.halted, "HALT reached");
     // {CY,OV,S,Z} = psw[3:0]
     chk(cpu.r[6]  == 32'h8000_0000, "INC.W 7FFFFFFF result");
     chk((cpu.r[7]  & 4'hf) == 4'h6,  "INC.W 7FFFFFFF flags OV=1 S=1 Z=0 CY=0");
@@ -184,6 +202,13 @@ initial begin
     chk(ram[16'h163D] == 16'h0100, "SETF.B updates only 2C7A/2C7B bytes");
     chk((ram[16'h163E] == 16'hCCBB) && (ram[16'h163F] == 16'hEEDD),
         "SETF.B preserves adjacent coinage bytes 2C7C-2C7F");
+    $display("ARAB speed=%04x%04x accumulator=%04x%04x R0=%08x",
+        ram[16'h202E >> 1], ram[16'h202C >> 1],
+        ram[16'h207C >> 1], ram[16'h207A >> 1], cpu.r[0]);
+    chk({ram[16'h202E >> 1], ram[16'h202C >> 1]} == 32'h0000_0100,
+        "Arabian Fight MUL.W immediate writes memory speed 00000100");
+    chk({ram[16'h207C >> 1], ram[16'h207A >> 1]} == 32'hFFFF_0100,
+        "Arabian Fight fixed-point accumulator advances by 00000100");
 
     if (fail == 0) $display("V60 FLAGS PASS (%0d checks)", pass);
     else           $display("V60 FLAGS FAIL (%0d/%0d failed)", fail, pass+fail);

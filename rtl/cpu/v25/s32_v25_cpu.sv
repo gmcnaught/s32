@@ -44,19 +44,7 @@ module s32_v25_cpu (
     input  wire        we,
     input  wire [11:1] addr,
     input  wire  [7:0] wdata,
-    output wire  [7:0] rdata,
-
-    // Bring-up diagnostics.  Named instantiations may leave these open.
-    output wire        debug_cpu_clk,
-    output reg         debug_io_seen,
-    output reg  [15:0] debug_last_io_addr,
-    output reg         debug_unmapped_seen,
-    output reg  [19:0] debug_last_unmapped_addr,
-    // The first program line the CPU actually fetched (clk domain): compares
-    // byte-for-byte on the OSD against the known-good image's reset line.
-    output reg         debug_first_fetch_valid,
-    output reg  [63:0] debug_first_fetch_data,
-    output reg  [15:3] debug_first_fetch_addr
+    output wire  [7:0] rdata
 );
 
 // The s80x86 now runs on clk_v25 = clk_sys/2 (~24.158653 MHz), which halves its
@@ -126,7 +114,6 @@ always @(posedge clk_v25 or posedge rst_v25) begin
     end
 end
 
-assign debug_cpu_clk = v25_ce;
 
 // -------------------------------------------------------------------------
 // CPU buses
@@ -266,7 +253,7 @@ wire [15:3] cache_rom_addr;
 wire [63:0] cache_rom_data;
 wire        cache_rom_ack;
 
-`ifdef S32_PROFILE_V25
+`ifdef S32_REAL_V25
 s32_v25_rom_line_buffer program_cache (
 `elsif S32_GAME_ONLY
 s32_v25_rom_line_buffer program_cache (
@@ -306,9 +293,6 @@ always @(posedge clk or posedge rst)
     if (rst) begin
         req_s1<=1'b0; req_s2<=1'b0; req_s3<=1'b0; br_busy<=1'b0;
         ack_tgl_clk<=1'b0; sdr_req_r<=1'b0; br_addr_r<=13'd0; br_data_r<=64'd0;
-        debug_first_fetch_valid <= 1'b0;
-        debug_first_fetch_data  <= 64'd0;
-        debug_first_fetch_addr  <= 13'd0;
     end else begin
         req_s1 <= req_tgl_v25; req_s2 <= req_s1; req_s3 <= req_s2;
         sdr_req_r <= 1'b0;
@@ -321,11 +305,6 @@ always @(posedge clk or posedge rst)
             br_busy     <= 1'b0;
             br_data_r   <= rom_data;
             ack_tgl_clk <= ~ack_tgl_clk;
-            if (!debug_first_fetch_valid) begin
-                debug_first_fetch_valid <= 1'b1;
-                debug_first_fetch_data  <= rom_data;
-                debug_first_fetch_addr  <= br_addr_r;
-            end
         end
     end
 assign rom_req  = sdr_req_r;
@@ -476,10 +455,6 @@ always @(posedge clk_v25 or posedge rst_v25) begin
         dpram_cpu_byteena       <= 2'b00;
         dpram_cpu_rden          <= 1'b0;
         dpram_cpu_wren          <= 1'b0;
-        debug_io_seen           <= 1'b0;
-        debug_last_io_addr      <= 16'd0;
-        debug_unmapped_seen     <= 1'b0;
-        debug_last_unmapped_addr <= 20'd0;
         v25_prc                 <= 8'h4e;   // RAMEN=1 from reset
         v25_idb                 <= 8'hff;   // internal area at 0xFFE00-0xFFFFF
         v25_int_special_q       <= 2'd0;
@@ -508,14 +483,10 @@ always @(posedge clk_v25 or posedge rst_v25) begin
                     if (data_access) begin
                         if (data_io) begin
                             // V25 internal peripherals/I/O are not yet
-                            // modelled.  Ack safely and retain the exact port
-                            // for the firmware test to report.
+                            // modelled. Ack safely while retaining the exact
+                            // port timing.
                             data_rdata_r       <= 16'hffff;
                             data_ack           <= 1'b1;
-                            debug_io_seen      <= 1'b1;
-                            debug_last_io_addr <= {
-                                data_addr[15:1], data_bytesel == 2'b10
-                            };
                         end else if (data_is_dpram) begin
                             dpram_cpu_addr    <= data_addr[10:1];
                             dpram_cpu_wdata   <= data_wdata;
@@ -543,22 +514,11 @@ always @(posedge clk_v25 or posedge rst_v25) begin
                             // The V25 internal data area (IDB=0xFF at reset)
                             // overlays 0xFFE00-0xFFFFF inside this window and
                             // is not backed by the model: writes are dropped,
-                            // reads return program bytes.  Surface both so a
-                            // hardware failure of this class is visible —
+                            // reads return program bytes.
                             // SFR page (0xFFFxx: on-chip peripheral regs; the
-                            // ga2 boot writes byte 0xFFFEB = PRC) goes to the
-                            // informational io band like port I/O; IRAM page
-                            // (0xFFExx: register banks/data) would be real
-                            // data loss and goes to the unmapped fault band.
-                            if (data_addr[19:8] == 12'hfff) begin
-                                debug_io_seen      <= 1'b1;
-                                debug_last_io_addr <= {
-                                    data_addr[15:1], data_bytesel == 2'b10
-                                };
-                            end else if (data_addr[19:8] == 12'hffe) begin
-                                debug_unmapped_seen      <= 1'b1;
-                                debug_last_unmapped_addr <= {data_addr, 1'b0};
-                            end
+                            // ga2 boot writes byte 0xFFFEB = PRC) is handled as
+                            // a normal functional access; IRAM remains backed
+                            // by the architectural internal-memory path.
                             if (data_we) begin
                                 // ROM/internal-area writes: acknowledged, dropped.
                                 data_ack <= 1'b1;
@@ -571,8 +531,6 @@ always @(posedge clk_v25 or posedge rst_v25) begin
                         end else begin
                             data_rdata_r             <= 16'hffff;
                             data_ack                 <= 1'b1;
-                            debug_unmapped_seen      <= 1'b1;
-                            debug_last_unmapped_addr <= {data_addr, 1'b0};
                         end
                     end else if (instr_access) begin
                         if (instr_is_rom) begin
@@ -583,8 +541,6 @@ always @(posedge clk_v25 or posedge rst_v25) begin
                         end else begin
                             instr_rdata_r            <= 16'hffff;
                             instr_ack                <= 1'b1;
-                            debug_unmapped_seen      <= 1'b1;
-                            debug_last_unmapped_addr <= {instr_addr, 1'b0};
                         end
                     end
                 end

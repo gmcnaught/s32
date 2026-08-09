@@ -61,7 +61,7 @@ bind tb_core_romboot spidman_gate_monitor spidman_gate_monitor_i (
     .clk(clk_sys),
     .rst(rst),
     .frame_no(cur_frame),
-    .pc(core.v60.dbg_pc),
+    .pc(core.v60.pc),
     .r0(core.v60.r[0]),
     .r20(core.v60.r[20]),
     .psw(core.v60.psw),

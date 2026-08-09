@@ -172,12 +172,12 @@ initial begin
 
     $display("palette[0]=%04x vram[0]=%04x wram[0x80]=%04x comm[0]=%02x halted=%0d vs_count=%0d",
         core.pal0.sim_peek(14'h0000), core.vram.video_ram.sim_peek(16'h0000),
-        core.work_ram.sim_peek(16'h0080), core.comm_peek(11'h000), core.v60.dbg_halted, vs_count);
+        core.work_ram.sim_peek(16'h0080), core.comm_ram[11'h000], core.v60.halted, vs_count);
 
     if (core.pal0.sim_peek(14'h0000) == 16'h7FFF &&
         core.vram.video_ram.sim_peek(16'h0000) == 16'h1234 &&
         core.work_ram.sim_peek(16'h0080) == 16'hCAFE &&
-        core.comm_peek(11'h000) == 8'h5A &&
+        core.comm_ram[11'h000] == 8'h5A &&
         vs_count >= 1)
         $display("CORE BOOT PASS");
     else

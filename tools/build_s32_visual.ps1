@@ -56,6 +56,9 @@ $defines = @(
     "+define+SIMULATION",
     "+define+S32_REAL_FB_SIM",
     "+define+S32_PCB_TIMING",
+    "+define+S32_SYSTEM32_ONLY",
+    "+define+S32_PROFILE_STANDARD",
+    "+define+S32_GAME_ONLY_STD",
     "+define+S32_VISUAL_NO_SAVE"
 )
 $warnings = @(
@@ -67,7 +70,7 @@ $exe = Join-Path $ModelDirectory "s32_visual.exe"
 $signaturePath = Join-Path $ModelDirectory "s32_visual.signature"
 $signatureParts = [Collections.Generic.List[string]]::new()
 $signatureParts.Add(((& $Safe --version 2>&1 | Out-String).Trim()))
-$signatureParts.Add("threads=1;verilate-jobs=4;build-jobs=4;no-save=1")
+$signatureParts.Add("threads=1;verilate-jobs=4;build-jobs=4;no-save=1;profile=segas32")
 $signatureParts.Add(($defines -join ";"))
 $signatureParts.Add(($warnings -join ";"))
 foreach ($source in $sources) {
@@ -119,6 +122,17 @@ if ($Force -or -not $cached) {
 }
 else {
     Write-Host "Reusing cached native visual model: $exe"
+}
+
+# The generated executable dynamically links the MSYS2 UCRT64 C++ runtime.
+# Pin those DLLs beside the model so the safe native launcher cannot resolve
+# an ABI-incompatible MinGW/MSYS copy from the host PATH.
+foreach ($runtimeDll in @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")) {
+    $runtimeSource = Join-Path "C:\msys64\ucrt64\bin" $runtimeDll
+    if (-not (Test-Path -LiteralPath $runtimeSource)) {
+        throw "Missing UCRT64 runtime DLL: $runtimeSource"
+    }
+    Copy-Item -LiteralPath $runtimeSource -Destination $ModelDirectory -Force
 }
 
 Write-Host "VISUAL BUILD PASS"

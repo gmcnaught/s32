@@ -27,8 +27,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(),
-    .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
@@ -112,11 +111,11 @@ initial begin
     rst = 0;
     repeat (3000) @(posedge clk);
     $display("R0=%08x R1=%08x R2=%08x halted=%0d",
-        cpu.r[0], cpu.r[1], cpu.r[2], cpu.dbg_halted);
+        cpu.r[0], cpu.r[1], cpu.r[2], cpu.halted);
     if (cpu.r[0] == 32'h12345678 &&
         cpu.r[1] == 32'h23456789 &&
         cpu.r[2] == 32'h23456789 &&
-        cpu.dbg_halted)
+        cpu.halted)
         $display("SMOKE PASS");
     else
         $display("SMOKE FAIL");

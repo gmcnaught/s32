@@ -56,11 +56,7 @@ module s32_mixer (
     input      [15:0] pal_data,
 
     // final pixel out
-    output reg [23:0] rgb,
-
-    // In-game debug OSD: opaque sprite pixels reaching the mixer this field
-    // (saturating). See dbg_mixer_sprpx below.
-    output     [15:0] debug_sprpx
+    output reg [23:0] rgb
 );
 
 // ---------------------------------------------------------------------------
@@ -145,30 +141,6 @@ wire        spr_shadow_pen = !spr_transp &&
 wire        spr_shadow_rmw = r4c_shadow_rmw_en && !spr_pix[15];
 wire        spr_shadow_src = spr_shadow_pen | spr_shadow_rmw;
 wire        spr_opaque = !spr_transp && !spr_shadow_pen;   // can win the scan
-
-// In-game debug OSD: count opaque sprite pixels reaching the mixer -- "is
-// sprite content actually reaching the screen at all", independent of the
-// list-walk/framebuffer telemetry upstream. A general black-screen-class
-// check: this can be zero even when the sprite engine reports a healthy
-// list-walk/draw count if something between the framebuffer and here is
-// dropping pixels. Resets to 0 at the top of each visible field.
-reg [15:0] dbg_mixer_sprpx;
-reg        dbg_mixer_sprpx_topline_d;
-wire       dbg_mixer_sprpx_topline = disp_active && (disp_y == 9'd0);
-always @(posedge clk) begin
-    if (rst) begin
-        dbg_mixer_sprpx <= 16'd0;
-        dbg_mixer_sprpx_topline_d <= 1'b0;
-    end
-    else begin
-        if (dbg_mixer_sprpx_topline && !dbg_mixer_sprpx_topline_d)
-            dbg_mixer_sprpx <= 16'd0;
-        else if (disp_active && spr_opaque)
-            dbg_mixer_sprpx <= (&dbg_mixer_sprpx) ? dbg_mixer_sprpx : dbg_mixer_sprpx + 16'd1;
-        dbg_mixer_sprpx_topline_d <= dbg_mixer_sprpx_topline;
-    end
-end
-assign debug_sprpx = dbg_mixer_sprpx;
 
 // ---------------------------------------------------------------------------
 // effective priority per layer:  {prio[3:0], rank[2:0]}

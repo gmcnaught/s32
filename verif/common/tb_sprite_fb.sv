@@ -51,10 +51,7 @@ s32_sprite sprite (
     .clk(clk), .rst(rst), .is_multi32(1'b0), .retain_previous(1'b0),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),
-    .present(vblank), .vblank(vblank), .rendering(rendering),
-    .debug_first_rom_desc(), .debug_first_rom_valid(),
-    .debug_last_desc(), .debug_last_draw_desc(),
-    .debug_activity(), .debug_state(), .debug_counts(),
+    .present(vblank), .vblank(vblank),
     .ctl_we(1'b0), .ctl_addr(3'd0), .ctl_wdata(8'd0),
     .ctl_rdata(), .ctl_raddr(3'd0),
     .slist_addr(slist_addr), .slist_data(slist_q),
@@ -68,6 +65,7 @@ s32_sprite sprite (
     .fb_er_ack(fbe_ack), .disp_buf(disp_buf), .scan_buf(scan_buf),
     .scan_buf_prev(), .scan_dual()
 );
+assign rendering = sprite.rs != 0;
 
 // MiSTer DDR interface.
 wire        dd_busy;

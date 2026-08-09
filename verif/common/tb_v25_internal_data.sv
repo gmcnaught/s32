@@ -58,11 +58,7 @@ s32_v25_cpu dut (
     .clk(clk), .clk_v25(clk_v25), .rst(rst), .enable(enable), .pause(1'b0),
     .table_sel(1'b0), .prg_wr(1'b0), .prg_waddr(16'd0), .prg_wdata(8'd0),
     .rom_req(rom_req), .rom_addr(rom_addr), .rom_data(64'd0), .rom_ack(1'b0),
-    .cs(1'b0), .we(1'b0), .addr(11'd0), .wdata(8'd0), .rdata(),
-    .debug_cpu_clk(), .debug_io_seen(), .debug_last_io_addr(),
-    .debug_unmapped_seen(), .debug_last_unmapped_addr(),
-    .debug_first_fetch_valid(), .debug_first_fetch_data(),
-    .debug_first_fetch_addr()
+    .cs(1'b0), .we(1'b0), .addr(11'd0), .wdata(8'd0), .rdata()
 );
 
 task automatic drive_access(

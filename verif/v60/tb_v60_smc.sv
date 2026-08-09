@@ -44,8 +44,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 
 s32_v60_bus adapter (
@@ -94,13 +93,13 @@ integer cycles = 0;
 initial begin
     repeat (8) @(posedge clk);
     rst = 0;
-    while (!cpu.dbg_halted && cycles < 20000) begin
+    while (!cpu.halted && cycles < 20000) begin
         @(posedge clk);
         cycles = cycles + 1;
     end
     $display("V60 SMC: halted=%0d r0=%08x r1=%08x cycles=%0d",
-        cpu.dbg_halted, cpu.r[0], cpu.r[1], cycles);
-    if (cpu.dbg_halted && cpu.r[0] == 32'h0000_BEEF && cpu.r[1] == 32'h0000_BEEF)
+        cpu.halted, cpu.r[0], cpu.r[1], cycles);
+    if (cpu.halted && cpu.r[0] == 32'h0000_BEEF && cpu.r[1] == 32'h0000_BEEF)
         $display("V60 SMC PASS");
     else begin
         if (cpu.r[1] == 32'h1111_1111)

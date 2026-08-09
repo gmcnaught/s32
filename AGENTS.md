@@ -10,10 +10,10 @@ game-only macro.
 | Profile | Production macros | RBF | MRA parents | Hardware boundary |
 |---|---|---|---|---|
 | `segas32v25` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY=1`, `S32_REAL_V25=1` | `segas32v25.rbf` | `ga2`, `arabfgt` | Real NEC V25 core/cache/program memories compiled in; ADC, trackball, generic protection HLE, dual-PCB, Burning Rival all tied off (neither game uses any of them). |
-| `segas32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1` | `segas32.rbf` | `sonic` today; `holo`, `jpark`, `radm`, `radr`, `spidman` return one at a time | No real V25 hardware at all (HLE responder `s32_v25` only). Trackball and generic protection HLE live (`GAME_ONLY_STD`); ADC, dual-PCB, Burning Rival still tied off. |
+| `segas32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1` | `segas32.rbf` | `alien3`, `arescue`, `brival`, `darkedge`, `holo`, `jpark`, `radr`, `slipstrm`, `sonic`, `spidman` | No real V25 hardware at all (HLE responder `s32_v25` only). Trackball, descriptor-gated ADC/gun input, generic protection, Burning Rival, Air Rescue DSP, and dual-PCB responders live under descriptor control (`GAME_ONLY_STD`). |
 
 Both profiles share `rtl/s32_core.sv`; `S32_GAME_ONLY_STD` implies
-`GAME_ONLY` (dual-PCB/Burning Rival tie-off applies to both profiles).
+`GAME_ONLY`, but retains standard-profile descriptor-selected peripherals.
 `harddunk`, `orunners`, `scross`, and `titlef` families are Multi 32 and are
 not supported or emitted.
 
@@ -49,9 +49,7 @@ python -B verif/check_arabianfight_release.py
 python -B verif/check_holo_release.py
 ```
 
-`check_holo_release.py` is expected to fail on the MRA-count assertion while
-`holo` remains in `tools/gen_mra.py:IGNORED_PARENTS` -- that is the current,
-intentional state, not a regression to chase.
+All three release checks are expected to pass.
 
 Native HDL regression:
 

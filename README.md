@@ -22,6 +22,11 @@ working on the target MiSTer setup; an X means it is not yet ready.
 | --- | --- |
 | Holosseum | ✓ |
 | Spider-Man: The Videogame | ✓ |
+| Slip Stream | ✗ |
+| Alien3: The Gun | ✗ |
+| Air Rescue | ✗ |
+| Burning Rival | ✗ |
+| Dark Edge | ✗ |
 | Golden Axe: The Revenge of Death Adder | ✓ |
 | Arabian Fight | ✗ |
 | Jurassic Park | ✗ |
@@ -96,11 +101,13 @@ tools\build-s32v25.bat
 
 The repository ships exactly two System 32 profiles:
 
-- `s32.rbf` supports every generated System 32 MRA except Golden Axe and
-  Arabian Fight. It compiles out the real V25 CPU, its ROM cache and dedicated
-  memories while retaining the descriptor-driven ADC, trackball, PPI,
-  protection-HLE, dual-PCB, gun, sprite, video and audio paths.
-- `s32v25.rbf` supports Golden Axe and Arabian Fight. It includes the real V25
+- `segas32.rbf` supports Holosseum, SegaSonic the Hedgehog, Spider-Man,
+  Slip Stream, Alien3, Air Rescue, Burning Rival, Dark Edge, Jurassic Park,
+  and Rad Rally. It compiles out the real V25 CPU, its ROM cache and dedicated
+  memories while retaining descriptor-selected standard peripherals including
+  the PPI, trackball, MSM6253 ADC, positional-gun conditioner, Air Rescue DSP
+  responder, dual-PCB bridge, generic protection, sprite, video and audio paths.
+- `segas32v25.rbf` supports Golden Axe and Arabian Fight. It includes the real V25
   execution core and selects the correct protection table and V60 cadence from
   each MRA descriptor. Unrelated peripherals and all Multi 32 logic are
   compiled out.

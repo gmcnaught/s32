@@ -24,8 +24,7 @@ s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
-    .dbg_pc(), .dbg_halted()
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -87,11 +86,11 @@ initial begin
 
     repeat (8) @(posedge clk);
     rst = 0;
-    for (i = 0; i < 4000 && !cpu.dbg_halted; i = i + 1) @(posedge clk);
+    for (i = 0; i < 4000 && !cpu.halted; i = i + 1) @(posedge clk);
 
     $display("R6=%08x R7=%08x M9000=%04x%04x R8=%08x R9=%08x",
         cpu.r[6], cpu.r[7], ram[32'h9004>>1], ram[32'h9000>>1], cpu.r[8], cpu.r[9]);
-    chk(cpu.dbg_halted, "HALT reached");
+    chk(cpu.halted, "HALT reached");
     chk(cpu.r[6] == 32'hAAAA_1111, "MOVD reg-pair low word -> R6");
     chk(cpu.r[7] == 32'hBBBB_2222, "MOVD reg-pair high word -> R7");
     chk({ram[32'h9004>>1], ram[32'h9002>>1], ram[32'h9002>>1], ram[32'h9000>>1]} != 0, "mem written");

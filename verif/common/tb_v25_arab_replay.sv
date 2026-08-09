@@ -37,6 +37,10 @@ always @(posedge clk) clk_v25 <= ~clk_v25;
 reg rst = 1'b1;
 reg enable = 1'b0;
 wire [7:0] rdata;
+reg        v60_cs = 1'b0;
+reg        v60_we = 1'b0;
+reg [10:0] v60_addr = 11'd0;
+reg  [7:0] v60_wdata = 8'd0;
 wire rom_req;
 wire [15:3] rom_addr;
 reg [63:0] rom_data = 64'hffffffffffffffff;
@@ -47,11 +51,7 @@ s32_v25_cpu dut (
     .table_sel(1'b1),                  // arabfgt opcode table
     .prg_wr(1'b0), .prg_waddr(16'd0), .prg_wdata(8'd0),
     .rom_req(rom_req), .rom_addr(rom_addr), .rom_data(rom_data), .rom_ack(rom_ack),
-    // The V60 side stays idle for the whole replay window.
-    .cs(1'b0), .we(1'b0), .addr(11'd0), .wdata(8'd0), .rdata(rdata),
-    .debug_cpu_clk(), .debug_io_seen(), .debug_last_io_addr(),
-    .debug_unmapped_seen(), .debug_last_unmapped_addr(),
-    .debug_first_fetch_valid(), .debug_first_fetch_data(), .debug_first_fetch_addr()
+    .cs(v60_cs), .we(v60_we), .addr(v60_addr), .wdata(v60_wdata), .rdata(rdata)
 );
 
 reg [7:0] raw     [0:65535];
@@ -106,7 +106,41 @@ integer max_cycles;
 integer cycle_count = 0;
 string  out_path;
 string  mcu_path;
+string  schedule_path;
+string  state_path;
 reg     logging = 1'b0;
+integer state_fd = 0;
+integer state_first;
+integer state_last;
+
+// Optional MAME-derived V60 mailbox feed.  Each row is
+//   <V25-write threshold> <byte offset> <byte value>
+// and is injected once the RTL V25 has completed the same amount of work.
+// This keeps the focused replay aligned at the shared-resource barrier rather
+// than at host time or an assumed CPU/frame ratio.
+integer schedule_fd = 0;
+integer schedule_scan;
+integer schedule_count = 0;
+integer schedule_index = 0;
+integer schedule_threshold [0:65535];
+reg [10:0] schedule_addr [0:65535];
+reg  [7:0] schedule_data [0:65535];
+integer schedule_t;
+integer schedule_a;
+integer schedule_d;
+
+always @(posedge clk) begin
+    v60_cs <= 1'b0;
+    v60_we <= 1'b0;
+    if (!rst && schedule_index < schedule_count &&
+        writes >= schedule_threshold[schedule_index]) begin
+        v60_addr  <= schedule_addr[schedule_index];
+        v60_wdata <= schedule_data[schedule_index];
+        v60_cs    <= 1'b1;
+        v60_we    <= 1'b1;
+        schedule_index <= schedule_index + 1;
+    end
+end
 
 always @(posedge clk_v25) begin
     if (logging && dut.dpram_cpu_wren) begin
@@ -125,11 +159,29 @@ always @(posedge clk_v25) begin
     end
 end
 
+// Narrow architectural trace around a mailbox-write ordinal. This is
+// testbench-only visibility; it does not alter the V25 or synthesized RTL.
+always @(posedge clk_v25) begin
+    if (logging && dut.dpram_cpu_wren &&
+        writes >= state_first - 2 && writes <= state_last && state_fd != 0)
+        $fwrite(state_fd,
+                "wr=%0d cs=%04x ip=%04x op=%02x ax=%04x bx=%04x cx=%04x dx=%04x sp=%04x bp=%04x si=%04x di=%04x addr=%05x wdata=%04x be=%x\n",
+                writes + 1, dut.cpu.cs, dut.cpu.ip_current, dut.cpu.opcode,
+                dut.cpu.RegisterFile.gprs[0], dut.cpu.RegisterFile.gprs[3],
+                dut.cpu.RegisterFile.gprs[1], dut.cpu.RegisterFile.gprs[2],
+                dut.cpu.RegisterFile.gprs[4], dut.cpu.bp, dut.cpu.si, dut.cpu.di,
+                {dut.data_addr, 1'b0}, dut.data_wdata, dut.data_bytesel);
+end
+
 always @(posedge clk) if (!rst) cycle_count = cycle_count + 1;
 
 initial begin
     if (!$value$plusargs("MCU=%s", mcu_path)) mcu_path = "roms/sim/arabfgt/mcu.bin";
     if (!$value$plusargs("OUT=%s", out_path)) out_path = "scratch/arab_v25_rtl/writes.txt";
+    if (!$value$plusargs("SCHEDULE=%s", schedule_path)) schedule_path = "";
+    if (!$value$plusargs("STATE=%s", state_path)) state_path = "";
+    if (!$value$plusargs("STATEFIRST=%d", state_first)) state_first = 10740;
+    if (!$value$plusargs("STATELAST=%d", state_last)) state_last = 10790;
     if (!$value$plusargs("MAXWR=%d", max_writes)) max_writes = 4000;
     if (!$value$plusargs("MAXCYC=%d", max_cycles)) max_cycles = 40000000;
 
@@ -147,10 +199,33 @@ initial begin
     for (src = 0; src < 65536; src = src + 1)
         ext_rom[src] = raw[descramble(src[15:0])];
 
+    if (schedule_path != "") begin
+        schedule_fd = $fopen(schedule_path, "r");
+        if (schedule_fd == 0)
+            $fatal(1, "ARAB V25 REPLAY FAIL: cannot open schedule %0s", schedule_path);
+        while (!$feof(schedule_fd) && schedule_count < 65536) begin
+            schedule_scan = $fscanf(schedule_fd, "%d %h %h\n",
+                                    schedule_t, schedule_a, schedule_d);
+            if (schedule_scan == 3) begin
+                schedule_threshold[schedule_count] = schedule_t;
+                schedule_addr[schedule_count] = schedule_a[10:0];
+                schedule_data[schedule_count] = schedule_d[7:0];
+                schedule_count = schedule_count + 1;
+            end
+        end
+        $fclose(schedule_fd);
+        $display("ARAB V25 REPLAY: loaded %0d scheduled V60 writes", schedule_count);
+    end
+
     out_fd = $fopen(out_path, "w");
     if (out_fd == 0) begin
         $display("ARAB V25 REPLAY FAIL: cannot create %0s", out_path);
         $fatal(1);
+    end
+    if (state_path != "") begin
+        state_fd = $fopen(state_path, "w");
+        if (state_fd == 0)
+            $fatal(1, "ARAB V25 REPLAY FAIL: cannot create state trace %0s", state_path);
     end
 
     repeat (4) @(posedge clk);
@@ -164,8 +239,12 @@ initial begin
 
     logging = 1'b0;
     $fclose(out_fd);
+    if (state_fd != 0) $fclose(state_fd);
     $display("ARAB V25 REPLAY: writes=%0d rom_lines=%0d clk_sys_cycles=%0d out=%0s",
              writes, rom_reads, cycle_count, out_path);
+    if (schedule_index != schedule_count)
+        $fatal(1, "ARAB V25 REPLAY FAIL: applied %0d/%0d scheduled V60 writes",
+               schedule_index, schedule_count);
     if (writes == 0)
         $display("ARAB V25 REPLAY FAIL: the V25 never wrote the mailbox");
     else

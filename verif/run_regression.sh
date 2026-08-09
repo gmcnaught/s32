@@ -69,14 +69,14 @@ python3 verif/check_holo_release.py | grep -q "HOLO RELEASE MRA PASS" || { echo 
 python3 verif/check_ga2_release.py | grep -q "GA2 COMPAT MRA PASS" || { echo "GA2 COMPAT MRA: FAIL"; exit 1; }
 python3 verif/check_arabianfight_release.py | grep -q "ARABIAN FIGHT RELEASE PASS" || { echo "ARABIAN FIGHT RELEASE MRA: FAIL"; exit 1; }
 iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING \
-  -DS32_RELEASE_MINIMAL -o /tmp/s32_ga2 \
+  -o /tmp/s32_ga2 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_ga2path.sv
 vvp /tmp/s32_ga2 | grep -q "GA2 PATH PASS" && echo "GA2 PATH: PASS" || { echo "GA2 PATH: FAIL"; exit 1; }
 iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING \
-  -DS32_RELEASE_MINIMAL -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache \
+  -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache \
   rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_ga_rom_cache.sv
 vvp /tmp/s32_ga_rom_cache | grep -q "PASS: Golden Axe ROM cache directed/reference tests passed" && \
   echo "GOLDEN AXE ROM CACHE: PASS" || { echo "GOLDEN AXE ROM CACHE: FAIL"; exit 1; }
@@ -132,6 +132,9 @@ vvp /tmp/s32_i8255 | grep -q "I8255 MAME PASS" && echo "I8255 MAME: PASS" || { e
 iverilog -g2012 -s tb_brival_protection -o /tmp/s32_brival_protection \
   rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_brival_protection.sv
 vvp /tmp/s32_brival_protection | grep -q "BRIVAL PROTECTION PASS" && echo "BRIVAL PROTECTION: PASS" || { echo "BRIVAL PROTECTION: FAIL"; exit 1; }
+iverilog -g2012 -s tb_arescue_protection -o /tmp/s32_arescue_protection \
+  rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_arescue_protection.sv
+vvp /tmp/s32_arescue_protection | grep -q "AIR RESCUE PROTECTION PASS" && echo "AIR RESCUE PROTECTION: PASS" || { echo "AIR RESCUE PROTECTION: FAIL"; exit 1; }
 echo "[19/35] V60 20-byte F1 / high fetch-buffer offset regression"
 iverilog -g2012 -o /tmp/s32_v60_long_ea \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_long_ea.sv
@@ -234,6 +237,16 @@ iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_map_decode.sv
 vvp /tmp/s32_core_map | grep -q "CORE MAP DECODE PASS" && echo "CORE MAP DECODE: PASS" || { echo "CORE MAP DECODE: FAIL"; exit 1; }
+echo "[35a/37] Three-player left-stick to trackball velocity"
+iverilog -g2012 -s tb_trackball_stick -o /tmp/s32_trackball_stick \
+  rtl/io/s32_io.sv verif/common/tb_trackball_stick.sv
+vvp /tmp/s32_trackball_stick | grep -q "TRACKBALL STICK PASS" && \
+  echo "TRACKBALL STICK: PASS" || { echo "TRACKBALL STICK: FAIL"; exit 1; }
+echo "[35b/37] Slip Stream right-stick pedals and digital fallbacks"
+iverilog -g2012 -s tb_driving_controls -o /tmp/s32_driving_controls \
+  rtl/io/s32_driving_controls.sv verif/common/tb_driving_controls.sv
+vvp /tmp/s32_driving_controls | grep -q "PASS: Slip Stream driving controls" && \
+  echo "SLIP STREAM DRIVING CONTROLS: PASS" || { echo "SLIP STREAM DRIVING CONTROLS: FAIL"; exit 1; }
 echo "[35/37] MAME-backed uPD4701 trackball origin and per-byte latch semantics"
 iverilog -g2012 -s tb_upd4701_mame -o /tmp/s32_upd4701_mame \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_upd4701_mame.sv

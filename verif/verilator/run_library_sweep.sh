@@ -5,7 +5,7 @@
 # sets boot, which fault, which render nothing, and whether the SDRAM/DDR paths
 # meet their per-scanline deadlines.
 #
-#   ./verif/verilator/run_library_sweep.sh                 # all 6 active standard parents
+#   ./verif/verilator/run_library_sweep.sh                 # all 7 active standard parents
 #   SETS="radm radr" ./verif/verilator/run_library_sweep.sh
 #   FRAMES=420 DUMPAT=200 ./verif/verilator/run_library_sweep.sh
 #   ATTRACT=1 ./verif/verilator/run_library_sweep.sh  # Verilator screenshot gate
@@ -60,7 +60,7 @@ OUT="${OUT:-scratch/library-sweep}"
 # ga2 and arabfgt remain
 # production-supported by s32v25, but are explicitly excluded from this goal's
 # sweep because they are V25 games.
-SETS="${SETS:-holo jpark radm radr sonic spidman}"
+SETS="${SETS:-holo jpark radm radr slipstrm sonic spidman}"
 
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.md"
@@ -78,6 +78,7 @@ attract_frames_for() {
     # Leave one video interval after the requested capture so the PPM closes
     # before the harness reaches ROMBOOT DONE.
     jpark|sonic|spidman)   echo 1260 ;;
+    slipstrm)              echo 660 ;;
     radm)                  echo 660 ;;
     *)                     echo "$FRAMES" ;;
   esac
@@ -86,6 +87,7 @@ attract_frames_for() {
 attract_dump_for() {
   case "$1" in
     jpark|sonic|spidman)   echo 1200 ;;
+    slipstrm)              echo 600 ;;
     radm)                  echo 600 ;;
     *)                     echo "$DUMPAT" ;;
   esac

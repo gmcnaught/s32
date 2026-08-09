@@ -351,6 +351,48 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
+//  s32_arescue_dsp: command-level model of the Air Rescue math DSP interface.
+// ---------------------------------------------------------------------------
+module s32_arescue_dsp (
+    input             clk,
+    input             rst,
+    input             enable,
+    input             cs,
+    input             we,
+    input       [1:0] be,
+    input       [1:0] addr,
+    input      [15:0] wdata,
+    output reg [15:0] rdata
+);
+
+reg [15:0] io [0:3];
+
+always @(posedge clk) begin
+    if (rst) begin
+        io[0] <= 0; io[1] <= 0; io[2] <= 0; io[3] <= 0;
+        rdata <= 0;
+    end
+    else if (enable && cs) begin
+        if (we) begin
+            if (be[0]) io[addr][7:0]  <= wdata[7:0];
+            if (be[1]) io[addr][15:8] <= wdata[15:8];
+        end
+        else begin
+            if (addr == 2'd2) begin
+                case (io[0])
+                    16'h0003: begin io[0] <= 16'h8000; io[1] <= 16'h0001; end
+                    16'h0006: io[0] <= {io[1][13:0], 2'b00};
+                    default: ;
+                endcase
+            end
+            rdata <= io[addr];
+        end
+    end
+end
+
+endmodule
+
+// ---------------------------------------------------------------------------
 //  s32_dualpcb: single-board mode bridge responder (§8.6)
 //  4KB comms RAM at 0x810000 + identity word at 0x818000.
 // ---------------------------------------------------------------------------
