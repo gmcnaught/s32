@@ -716,9 +716,6 @@ wire fb_rd_kick = ce_pix && hcnt == 9'd16 &&
 wire [7:0] fb_next_y = (vcnt == 9'd261) ? (cfg_flip_y ? 8'd223 : 8'd0) :
                            (cfg_flip_y ? (8'd222 - vcnt[7:0])
                                        : (vcnt[7:0] + 8'd1));
-// Captured MAME fields place P1/P2 HUD objects on rows 185..200. Keep a
-// one-pixel guard above/below so scaled edge pixels are included.
-wire fb_next_is_alien3_hud = fb_next_y >= 8'd184 && fb_next_y <= 8'd201;
 always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;
@@ -733,12 +730,14 @@ always @(posedge clk_ram) begin
         end
         else if (!fb_rd_ack && fb_rd_kick) begin
             fb_rd_req_r <= 1'b1;
-            // Ordinary System 32 A/B scanout. Alien 3's optional HUD effect
-            // also fetches the hidden A/B buffer, but only for its two small
-            // HUD rectangles and never changes renderer buffer ownership.
+            // Ordinary System 32 A/B scanout. Alien 3 deliberately draws its
+            // HUD and movable gun sight in alternating sprite fields.  The
+            // optional flicker blend therefore fetches the hidden A/B buffer
+            // for every visible line; limiting this to the bottom HUD rows
+            // cannot cover the position-independent sight.
             fb_rd_buf_r <= disp_buf;
             fb_rd_blend_buf_r <= {1'b0, ~disp_buf[0]};
-            fb_rd_blend_r <= alien3_hud_blend && fb_next_is_alien3_hud;
+            fb_rd_blend_r <= alien3_hud_blend;
             // CRT lines are 0..261. Truncating line 261 before adding produced
             // line 6 instead of the next frame's line 0.
             if (vcnt == 9'd261)
