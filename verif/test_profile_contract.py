@@ -101,6 +101,23 @@ class GlobalProfileContractTests(unittest.TestCase):
             self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
             self.assertIn('VERILOG_MACRO "S32_SYSTEM32_ONLY=1"', text)
 
+    def test_sprite_throughput_and_publication_are_shared_by_both_profiles(self) -> None:
+        """Busy lists keep two-stage pixels and never expose an in-flight FB."""
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        sprite = (ROOT / "rtl/video/s32_sprite.sv").read_text(encoding="utf-8")
+        self.assertIn(".present(vbl_start), .vblank(vbl_end)", core)
+        self.assertIn("fb_rd_buf_r <= spr_scan_buf", core)
+        self.assertIn("function automatic [1:0] choose_work_buf", sprite)
+        self.assertIn("ready_buf <= work_buf", sprite)
+        self.assertIn("scan_buf <= ready_buf", sprite)
+        self.assertIn("fb_wr_buf <= is_multi32", sprite)
+        self.assertNotIn("R_PIXEL_DATA, R_DONE", sprite)
+        self.assertIn("pixel_pen8     <= pixrow", sprite)
+        self.assertIn("rs <= R_EMIT", sprite)
+        for profile in (ROOT / "segas32.qsf", ROOT / "segas32v25.qsf"):
+            text = profile.read_text(encoding="utf-8")
+            self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
+
     def test_production_osd_has_no_debug_pause_or_aim_override(self) -> None:
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         self.assertNotIn("O[12],Pause", top)

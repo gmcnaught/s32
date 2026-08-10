@@ -46,9 +46,11 @@ wire        fbe_req, fbe_ack;
 wire [1:0]  fbe_buf;
 wire [7:0]  fbe_y;
 wire [1:0]  disp_buf;
+wire [1:0]  scan_buf;
 wire        rendering;
 
 reg vblank = 0;
+reg present = 0;
 reg [7:0] ctl_addr = 0;
 reg [7:0] ctl_wdata = 0;
 reg       ctl_we = 0;
@@ -56,6 +58,7 @@ reg       ctl_we = 0;
 // Small post-vblank delay keeps the sim short; behaviour is delay-independent.
 s32_sprite #(.POST_VBLANK_CYCLES(8)) sprite (
     .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .present(present),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),
     .vblank(vblank),
@@ -69,7 +72,8 @@ s32_sprite #(.POST_VBLANK_CYCLES(8)) sprite (
     .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y),
-    .fb_er_ack(fbe_ack), .disp_buf(disp_buf)
+    .fb_er_ack(fbe_ack), .disp_buf(disp_buf), .scan_buf(scan_buf),
+    .scan_buf_prev()
 );
 assign rendering = sprite.rs != 0;
 
@@ -99,11 +103,12 @@ s32_fb_if #(.FB_BASE(32'h3000_0000)) fb (
     .rd_x(9'd0), .rd_pix()
 );
 
-// Count logical controller swaps globally and prove System 32 uses only its
-// ordinary A/B pair; the removed Alien 3 experiment allocated buffer 2 here.
+// Count logical controller swaps and prove physical ownership: erase/render
+// must never target the buffer currently scanned, including during overruns.
 integer render_edges = 0;
 integer swap_edges = 0;
 integer errors = 0;
+integer slot2_writes = 0;
 reg rendering_d = 0;
 reg [1:0] disp_buf_d = 0;
 always @(posedge clk) begin
@@ -112,11 +117,14 @@ always @(posedge clk) begin
     if (!rst && rendering && !rendering_d) render_edges = render_edges + 1;
     if (!rst && disp_buf !== disp_buf_d)   swap_edges   = swap_edges + 1;
     if (!rst && (fbe_req || fbw_start) &&
-        (fbe_req ? fbe_buf[1] : fbw_buf[1])) begin
+        ((fbe_req ? fbe_buf : fbw_buf) == scan_buf)) begin
         errors = errors + 1;
-        $display("  FAIL System 32 used removed extra framebuffer %0d",
+        $display("  FAIL renderer targeted scanned framebuffer %0d",
                  fbe_req ? fbe_buf : fbw_buf);
     end
+    if (!rst && (fbe_req || fbw_start) &&
+        ((fbe_req ? fbe_buf : fbw_buf) == 2'd2))
+        slot2_writes = slot2_writes + 1;
 end
 
 task write_ctl(input [2:0] a, input [7:0] d);
@@ -132,7 +140,15 @@ task pulse_frame(input integer width);
     vblank <= 1'b0;
 endtask
 
+task pulse_present;
+    begin
+        @(posedge clk); present <= 1'b1;
+        @(posedge clk); present <= 1'b0;
+    end
+endtask
+
 task pulse_and_settle(input integer width);
+    pulse_present;
     pulse_frame(width);
     // wait for the pass to run and the framebuffer to drain
     wait (rendering === 1'b1);
@@ -200,13 +216,24 @@ initial begin
                  swap_edges - base_swap);
     end
     // ---- Overrun path: a second frame event while erase/render is busy. ----
-    // The pending latch must preserve the second event without allocating a
-    // third physical framebuffer.
+    // The pending latch preserves the second event and the third physical
+    // framebuffer keeps both the scanned and completed-pending buffers safe.
     base_render = render_edges;
     base_swap = swap_edges;
+    pulse_present;
     pulse_frame(2);
     wait (fbe_req === 1'b1);
-    pulse_frame(2);
+    // The next logical field arrives while the first physical render is busy.
+    // It must be queued without changing the scanned buffer.
+    begin
+        reg [1:0] scan_during_overrun;
+        scan_during_overrun = scan_buf;
+        pulse_frame(2);
+        if (scan_buf !== scan_during_overrun) begin
+            errors = errors + 1;
+            $display("  FAIL scan buffer changed while render was incomplete");
+        end
+    end
     wait (render_edges - base_render == 2);
     wait (rendering === 1'b0);
     wait (fbw_busy === 1'b0);
@@ -215,6 +242,14 @@ initial begin
         errors = errors + 1;
         $display("  FAIL overrun path produced %0d swaps (want 2)",
                  swap_edges - base_swap);
+    end
+    // Only now may the newest completed field become visible. The third slot
+    // must have been exercised because the first completed field was pending.
+    pulse_present;
+    repeat (4) @(posedge clk);
+    if (slot2_writes == 0) begin
+        errors = errors + 1;
+        $display("  FAIL overrun path never used third framebuffer");
     end
     if (errors == 0) $display("SPRITE VBLANK PASS");
     else             $display("SPRITE VBLANK FAIL (%0d errors)", errors);

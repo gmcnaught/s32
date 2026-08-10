@@ -73,6 +73,7 @@ end
 
 s32_sprite #(.VERIFY_SROM(1'b1)) dut (
     .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .present(1'b0),
     .verify_srom(1'b1),
     .srom_bank_mask(sprite_bank_mask[1:0]),
     .vblank(vblank),
@@ -88,7 +89,7 @@ s32_sprite #(.VERIFY_SROM(1'b1)) dut (
     .fb_busy(fb_busy),
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf),
     .fb_er_y(fb_er_y), .fb_er_ack(fb_er_ack),
-    .disp_buf(disp_buf)
+    .disp_buf(disp_buf), .scan_buf(), .scan_buf_prev()
 );
 assign rendering = dut.rs != 0;
 
@@ -291,6 +292,7 @@ end
 endtask
 
 integer init_i;
+integer init_buf, init_y, init_word;
 integer out_fd;
 integer out_x, out_y, out_word, out_lane;
 initial begin
@@ -327,6 +329,26 @@ initial begin
     $readmemh(back_path, fb);
 
     repeat (8) @(posedge clk);
+`ifdef S32_REPLAY_REAL_FB
+    // The direct oracle starts from the fixture's physical back framebuffer.
+    // Seed every production DDR slot with that same image so integrated mode
+    // compares rendering semantics as well as protocol/backpressure.  The old
+    // all-transparent DDR initialization made untouched/randomized fixture
+    // pixels look like renderer mismatches and happened to assume A/B only.
+    for (init_buf = 0; init_buf < 4; init_buf = init_buf + 1) begin
+        for (init_y = 0; init_y < FB_HEIGHT; init_y = init_y + 1) begin
+            for (init_word = 0; init_word < FB_WIDTH / 4;
+                 init_word = init_word + 1) begin
+                fb_model.ddr[(init_buf << 15) + (init_y << 7) + init_word] = {
+                    fb[init_y * FB_WIDTH + (init_word << 2) + 3],
+                    fb[init_y * FB_WIDTH + (init_word << 2) + 2],
+                    fb[init_y * FB_WIDTH + (init_word << 2) + 1],
+                    fb[init_y * FB_WIDTH + (init_word << 2)]
+                };
+            end
+        end
+    end
+`endif
     rst = 1'b0;
     repeat (4) @(posedge clk);
     for (init_i = 0; init_i < 8; init_i = init_i + 1)
