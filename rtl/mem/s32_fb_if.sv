@@ -53,8 +53,8 @@ module s32_fb_if #(
     // line read port -> mixer
     input             rd_req,
     input       [1:0] rd_buf,
-    input       [1:0] rd_blend_buf,     // hidden A/B buffer for HUD effect
-    input             rd_blend,         // Alien 3 HUD rows only
+    input       [1:0] rd_blend_buf,     // hidden A/B buffer for flicker blend
+    input             rd_blend,         // Alien 3 sprite-field composition
     input       [7:0] rd_y,
     output reg        rd_ack,          // line available in buffer
     input       [8:0] rd_x,            // synchronous read of fetched line
@@ -86,14 +86,14 @@ reg        line_ready;
 wire       rd_line_publish = (rd_x == 9'd0) && line_ready;
 wire       scan_bank = rd_line_publish ? fill_bank : display_bank;
 
-// Resolve Alien 3's alternating player HUD fields while the hidden A/B buffer
+// Resolve Alien 3's alternating HUD and gun-sight fields while the hidden A/B buffer
 // is fetched from DDR, before acknowledging the completed line to scanout.
 // System 32 regards both 0xffff and 0x7fff as transparent; the latter is what
 // remains when a shadow RMW crosses an erased pixel. For 0x7fff, retain the
-// other field's pixel while applying the current field's shadow flag. The two
-// aligned word ranges cover P1 x=16..143 and mirrored P2 x=176..303; all other
-// sprite pixels remain the ordinary single-frame result.
-function automatic [63:0] compose_hud_word(
+// other field's pixel while applying the current field's shadow flag. The
+// complete line is composed because the sight follows the gun and has no fixed
+// screen rectangle. The option is title-gated above this module.
+function automatic [63:0] compose_flicker_word(
     input [63:0] newest,
     input [63:0] other
 );
@@ -116,7 +116,7 @@ function automatic [63:0] compose_hud_word(
             result[62:48] = other[62:48];
             result[63] = other[63] & newest[63];
         end
-        compose_hud_word = result;
+        compose_flicker_word = result;
     end
 endfunction
 
@@ -124,8 +124,7 @@ reg rd_blend_latched;
 
 // DDR engine
 typedef enum logic [3:0] { D_IDLE, D_WR_PF, D_WR, D_ER, D_RD, D_RD_W,
-                           D_RD_BLEND1, D_RD_BLEND1_W,
-                           D_RD_BLEND2, D_RD_BLEND2_W, D_RD_BLEND_FLUSH,
+                           D_RD_BLEND, D_RD_BLEND_W, D_RD_BLEND_FLUSH,
                            D_SH_R, D_SH_RW, D_SH_W } dstate_t;
 dstate_t dst = D_IDLE;
 
@@ -141,31 +140,20 @@ reg [63:0] compose_other;
 reg  [6:0] compose_addr;
 reg        compose_valid;
 
-// Only the 64 words covering the two HUD rectangles are cached while the
-// normal line is fetched: P1 words 4..35 and P2 words 44..75. This replaces
-// the old pair of full-line Alien 3 composition RAMs. With the option off,
-// the cache and both short hidden-buffer reads are idle.
-(* ramstyle = "M10K, no_rw_check" *) reg [63:0] hud_cache [0:63];
-reg [63:0] hud_cache_q;
-wire       current_is_hud_word = (rbeat >= 7'd4 && rbeat <= 7'd35) ||
-                                 (rbeat >= 7'd44 && rbeat <= 7'd75);
-wire [5:0] hud_cache_waddr = (rbeat <= 7'd35) ? rbeat[5:0] - 6'd4
-                                              : rbeat[5:0] - 6'd12;
-wire       blend_second_span = (dst == D_RD_BLEND2) ||
-                               (dst == D_RD_BLEND2_W);
-wire [5:0] hud_cache_raddr = (blend_second_span ? 6'd32 : 6'd0)
-                           + {1'b0, rbeat[4:0]};
+// Cache the normal 512-pixel line while it is fetched. With the option off,
+// this cache and the hidden-buffer read remain idle.
+(* ramstyle = "M10K, no_rw_check" *) reg [63:0] blend_cache [0:127];
+reg [63:0] blend_cache_q;
 wire        line_direct_we = (dst == D_RD_W) && DDRAM_DOUT_READY;
 wire        line_compose_we = compose_valid;
 wire        line_we = line_direct_we || line_compose_we;
 wire [6:0]  line_waddr = line_compose_we ? compose_addr : rbeat;
 wire [63:0] line_wdata = line_compose_we
-                       ? compose_hud_word(hud_cache_q, compose_other)
+                       ? compose_flicker_word(blend_cache_q, compose_other)
                        : DDRAM_DOUT;
 wire        line_we0 = line_we && !fill_bank;
 wire        line_we1 = line_we &&  fill_bank;
-wire        hud_cache_we = line_direct_we && rd_blend_latched &&
-                           current_is_hud_word;
+wire        blend_cache_we = line_direct_we && rd_blend_latched;
 
 wire [63:0] line_q0, line_q1;
 s32_fb_line_ram line_ram0 (
@@ -198,9 +186,9 @@ end
 // One unconditional registered read plus one write port keeps the small cache
 // in block RAM instead of expanding it into registers and a read mux.
 always @(posedge clk) begin
-    hud_cache_q <= hud_cache[hud_cache_raddr];
-    if (hud_cache_we)
-        hud_cache[hud_cache_waddr] <= DDRAM_DOUT;
+    blend_cache_q <= blend_cache[rbeat];
+    if (blend_cache_we)
+        blend_cache[rbeat] <= DDRAM_DOUT;
 end
 
 function automatic [28:0] pix_addr(input [1:0] buf_i, input [7:0] y,
@@ -423,13 +411,13 @@ always @(posedge clk) begin
                 rbeat <= rbeat + 1'd1;
                 if (rbeat == 7'd127) begin
                     if (rd_blend_latched) begin
-                        // Only fetch the two 128-pixel player HUD spans from
-                        // the hidden A/B buffer, not a second complete line.
-                        daddr  <= pix_addr(rd_blend_buf_latched, rd_y, 7'd4);
-                        dburst <= 8'd32;
+                        // Fetch the complete hidden field line: the HUD has
+                        // fixed spans, but the gun sight can be anywhere.
+                        daddr  <= pix_addr(rd_blend_buf_latched, rd_y, 7'd0);
+                        dburst <= 8'd128;
                         rbeat  <= 0;
                         drd    <= 1'b1;
-                        dst    <= D_RD_BLEND1;
+                        dst    <= D_RD_BLEND;
                     end
                     else begin
                         line_ready <= 1'b1;
@@ -439,36 +427,17 @@ always @(posedge clk) begin
                 end
             end
         end
-        D_RD_BLEND1: if (!DDRAM_BUSY) begin
+        D_RD_BLEND: if (!DDRAM_BUSY) begin
             drd <= 1'b0;
-            dst <= D_RD_BLEND1_W;
+            dst <= D_RD_BLEND_W;
         end
-        D_RD_BLEND1_W: begin
+        D_RD_BLEND_W: begin
             if (DDRAM_DOUT_READY) begin
                 compose_other <= DDRAM_DOUT;
-                compose_addr <= 7'd4 + rbeat;
+                compose_addr <= rbeat;
                 compose_valid <= 1'b1;
                 rbeat <= rbeat + 1'd1;
-                if (rbeat == 7'd31) begin
-                    daddr  <= pix_addr(rd_blend_buf_latched, rd_y, 7'd44);
-                    dburst <= 8'd32;
-                    rbeat  <= 0;
-                    drd    <= 1'b1;
-                    dst    <= D_RD_BLEND2;
-                end
-            end
-        end
-        D_RD_BLEND2: if (!DDRAM_BUSY) begin
-            drd <= 1'b0;
-            dst <= D_RD_BLEND2_W;
-        end
-        D_RD_BLEND2_W: begin
-            if (DDRAM_DOUT_READY) begin
-                compose_other <= DDRAM_DOUT;
-                compose_addr <= 7'd44 + rbeat;
-                compose_valid <= 1'b1;
-                rbeat <= rbeat + 1'd1;
-                if (rbeat == 7'd31)
+                if (rbeat == 7'd127)
                     dst <= D_RD_BLEND_FLUSH;
             end
         end

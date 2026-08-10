@@ -186,7 +186,7 @@ localparam CONF_STR = {
 `endif
     "O[7],Service Mode,Off,On;",
     // h0 hides this line unless menumask[0] identifies Alien 3.
-    "h0O[8],Alien 3 HUD Blend,Off,On;",
+    "h0O[8],Alien 3 Flicker Blend,Off,On;",
     "-;",
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
     "O[9],CRT Adjust,Off,On;",

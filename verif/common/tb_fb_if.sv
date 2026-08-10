@@ -7,8 +7,8 @@
 //  4. line read-back through the rd port matches DDR contents
 //  5. display read wins over a simultaneous deferred sprite flush, and the
 //     sprite write remains queued and completes afterward
-//  6. Alien 3 HUD blend falls back to the hidden A/B buffer only inside the
-//     two player-HUD rectangles, retaining shadow pixels as authoritative
+//  6. Alien 3 flicker blend falls back to the hidden A/B buffer across the
+//     complete line, retaining shadow pixels as authoritative
 //  7. fetching the next line never overwrites the line still being scanned;
 //     the completed replacement becomes visible only at a raster boundary
 //
@@ -336,12 +336,12 @@ initial begin
     end
     check(ddr_pix(6, 30), 16'hABCD, 30);
 
-    // 6: composite the ordinary A/B buffers in Alien 3's HUD windows. The
+    // 6: composite the ordinary A/B buffers across an Alien 3 scanline. The
     // displayed field wins where populated; erased pixels fall back to the
     // hidden field. A
     // transparent 0x7fff shadow pixel retains the prior pixel with bit 15
     // cleared, matching the mixer shadow-RMW convention. Word 0 proves the
-    // same transparent pixels remain untouched outside x=16..143/176..303.
+    // same transparent fallback covers both the fixed HUD and movable sight.
     ddr[7 * 128] = 64'hffff_ffff_ffff_ffff;
     ddr[32768 + 7 * 128] = {16'hb003, 16'hb002, 16'hb001, 16'hb000};
     ddr[7 * 128 + 4] = {16'hffff, 16'h7fff, 16'hffff, 16'h9001};
@@ -353,12 +353,12 @@ initial begin
     rd_blend <= 1'b1; rd_req <= 1'b1;
     @(posedge rd_ack); rd_req <= 1'b0;
     wait (!rd_ack); repeat (2) @(posedge clk);
-    if ((read_accepts - blend_read_start) != 3) begin
+    if ((read_accepts - blend_read_start) != 2) begin
         errors = errors + 1;
-        $display("  FAIL HUD blend read accepted %0d bursts, expected 3",
+        $display("  FAIL flicker blend read accepted %0d bursts, expected 2",
                  read_accepts - blend_read_start);
     end
-    rd_x = 9'd0;  @(posedge clk); #1; check(rd_pix, 16'hffff, 0);
+    rd_x = 9'd0;  @(posedge clk); #1; check(rd_pix, 16'hb000, 0);
     rd_x = 9'd16; @(posedge clk); #1; check(rd_pix, 16'h9001, 16);
     rd_x = 9'd17; @(posedge clk); #1; check(rd_pix, 16'ha002, 17);
     rd_x = 9'd18; @(posedge clk); #1; check(rd_pix, 16'h2003, 18);

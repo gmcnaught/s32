@@ -27,7 +27,7 @@ MRA or RBF here.
 | Aspect ratio | Original, Full Screen |
 | Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
 | Service Mode | Off / On |
-| Alien 3 HUD Blend | Off / On; shown for Alien3: The Gun only |
+| Alien 3 Flicker Blend | Off / On; combines its alternating HUD and gun-sight sprite fields; shown for Alien3: The Gun only |
 | Scale | Normal, V-Integer, HV-Integer |
 | CRT Adjust | Off / On; enables the CRT geometry controls below |
 | CRT H-Size | Horizontal stretch/squeeze from `-16` to `+15` |

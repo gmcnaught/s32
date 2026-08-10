@@ -217,7 +217,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
-        self.assertIn('"h0O[8],Alien 3 HUD Blend,Off,On;"', text)
+        self.assertIn('"h0O[8],Alien 3 Flicker Blend,Off,On;"', text)
         self.assertIn(
             ".status_menumask({14'd0, ~status[9], active_board.gun_aim && "
             "active_board.coin_swap})",
@@ -246,20 +246,12 @@ class GlobalProfileContractTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "fb_rd_blend_r <= alien3_hud_blend && "
-            "fb_next_is_alien3_hud",
+            "fb_rd_blend_r <= alien3_hud_blend",
             core,
         )
+        self.assertIn("dburst <= 8'd128", fb_if)
         self.assertIn(
-            "fb_next_y >= 8'd184 && fb_next_y <= 8'd201",
-            core,
-        )
-        self.assertIn("dburst <= 8'd32", fb_if)
-        self.assertIn(
-            "pix_addr(rd_blend_buf_latched, rd_y, 7'd4)", fb_if
-        )
-        self.assertIn(
-            "pix_addr(rd_blend_buf_latched, rd_y, 7'd44)", fb_if
+            "pix_addr(rd_blend_buf_latched, rd_y, 7'd0)", fb_if
         )
         self.assertIn("s32_fb_line_ram line_ram0", fb_if)
         self.assertIn("s32_fb_line_ram line_ram1", fb_if)
