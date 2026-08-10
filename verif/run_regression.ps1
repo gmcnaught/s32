@@ -545,6 +545,9 @@ try {
     Write-Tier 26 "SDRAM CL2 capture / row-open ROM write throughput / burst ordering"
     Run-HdlTest "t26_sdram" "tb_sdram" @("rtl/mem/sdram.sv", "verif/common/tb_sdram.sv") "SDRAM CAPTURE PASS"
     Run-HdlTest "t26_sdram_write" "tb_sdram_write_throughput" @("rtl/mem/sdram.sv", "verif/common/tb_sdram_write_throughput.sv") "SDRAM WRITE THROUGHPUT PASS"
+    Run-HdlTest "t26_sdram_tile_deadline" "tb_sdram_tile_deadline" @(
+        "rtl/mem/sdram.sv", "verif/common/tb_sdram_tile_deadline.sv"
+    ) "SDRAM TILE DEADLINE PASS"
 
     Write-Tier 27 "integrated sprite renderer / backpressured DDR framebuffer stress"
     Run-HdlTest "t27_sprite_fb" "tb_sprite_fb" @("rtl/video/s32_sprite.sv", "rtl/mem/s32_fb_if.sv", "verif/common/tb_sprite_fb.sv") "SPRITE FB PASS"

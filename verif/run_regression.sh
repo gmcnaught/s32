@@ -178,6 +178,9 @@ echo "[26/35] SDRAM CL2 centred input capture / first-word freshness / burst ord
 iverilog -g2012 -s tb_sdram -o /tmp/s32_sdram \
   rtl/mem/sdram.sv verif/common/tb_sdram.sv
 vvp /tmp/s32_sdram | grep -q "SDRAM CAPTURE PASS" && echo "SDRAM CAPTURE: PASS" || { echo "SDRAM CAPTURE: FAIL"; exit 1; }
+iverilog -g2012 -s tb_sdram_tile_deadline -o /tmp/s32_sdram_tile_deadline \
+  rtl/mem/sdram.sv verif/common/tb_sdram_tile_deadline.sv
+vvp /tmp/s32_sdram_tile_deadline | grep -q "SDRAM TILE DEADLINE PASS" && echo "SDRAM TILE DEADLINE: PASS" || { echo "SDRAM TILE DEADLINE: FAIL"; exit 1; }
 echo "[27/35] integrated sprite renderer / backpressured DDR framebuffer stress"
 iverilog -g2012 -s tb_sprite_fb -o /tmp/s32_sprite_fb \
   rtl/video/s32_sprite.sv rtl/mem/s32_fb_if.sv \

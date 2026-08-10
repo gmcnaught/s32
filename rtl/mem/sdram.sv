@@ -3,7 +3,8 @@
 //  16-bit SDR SDRAM @ clk_ram (96.6 MHz), CL2, strictly serialized
 //  transactions. ROM-download writes keep a row open for same-row words and
 //  explicitly precharge before row changes, reads, or refreshes.
-//  Six request ports with bounded round-robin arbitration (DESIGN.md §4.2):
+//  Six request ports with bounded tile-deadline priority and round-robin
+//  background fairness (DESIGN.md §4.2):
 //    p0: V60 fetch/data (latency critical, 16-bit single)
 //    p1: tile fetch      (64-bit burst = 4 words)
 //    p2: sprite fetch    (128-bit burst = 8 words)
@@ -150,22 +151,37 @@ reg [24:4] p2_addr_p;
 reg [15:0] wr_din_p;
 reg  [1:0] wr_be_p;
 
-// Reads rotate after every grant.  This prevents continuous V60 cache misses
-// from starving sprite/audio traffic while retaining the download write port
-// as the sole highest-priority client (game logic is held reset during it).
+// Tile rendering has a hard scanline deadline: if p1 waits behind a complete
+// six-port rotation, the renderer can miss the next line and the parity line
+// buffer displays stale texture data. Give a newly pending p1 burst one
+// deadline-priority credit. After that burst, one background reader must run
+// before p1 can use the credit again. Preserve the background round-robin
+// pointer across a priority p1 grant so repeated tile traffic cannot keep
+// restarting background selection at the same port.
 reg       read_valid;
 reg [2:0] read_grant;
+reg       p1_was_last;
+reg       p1_priority_grant;
+wire      background_pend = p0_pend | p2_pend | p3_pend | p4_pend | p5_pend;
+wire      p1_fairness_block = p1_was_last & background_pend;
 always @* begin
     read_valid = 1'b1;
     read_grant = rr_next;
-    case (rr_next)
-        3'd0: if (p0_pend) read_grant=0; else if (p1_pend) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else read_valid=0;
-        3'd1: if (p1_pend) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else read_valid=0;
-        3'd2: if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend) read_grant=1; else read_valid=0;
-        3'd3: if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend) read_grant=1; else if (p2_pend) read_grant=2; else read_valid=0;
-        3'd4: if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else read_valid=0;
-        default: if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else read_valid=0;
-    endcase
+    p1_priority_grant = 1'b0;
+    if (p1_pend && !p1_was_last) begin
+        read_grant = 3'd1;
+        p1_priority_grant = 1'b1;
+    end
+    else begin
+        case (rr_next)
+            3'd0: if (p0_pend) read_grant=0; else if (p1_pend && !p1_fairness_block) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else read_valid=0;
+            3'd1: if (p1_pend && !p1_fairness_block) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else read_valid=0;
+            3'd2: if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend && !p1_fairness_block) read_grant=1; else read_valid=0;
+            3'd3: if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend && !p1_fairness_block) read_grant=1; else if (p2_pend) read_grant=2; else read_valid=0;
+            3'd4: if (p4_pend) read_grant=4; else if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend && !p1_fairness_block) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else read_valid=0;
+            default: if (p5_pend) read_grant=5; else if (p0_pend) read_grant=0; else if (p1_pend && !p1_fairness_block) read_grant=1; else if (p2_pend) read_grant=2; else if (p3_pend) read_grant=3; else if (p4_pend) read_grant=4; else read_valid=0;
+        endcase
+    end
 end
 
 // Latch each port on the RISING EDGE of its request.  The previous
@@ -316,6 +332,7 @@ always @(posedge clk) begin
         cl_pipe  <= 4'b0000;
         ack_stretch <= 0;
         rr_next <= 3'd0;
+        p1_was_last <= 1'b0;
     end
     else if (!ready) begin
         init_cnt <= init_cnt - 1'd1;
@@ -365,7 +382,9 @@ always @(posedge clk) begin
                 else begin
                     grant <= read_grant;
                     is_write <= 1'b0;
-                    rr_next <= (read_grant == 3'd5) ? 3'd0 : read_grant + 1'd1;
+                    p1_was_last <= (read_grant == 3'd1);
+                    if (!p1_priority_grant)
+                        rr_next <= (read_grant == 3'd5) ? 3'd0 : read_grant + 1'd1;
                     case (read_grant)
                         3'd0: begin a = p0_addr_p;           rd_total <= 4'd1; end
                         3'd1: begin a = {p1_addr_p, 2'b00};  rd_total <= 4'd4; end
