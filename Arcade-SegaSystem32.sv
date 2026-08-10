@@ -835,10 +835,18 @@ wire signed [4:0] crt_hsize  = $signed(status[14:10]);
 wire        [6:0] crt_hpos    = status[21:15];
 wire signed [5:0] crt_vshift = $signed(status[26:22]);
 
-// CRT Adjust operates on the native 15 kHz stream. The framework's
-// scandoubler changes the pixel-CE ratio, so leave the line buffer in bypass
-// while a CRT 25/50/75% effect is selected.
-wire crt_adjust_active = crt_on && (scandoubler_fx == 3'd0);
+// CRT Adjust is an analog-only geometry aid.  The core-side module replaces
+// CE_PIXEL as well as RGB/sync/DE, which makes the framework's physical HDMI
+// output consume its fractional read cadence.  Dark Edge exposed that as a
+// lost HDMI raster (vertical bars) even though the upstream MiSTer screenshot
+// remained correct.  HDMI_WIDTH/HEIGHT are non-zero when the HDMI scaler is
+// active, so fail safe to the original native video path there.  The shared
+// output boundary means CRT Adjust is available only in direct-video mode;
+// preserving a valid HDMI raster takes priority when both outputs are enabled.
+// Also bypass it while a CRT 25/50/75% scandoubler effect is selected.
+wire hdmi_output_active = (HDMI_WIDTH != 12'd0) || (HDMI_HEIGHT != 12'd0);
+wire crt_adjust_active = crt_on && !hdmi_output_active
+                       && (scandoubler_fx == 3'd0);
 
 // HSync-shift mode is the safe choice here because the System 32 active window
 // is line-anchored at x=0 rather than centered inside the total line. The

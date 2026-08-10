@@ -231,6 +231,15 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn('SYSTEMVERILOG_FILE rtl/crt_adjust.sv', (ROOT / "files.qip").read_text(encoding="utf-8"))
         self.assertIn('crt_adjust #(', text)
         self.assertIn('.AW        (10)', text)
+        self.assertIn(
+            "wire hdmi_output_active = (HDMI_WIDTH != 12'd0) || "
+            "(HDMI_HEIGHT != 12'd0);",
+            text,
+        )
+        self.assertIn(
+            "wire crt_adjust_active = crt_on && !hdmi_output_active",
+            text,
+        )
         self.assertIn('video_freak s32_video_freak', text)
         self.assertIn(
             ".alien3_hud_blend(alien3_controls && status[8])",
