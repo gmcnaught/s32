@@ -10,16 +10,12 @@ $ErrorActionPreference = "Stop"
 $resolvedScript = (Resolve-Path -LiteralPath $BuildScript).Path
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path (Split-Path -Parent $resolvedScript) "..")).Path
 
-$sha = [Security.Cryptography.SHA256]::Create()
-try {
-    $bytes = [Text.Encoding]::UTF8.GetBytes($repoRoot.ToLowerInvariant())
-    $digest = $sha.ComputeHash($bytes)
-}
-finally {
-    $sha.Dispose()
-}
-$key = ([BitConverter]::ToString($digest) -replace "-", "").Substring(0, 16)
-$mutexName = "Local\SegaS32QuartusBuild-$key"
+# Quartus 17 is a machine-wide resource in this workspace.  The databases
+# remain per-project, but two fits must never run at the same time: they can
+# contend for memory/CPU and make placement comparisons non-reproducible.
+# Use a stable machine-wide name rather than a root hash so separate worktrees
+# and the two production profiles serialize as well.
+$mutexName = "Global\SegaS32QuartusBuild"
 $mutex = [Threading.Mutex]::new($false, $mutexName)
 $acquired = $false
 $buildExitCode = 1
@@ -47,7 +43,7 @@ try {
         $acquired = $true
     }
     if (-not $acquired) {
-        throw "Another Sega System 32 Quartus build is already active in $repoRoot after waiting $WaitSeconds second(s)."
+        throw "Another Sega System 32 Quartus build is already active on this machine after waiting $WaitSeconds second(s)."
     }
 
     $gitHead = "unavailable"

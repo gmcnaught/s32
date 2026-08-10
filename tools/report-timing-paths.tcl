@@ -61,6 +61,10 @@ set fast_clk [s32_exact_clock "game PLL outclk0 (clk_ram)" \
 set sys_clk [s32_exact_clock "game PLL outclk1 (clk_sys)" \
     {*|pll|pll_inst|altera_pll_i|*[1].*|divclk}]
 set sdram_clk [s32_exact_clock "forwarded SDRAM_CLK" {SDRAM_CLK}]
+set hdmi_clk [s32_optional_exact_clock "MiSTer HDMI pixel clock" \
+    {pll_hdmi|pll_hdmi_inst|altera_pll_i|*[0].*|divclk}]
+set audio_clk [s32_optional_exact_clock "MiSTer audio clock" \
+    {pll_audio|pll_audio_inst|altera_pll_i|*[0].*|divclk}]
 set v25_clk [s32_optional_exact_clock "game PLL outclk3 (clk_v25)" \
     {*|pll|pll_inst|altera_pll_i|*[3].*|divclk}]
 
@@ -70,13 +74,20 @@ foreach_in_collection op [get_available_operating_conditions] {
     set_operating_conditions $op
     update_timing_netlist
 
-    foreach pair [list \
+    set timing_pairs [list \
         [list fast96 $fast_clk $fast_clk] \
         [list sys48 $sys_clk $sys_clk] \
         [list fast96-to-sys48 $fast_clk $sys_clk] \
         [list sys48-to-fast96 $sys_clk $fast_clk] \
         [list fast96-to-sdram $fast_clk $sdram_clk] \
-        [list sdram-to-fast96 $sdram_clk $fast_clk]] {
+        [list sdram-to-fast96 $sdram_clk $fast_clk]]
+    if {[get_collection_size $hdmi_clk] == 1} {
+        lappend timing_pairs [list hdmi $hdmi_clk $hdmi_clk]
+    }
+    if {[get_collection_size $audio_clk] == 1} {
+        lappend timing_pairs [list audio $audio_clk $audio_clk]
+    }
+    foreach pair $timing_pairs {
         lassign $pair label from_clock to_clock
         s32_report setup $from_clock $to_clock \
             "output_files/timing-$label-setup-$corner.rpt"
@@ -92,10 +103,17 @@ foreach_in_collection op [get_available_operating_conditions] {
     }
 
     set no_from_clock [get_clocks -nowarn {__s32_no_clock__}]
-    foreach clock_pair [list \
+    set recovery_clocks [list \
         [list fast96 $fast_clk] \
         [list sys48 $sys_clk] \
-        [list sdram $sdram_clk]] {
+        [list sdram $sdram_clk]]
+    if {[get_collection_size $hdmi_clk] == 1} {
+        lappend recovery_clocks [list hdmi $hdmi_clk]
+    }
+    if {[get_collection_size $audio_clk] == 1} {
+        lappend recovery_clocks [list audio $audio_clk]
+    }
+    foreach clock_pair $recovery_clocks {
         lassign $clock_pair label clock
         s32_report recovery $no_from_clock $clock \
             "output_files/timing-$label-recovery-$corner.rpt"

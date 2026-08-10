@@ -44,15 +44,10 @@ foreach ($command in @("ssh", "scp")) {
     }
 }
 
-$sha = [Security.Cryptography.SHA256]::Create()
-try {
-    $digest = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($repoRoot.ToLowerInvariant()))
-}
-finally {
-    $sha.Dispose()
-}
-$key = ([BitConverter]::ToString($digest) -replace "-", "").Substring(0, 16)
-$mutex = [Threading.Mutex]::new($false, "Local\SegaS32QuartusBuild-$key")
+# Deployment consumes the same release artifacts as the Quartus flow.  Share
+# the machine-wide gate so a deployment cannot race an assembler/staging step
+# in another worktree or profile.
+$mutex = [Threading.Mutex]::new($false, "Global\SegaS32QuartusBuild")
 $acquired = $false
 $remoteConnected = $false
 $remoteRbfTemp = $null
@@ -107,7 +102,7 @@ try {
         $acquired = $true
     }
     if (-not $acquired) {
-        throw "A build or another deployment is active in $repoRoot."
+        throw "A Quartus build or another deployment is active on this machine."
     }
 
     $reportScript = Join-Path $repoRoot "tools\report-quartus.ps1"

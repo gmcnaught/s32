@@ -1,24 +1,51 @@
-Built cores avalible (for free) at https://www.patreon.com/cw/Meathax
+Built cores are available for free at https://www.patreon.com/cw/Meathax
 
-# This core is 100% AI coded
 # Sega System 32 for MiSTer FPGA
 
-An open FPGA recreation of Sega's System 32 arcade hardware (1990–1994) for
-the MiSTer DE10-Nano. The project is source-first and does not distribute
-commercial arcade ROMs.
+This is the Sega System 32 arcade core for MiSTer FPGA.
 
-**System 32 only — Multi 32 is not supported.** Every Quartus revision here
-builds with `S32_SYSTEM32_ONLY=1`, which removes the second palette, the
-second mixer, the MultiPCM path and half of work RAM, so the Multi 32 boards
-(Hard Dunk, OutRunners, Stadium Cross, Title Fight) cannot run on any RBF this
-repository produces. No MRA is emitted for them.
+| Item | Hardware |
+| --- | --- |
+| Core title | Sega System 32 |
+| Original arcade board | Sega System 32 standard single-screen PCB, 837-7428 / 171-5964E |
+| FPGA target | MiSTer DE10-Nano (Cyclone V) with SDRAM expansion |
+| Production profiles | `segas32.rbf` and `segas32v25.rbf` |
 
-This is an active work in progress. A tick means the game is currently
-working on the target MiSTer setup; an X means it is not yet ready.
+This is an open, source-first FPGA recreation of Sega's System 32 hardware
+(1990–1994). It does not distribute commercial arcade ROMs. The project is
+still a work in progress.
+
+**System 32 only — Multi 32 is not supported.** The production revisions
+compile with `S32_SYSTEM32_ONLY=1`; Hard Dunk, OutRunners, Stadium Cross,
+Title Fight and AS-1 are outside the supported target and have no production
+MRA or RBF here.
+
+## Features in the OSD
+
+| OSD option | Choices / function |
+| --- | --- |
+| Aspect ratio | Original, Full Screen |
+| Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
+| Service Mode | Off / On |
+| Alien 3 HUD Blend | Off / On; shown for Alien3: The Gun only |
+| Scale | Normal, V-Integer, HV-Integer |
+| CRT Adjust | Off / On; enables the CRT geometry controls below |
+| CRT H-Size | Horizontal stretch/squeeze from `-16` to `+15` |
+| CRT H-Position | Horizontal image position from `-48` to `+48` |
+| CRT V-Shift | Vertical image shift from `-16` to `+15` lines |
+| Reset | Resets the running core |
+
+The CRT controls change the picture geometry while keeping the native sync
+signals stable. The Multi 32 screen selector is not included because this
+repository builds System 32 profiles only.
 
 ## Compatibility
 
-| Game | Ready |
+The following is the current development status. A check mark means the title
+is currently working on the target MiSTer setup; it is not a claim of complete
+PCB or gameplay certification.
+
+| Game | Status |
 | --- | --- |
 | Holosseum | ✓ |
 | Spider-Man: The Videogame | ✓ |
@@ -30,10 +57,50 @@ working on the target MiSTer setup; an X means it is not yet ready.
 | Golden Axe: The Revenge of Death Adder | ✓ |
 | Arabian Fight | ✗ |
 | Jurassic Park | ✗ |
-| Rad Mobile | ✗ |
 | Rad Rally | ✗ |
 | SegaSonic The Hedgehog | ✗ |
-| AS-1 Controller | ✗ |
+
+## PCB Accuracy
+
+The following areas are based on the documented System 32 PCB schematics and
+board research recorded in `docs/references.md` and `docs/pcb/`.
+
+| PCB area | Evidence-backed implementation |
+| --- | --- |
+| Board identity and clock plan | Standard single-screen 837-7428 / 171-5964E board; approximately 16.108 MHz V60, 8.054 MHz Z80/YM3438 and 12.5 MHz PCM clock rates |
+| Main CPU bus | NEC µPD70616 V60 with a 16-bit external data bus and 24-bit address bus |
+| System controller | Sega 315-5385 address mapping, interrupt controller and timer block |
+| Object hardware | Sega 315-5386A sprite/object engine with dedicated sprite RAM and framebuffer rendering |
+| Scroll hardware | Sega 315-5387 tilemap engine with four scrolling layers and associated dual-port video RAM |
+| Color and priority hardware | Sega 315-5388 frame-memory, color, priority and mixing stage with palette SRAM |
+| Video output | Sega 315-5242 digital RGB/DAC boundary |
+| Input/output board | Sega 315-5296 I/O, four-bit DIP inputs and JAMMA control wiring |
+| EEPROM | BR93C46AP/93C46 serial wiring on the documented 315-5296 port bits |
+| Sound board | Z80 sound CPU, 8 KB battery-backed RAM, two YM3438 FM chips, RF5C105/RF5C68-family PCM and PCM RAM |
+
+## Full list of supported games
+
+These are the 12 parent titles emitted by the production MRA generator. Regional
+and revision variants are included where the MRA set provides them.
+
+| Game | Production profile | RBF |
+| --- | --- | --- |
+| Air Rescue | Standard | `segas32.rbf` |
+| Alien3: The Gun | Standard | `segas32.rbf` |
+| Arabian Fight | Real V25 | `segas32v25.rbf` |
+| Burning Rival | Standard | `segas32.rbf` |
+| Dark Edge | Standard | `segas32.rbf` |
+| Golden Axe: The Revenge of Death Adder | Real V25 | `segas32v25.rbf` |
+| Holosseum | Standard | `segas32.rbf` |
+| Jurassic Park | Standard | `segas32.rbf` |
+| Rad Rally | Standard | `segas32.rbf` |
+| SegaSonic The Hedgehog | Standard | `segas32.rbf` |
+| Slip Stream | Standard | `segas32.rbf` |
+| Spider-Man: The Videogame | Standard | `segas32.rbf` |
+
+Rad Mobile, Multi 32 titles and AS-1 are not part of the current production
+profiles, even though related historical research or simulation material may
+remain in the repository.
 
 ## What the core implements
 
@@ -41,60 +108,111 @@ working on the target MiSTer setup; an X means it is not yet ready.
   layers, a hardware-style sprite list with zoom, priority, blending, fades,
   and 320/416-pixel display modes.
 - Audio: Z80 sound CPU, two YM3438-compatible FM channels, and RF5C68-family
-  PCM. (A MultiPCM path exists in the source but is compiled out: it is Multi
-  32 hardware, which this repository does not build.)
-- Board devices: 315-5296 I/O, 93C46 EEPROM save/load, MSM6253 gun ADC,
-  µPD4701 trackball counters, 8255 PPI, timers/interrupt controller, and the
-  V25 protection path used by Golden Axe 2 and Arabian Fight.
+  PCM.
+- Board devices: 315-5296 I/O, 93C46 EEPROM save/load, MSM6253 gun/analogue
+  ADC, µPD4701 trackball counters, 8255 PPI, timers/interrupt controller, and
+  the V25 protection path used by Golden Axe II and Arabian Fight.
 - MiSTer integration: MRA-based ROM loading, 16-bit HPS transfers, Cyclone V
-  SDRAM for ROM regions, and the DE10-Nano DDR3 framebuffer for sprites. The
-  video OSD provides Normal, V-Integer, and HV-Integer HDMI scaling, plus an
-  optional core-side CRT Adjust for H-Size, H-Position, and V-Shift on native
-  15 kHz output.
+  SDRAM for ROM regions, and the DE10-Nano DDR3 framebuffer for sprites.
 
-## NEC V60 CPU
+## **Hardware emulated**
 
-`rtl/cpu/v60/s32_v60.sv` is a from-scratch, synthesizable NEC V60 core. System
-32 uses the µPD70616 V60 at about 16.108 MHz with a 16-bit external bus — a
-little-endian 32-bit CISC processor. The module also carries a parameterized
-µPD70632 V70 profile, which is unused here: the V70 is the Multi 32 CPU, and
-this repository builds System 32 only.
+| Hardware | Core implementation |
+| --- | --- |
+| NEC µPD70616 V60 | Synthesizable 32-bit CISC CPU with a 16-bit external bus, interrupts, traps and System 32 instruction coverage |
+| NEC V25 protection CPU | Real V25-compatible execution path and program/cache memories in `segas32v25` |
+| Sega 315-5385 | System controller, address mapping, interrupt sources and timers |
+| Sega 315-5386A | Object/sprite list processing, zoom and sprite framebuffer rendering |
+| Sega 315-5387 | Four tilemap layers, scrolling, zoom, row effects, text and bitmap paths |
+| Sega 315-5388 / 315-5242 boundary | Palette, priority mixing, shadows, fades, blending and RGB video output |
+| Sega 315-5296 | Per-game I/O, cabinet controls, service/test inputs and sound reset control |
+| Z80 sound board | Z80 CPU, ROM banking, shared RAM, interrupts and sound command path |
+| 2 × YM3438 | FM synthesis channels using the GPL JT12 implementation |
+| RF5C68-family PCM | Eight-channel PCM playback, wave RAM, panning, looping and sample-rate timing |
+| BR93C46 / 93C46 EEPROM | Serial read, write and erase behavior with MiSTer save/load support |
+| MSM6253 ADC | Descriptor-selected gun and analogue controls |
+| µPD4701 counters | Descriptor-selected three-channel trackball input for SegaSonic |
+| 8255 PPI | Descriptor-selected four-player input hardware |
+| Per-game boards | V25 dual-port RAM, dual-PCB communication, Air Rescue DSP responder and descriptor-selected protection responders |
 
-The implementation is a sequential micro-sequencer with a bounded prefetch
-queue and a small instruction-stream cache. It models the programmer-visible
-registers, banked interrupt stacks, PSW/system registers, traps and interrupts,
-full integer/bit/string/decimal instruction groups, effective-address modes,
-unaligned accesses, and V60↔Z80 synchronization. MMU paging and floating-point
-groups are intentionally outside the System 32 arcade profile; unsupported FP
-opcodes take the reserved-instruction path. Directed tests and differential
-traces against MAME cover the implemented arcade instruction set.
+## Credits and source acknowledgements
 
-## Core architecture and the V60 data path
+- **Meathax** — core integration, original System 32 RTL, MRA generator,
+  verification and MiSTer packaging.
+- **MAME developers** — the `segas32` driver, video, protection, EEPROM, V60,
+  RF5C68 and MultiPCM implementations used as the primary behavioral reference:
+  [MAME](https://github.com/mamedev/mame).
+- **Jamie Iles** — [s80x86](https://github.com/jamieiles/80x86), used as the
+  synthesizable CPU engine behind the NEC V25 wrapper. The pinned upstream
+  commit and corresponding source are documented in
+  `rtl/cpu/v25/s80x86/README.system32.md`.
+- **Jose Tejada Gomez / Jotego** — [JT12](https://github.com/jotego/jt12),
+  used for the YM3438-compatible FM cores.
+- **Daniel Wallner, MikeJ, Mike Johnson, TobiFlex, Sean Riddle and Sorgelig**
+  — contributors to the [T80 Z80 core](http://www.opencores.org/cvsweb.shtml/t80/)
+  used by the sound board.
+- **MiSTer-devel** — [Template_MiSTer](https://github.com/MiSTer-devel/Template_MiSTer),
+  MiSTer framework conventions, HPS I/O and MRA integration.
+- **Jotego / jtcores**, MiSTer S32X, MiSTer Irem M92 and WonderSwan MiSTer
+  contributors — architecture, CPU and memory-arbitration references
+  documented in `docs/reference-cores.md` and
+  `docs/v25-core-evaluation.md`; their RTL is not copied into this core.
+- **MegaCD RF5C164 contributors** — family-compatible PCM implementation
+  references for the RF5C68 model, as documented in `docs/DESIGN.md`.
+- **mister-devel/mra-tools-c** and MiSTer documentation contributors — MRA
+  format and downloader/framework conventions.
+- **furrtek / SiliconRE** — silicon reverse-engineering references for the
+  Sega 315-5242 and 315-5385 devices:
+  [SiliconRE](https://github.com/furrtek/SiliconRE).
+- **Sega System 32 schematic researchers**, including the schematics scan
+  credited to Nemesis1207, for board-level device and signal references.
+- **Umberto Parisi (rmonic79)**, with help from **Andrea Bogazzi (@asturur)**,
+  for the GPL CRT Adjust module used by the OSD geometry controls.
 
-The top level separates a `clk_sys` domain (CPU, bus, I/O, sound and most video)
-from a 2× `clk_ram` domain (SDRAM and sprite datapath). The generated PLL runs
-`clk_sys` at 48.317307 MHz, `clk_ram` at 96.634615 MHz, and the real V25 compute
-domain at 24.158653 MHz; fractional clock enables derive the original board
-rates. ROMs stream through the MiSTer HPS loader into
-SDRAM. The V60 bus decoder arbitrates work RAM, VRAM, palette, I/O, protection,
-sound and ROM accesses. Tilemaps and the sprite engine feed the priority mixer;
-sprite pixels are rendered into DDR3-backed line buffers so SDRAM ROM traffic
-cannot starve the display path.
+## License
 
-The ROM loader supports legacy fixed index-0 streams and optimized region MRAs.
-Current MRAs transfer only populated MAME regions on indexes 4–9, then send the
-64-byte board descriptor on index 0 as the final boot commit. This avoids up to
-16 MiB of padding per launch while keeping CPUs reset until loading is complete.
+The original project source is released under the GNU General Public License
+version 3 or later; see [LICENSE](LICENSE). Third-party components retain their
+own notices and licenses:
 
-The SDRAM byte map is: main CPU `0x000000`, sound CPU `0x200000`, tiles
-`0x600000`, PCM `0xA00000`, V25 program `0xE00000`, and sprites `0x1000000`.
-The loader preserves little-endian 16-bit HPS transfers and descrambles V25
-program addresses while writing them.
+- s80x86: GPL v3 or later, `rtl/cpu/v25/s80x86/COPYING`;
+- JT12: GPL v3, `rtl/audio/jt12/LICENSE`;
+- T80: permissive BSD-style terms in the source headers under `rtl/audio/T80`;
+- CRT Adjust: GPL v3 or later, as stated in `rtl/crt_adjust.sv`;
+- SiliconRE material: its accompanying license in
+  `docs/references/siliconre/315-5385/SiliconRE-LICENSE`.
+
+MAME and other linked reference projects remain under their respective
+licenses. Arcade ROMs are not included and remain the property of their
+respective copyright holders.
+
+## How to install
+
+### Manual installation
+
+1. Obtain the matching RBF and the MRA files.
+2. Put `segas32.rbf` and `segas32v25.rbf` in `_Arcade/cores/` on the MiSTer
+   SD card.
+3. Put the MRA files in `_Arcade/`.
+4. Install the required matching MAME ROM ZIPs, then launch the title from the
+   MiSTer arcade menu.
+
+### Automatic installation with Downloader
+
+Add this entry to `/media/fat/downloader.ini`:
+
+```ini
+[meathax/meatcores]
+db_url = https://raw.githubusercontent.com/meathax/meatcores/db/downloader_meathax_meatcores.zip
+```
+
+Then run **Update All** in Downloader to retrieve the cores and MRAs
+automatically.
 
 ## Building from source
 
 Quartus Prime Lite 17.0.2 Build 602 is the pinned toolchain. On Windows, point
-`QUARTUS_ROOT` at the installation and run the audited build driver:
+`QUARTUS_ROOT` at the installation and run the audited build drivers:
 
 ```bat
 set QUARTUS_ROOT=D:\Q17
@@ -102,46 +220,11 @@ tools\build-s32.bat
 tools\build-s32v25.bat
 ```
 
-The repository ships exactly two System 32 profiles:
-
-- `segas32.rbf` supports Holosseum, SegaSonic the Hedgehog, Spider-Man,
-  Slip Stream, Alien3, Air Rescue, Burning Rival, Dark Edge, Jurassic Park,
-  and Rad Rally. It compiles out the real V25 CPU, its ROM cache and dedicated
-  memories while retaining descriptor-selected standard peripherals including
-  the PPI, trackball, MSM6253 ADC, positional-gun conditioner, Air Rescue DSP
-  responder, dual-PCB bridge, generic protection, sprite, video and audio paths.
-  Alien3 and Jurassic Park use the same two-player left-analog-stick aiming
-  curve and ADC channel mapping, with natural directions: left/up moves the
-  crosshair left/up and right/down moves it right/down.
-  Alien3 alone exposes an `Alien 3 HUD Blend` OSD option. When enabled, it
-  combines the alternating P1/P2 health-bar sprite fields inside their HUD
-  rectangles; when disabled, sprite scanout remains the normal A/B framebuffer
-  output used by every other game.
-- `segas32v25.rbf` supports Golden Axe and Arabian Fight. It includes the real V25
-  execution core and selects the correct protection table and V60 cadence from
-  each MRA descriptor. Unrelated peripherals and all Multi 32 logic are
-  compiled out.
-
-Both wrappers preserve Quartus compilation databases for Smart Recompile,
-serialize builds through the repository lock, enforce the account-wide
-six-worker Fast Fit policy, run multicorner timing, and stage hash-verified
-RBFs under `releases/`.
-
-The audited driver takes an exclusive repository build lock, rejects other
-Quartus/Qsys compiler processes, validates the exact toolchain and host
-resources, cleans stale databases, regenerates the PLL, fingerprints all map
-inputs, retries only classified compiler crashes, and sweeps fitter seeds
-starting with the best archived seed (2). It runs multicorner timing and stages
-an RBF only when the map, fit, STA, assembler, input hashes, report freshness,
-seed, non-negative slack, and RBF freshness all agree. The optional
-`S32_FIT_SEEDS`, `S32_MAP_RETRIES`, and `S32_FIT_RETRIES` environment variables
-are range-checked and printed by preflight. A merely generated RBF is not
-considered deployable.
-
-The old Linux/Docker compile entrypoints fail fast because they cannot reproduce
-the qualified Quartus 17.0.2 Windows flow. Public CI performs source/profile
-checks and simulation only; release RBFs are produced locally through
-the matching dedicated build wrapper.
+The build wrapper serializes all Quartus/RBF work on the machine, including
+builds from separate worktrees. Keep each queued build in its own project copy
+so Quartus databases, generated IP, reports and release staging never overlap.
+When a seed becomes a timing best, the build also records per-corner full-path
+reports for the game, HDMI pixel and audio clocks.
 
 Useful checks that do not build an RBF are:
 
@@ -149,20 +232,3 @@ Useful checks that do not build an RBF are:
 bash verif/run_regression.sh
 python -m unittest discover -s verif -p "test_*.py"
 ```
-
-## Requirements and installation
-
-- MiSTer DE10-Nano with an SDRAM expansion (32 MB is sufficient for the
-  supported System 32 profiles).
-- A matching MAME ROM set. ROMs remain the user's responsibility and are not
-  included here.
-
-Copy `s32.rbf` and `s32v25.rbf` to `_Arcade/cores/` and the generated MRAs to
-`_Arcade/`, then launch a title from the MiSTer arcade menu.
-
-## Licence and credits
-
-The behavioral reference is MAME's `segas32` driver. The V25 execution core is
-vendored from the GPL s80x86 project; see that directory for its licence. Other
-RTL is original or carries its upstream licence header. Arcade ROMs remain the
-property of their respective owners.

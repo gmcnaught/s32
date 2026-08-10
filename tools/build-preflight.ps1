@@ -114,6 +114,9 @@ if ($ExpectedQuartusVersion -and $quartusVersion -ne $ExpectedQuartusVersion) {
     throw "Quartus version mismatch: expected $ExpectedQuartusVersion, found $quartusVersion in $QuartusRoot."
 }
 
+# Keep direct/preflight-only invocations safe too. Even a wrapper that owns
+# the mutex must reject a compiler that was started outside the wrapper: a
+# named mutex cannot detect an uncooperative legacy/manual Quartus process.
 $compilerNames = @(
     "quartus_map", "quartus_fit", "quartus_asm", "quartus_sta",
     "qsys-script", "qsys-generate"

@@ -38,6 +38,16 @@ not supported or emitted.
    databases, obey the eight-worker Fast Fit policy, and do not build merely
    to explore source. A build requires an explicit user request.
 
+## Quartus build isolation
+
+Only one Quartus/RBF build may run on this machine at a time. The build
+wrapper owns the machine-wide `Global\SegaS32QuartusBuild` mutex, and direct
+preflight invocations reject active Quartus/Qsys compiler processes. Separate
+worktrees or project copies are still required for any queued build so each
+one has its own `db`, `incremental_db`, `output_files`, generated PLL/IP files,
+build logs, provenance manifests, and release-staging directory. Never attach
+to, delete, clean, or overwrite another build's process or generated state.
+
 ## Required validation
 
 Source/profile routing:

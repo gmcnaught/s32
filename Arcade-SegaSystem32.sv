@@ -726,7 +726,7 @@ wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
 
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
-wire ce_pix_core, core_hs, core_vs, core_hb, core_vb, mode_416_active;
+wire ce_pix_core, core_hs, core_hb, core_vb, mode_416_active;
 wire signed [15:0] aud_l, aud_r;
 
 s32_core core (
