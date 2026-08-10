@@ -361,11 +361,12 @@ initial begin
     if (out_fd == 0)
         $fatal(1, "cannot open RTL framebuffer output %s", out_path);
 `ifdef S32_REPLAY_REAL_FB
-    // Read the physical work buffer selected by the production triple-buffer
-    // rotation, including the overrun-only third slot.
+    // Direct render swaps first, then targets the hidden member of the
+    // production A/B pair.
     for (out_y = 0; out_y < FB_HEIGHT; out_y = out_y + 1) begin
         for (out_x = 0; out_x < FB_WIDTH; out_x = out_x + 1) begin
-            out_word = (dut.work_buf << 15) + (out_y << 7) + (out_x >> 2);
+            out_word = ({1'b0, ~disp_buf[0]} << 15) +
+                       (out_y << 7) + (out_x >> 2);
             out_lane = out_x & 3;
             fb[out_y * FB_WIDTH + out_x] =
                 fb_model.ddr[out_word] >> (out_lane * 16);

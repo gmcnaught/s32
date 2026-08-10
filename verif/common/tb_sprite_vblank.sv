@@ -1,18 +1,15 @@
 //============================================================================
-// Sprite vblank edge-detect regression (audit R24 SP-8).
+// Sprite vblank/frame-boundary regression.
 //
 // On hardware the sprite engine runs on clk_ram (96.634615 MHz) while its vblank
 // input is the end-of-vblank pulse from s32_video, which is one clk_sys
-// (48.317307 MHz) wide — i.e. TWO consecutive clk_ram samples.  The R20 SP-3
-// "vblank seen mid-render" latch must treat that 2-cycle pulse as a SINGLE
-// frame event.  Before the edge-detect fix it re-latched the same pulse on its
-// second sample (the FSM had already left R_IDLE), producing a spurious second
-// erase/swap/render pass mid-frame — the sprite-buffer tear.
+// (48.317307 MHz) wide — i.e. TWO consecutive clk_ram samples. Treat that
+// pulse as one frame event. If another vblank arrives during a long render,
+// drop it: consuming it when the FSM eventually returns to idle would swap the
+// displayed A/B buffer partway through the visible raster.
 //
-// This bench drives the realistic 2-cycle pulse and asserts exactly one
-// rendering pass and one buffer swap per frame.  A 1-cycle pulse (the shape
-// every prior sprite bench used) is also checked, to prove the fix does not
-// regress the single-sample path.
+// This bench covers realistic 2-cycle pulses, the legacy 1-cycle pulse, and
+// an overrun whose next swap must wait for a new physical frame boundary.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -199,22 +196,32 @@ initial begin
         $display("  FAIL 1-wide vblank produced %0d buffer swaps (want 1)",
                  swap_edges - base_swap);
     end
-    // ---- Overrun path: a second frame event while erase/render is busy. ----
-    // The pending latch must preserve the second event without allocating a
-    // third physical framebuffer.
+    // ---- Overrun path: a frame event while erase/render is busy is dropped. ----
+    // It must not be replayed on return to idle because that would swap buffers
+    // in the middle of the visible raster. The next real vblank starts the next
+    // pass at a safe frame boundary.
     base_render = render_edges;
     base_swap = swap_edges;
     pulse_frame(2);
     wait (fbe_req === 1'b1);
     pulse_frame(2);
-    wait (render_edges - base_render == 2);
     wait (rendering === 1'b0);
     wait (fbw_busy === 1'b0);
     repeat (40) @(posedge clk);
-    if (swap_edges - base_swap !== 2) begin
+    if (render_edges - base_render !== 1) begin
         errors = errors + 1;
-        $display("  FAIL overrun path produced %0d swaps (want 2)",
+        $display("  FAIL overrun replayed a missed boundary: %0d passes (want 1)",
+                 render_edges - base_render);
+    end
+    if (swap_edges - base_swap !== 1) begin
+        errors = errors + 1;
+        $display("  FAIL overrun replayed a missed boundary: %0d swaps (want 1)",
                  swap_edges - base_swap);
+    end
+    pulse_and_settle(2);
+    if (render_edges - base_render !== 2 || swap_edges - base_swap !== 2) begin
+        errors = errors + 1;
+        $display("  FAIL next real boundary did not start the deferred frame");
     end
     if (errors == 0) $display("SPRITE VBLANK PASS");
     else             $display("SPRITE VBLANK FAIL (%0d errors)", errors);

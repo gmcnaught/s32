@@ -71,12 +71,10 @@ reg       erase_after_swap;         // combined command: swap before destructive
 reg       erase_buf_sel;            // A/B buffer selected for erase
 reg       erase_mon;                // Multi32 erase visits both monitors
 reg [15:0] post_vblank_count;
-reg        vblank_pending;          // audit R20 SP-3: vblank seen mid-render
 reg        vblank_d;                // edge-detect the end-of-vblank pulse
 // The video pulse is one clk_sys wide; on the 2x clk_ram domain it is
-// sampled high on two consecutive edges.  Treat only its rising edge as a new
-// frame event, or the SP-3 pending latch re-catches the same pulse and fires a
-// second full erase/swap/render pass mid-frame (the sprite-buffer tear).
+// sampled high on two consecutive edges. Treat only its rising edge as a new
+// frame event.
 wire       vblank_rise = vblank & ~vblank_d;
 
 always @(*) begin
@@ -259,7 +257,6 @@ always @(posedge clk) begin
         render_count <= 0; render_after_erase <= 0;
         erase_after_swap <= 0; erase_buf_sel <= 0;
         erase_mon <= 0; post_vblank_count <= 0;
-        vblank_pending <= 1'b0;         // audit R20 SP-3
         vblank_d <= 1'b0;
         jump_xoff <= 0; jump_yoff <= 0;
         // control regs power up cleared (auto swap mode) — leaving them
@@ -279,17 +276,13 @@ always @(posedge clk) begin
             ctl[ctl_addr] <= ctl_wdata;
         end
 
-        // audit R20 SP-3: a vblank pulse arriving while the FSM is still
-        // erasing/rendering (not R_IDLE) is otherwise dropped, delaying that
-        // frame's swap. Latch it and consume it on the next return to R_IDLE.
-        // MAME never misses because its render is instantaneous.  Qualify on the
-        // rising edge so the same 2-clk_ram-wide pulse that already launched the
-        // current sequence in R_IDLE is not re-latched as a second event.
-        if (vblank_rise && rs != R_IDLE) vblank_pending <= 1'b1;
-
+        // A render that overruns this boundary must finish into the hidden
+        // buffer and wait for the next real boundary. Replaying a missed
+        // vblank as soon as R_IDLE is reached can toggle disp_buf during the
+        // visible raster, exposing two different sprite frames across one
+        // screen (most visibly as Slip Stream's horizontal road cutoff).
         case (rs)
-        R_IDLE: if (vblank_rise || vblank_pending) begin
-            vblank_pending <= 1'b0;     // audit R20 SP-3: consume latched vblank
+        R_IDLE: if (vblank_rise) begin
             post_vblank_count <= POST_VBLANK_CYCLES;
             rs <= R_DELAY;
         end
