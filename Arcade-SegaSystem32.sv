@@ -624,8 +624,8 @@ assign adc_ch[7] = pulled_up_adc ? 8'hff : 8'h80;
 
 // Each controller's left stick is trackball velocity, not position. One
 // signed delta is injected per video frame. The shared VS edge detector
-// replaces the former 16-bit timer; the three converters are combinational
-// deadzone/subtract/shift logic with no RAM, DSP, multiplier or divider.
+// replaces the former 16-bit timer; the three converters use a small banded
+// nonlinear LUT with no state, RAM, DSP, multiplier or divider.
 reg core_vs_d = 1'b0;
 always @(posedge clk_sys) begin
     if (reset) core_vs_d <= 1'b0;

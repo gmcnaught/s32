@@ -28,12 +28,16 @@ module tb_trackball_stick;
 
     initial begin
         check(    0,    0,   0,   0);
-        check(   16,  -16,   0,   0);
-        check(   24,   24,  -1,   1);
-        check(  -24,  -24,   1,  -1);
-        check(  127,  127, -13,  13);
-        check( -127, -127,  13, -13);
-        check( -128, -128,  14, -14);
+        check(   15,  -15,   0,   0); // deadzone edge
+        check(   16,  -16,  -1,  -1);
+        check(   25,   25,  -2,   2); // about 20% stick
+        check(   51,   51,  -5,   5); // about 40% stick
+        check(   76,   76, -11,  11); // about 60% stick
+        check(  102,  102, -20,  20); // about 80% stick
+        check(  112,  112, -23,  23); // high-band ramp start
+        check(  127,  127, -30,  30); // maximum positive input
+        check( -127, -127,  30, -30); // sign symmetry and reversed X
+        check( -128, -128,  30, -30); // defensive negative saturation
 
         if (errors)
             $fatal(1, "trackball stick test failed with %0d errors", errors);

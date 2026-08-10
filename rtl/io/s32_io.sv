@@ -846,28 +846,44 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
-// MiSTer signed left-stick to SegaSonic trackball velocity. The 16-count
-// deadzone removes controller drift; subtract-and-slice gives a linear 0..14
-// count/frame response with no multiplier or divider. MAME reverses all three
-// Sonic X axes, while Y remains normal.
+// MiSTer signed left-stick to SegaSonic trackball velocity. A banded quadratic
+// approximation gives precise low-speed control and 30 counts/frame at the
+// edge, using only a small combinational LUT and one 3-bit high-band ramp: no
+// multiplier, divider, state, or RAM. MAME reverses all three Sonic X axes,
+// while Y remains normal.
 module s32_trackball_stick (
     input      [15:0] analog,       // {signed Y, signed X}, zero centred
     output signed [8:0] dx,
     output signed [8:0] dy
 );
 
-localparam [7:0] DEADZONE = 8'd16;
-
 function automatic signed [8:0] axis_velocity(input [7:0] raw);
-    reg signed [8:0] offset;
     reg        [7:0] magnitude;
-    reg        [7:0] adjusted;
+    reg        [4:0] speed;
 begin
-    offset    = {raw[7], raw};
     magnitude = raw[7] ? ((~raw) + 8'd1) : raw;
-    adjusted  = (magnitude > DEADZONE) ? magnitude - DEADZONE : 8'd0;
-    axis_velocity = offset[8] ? -$signed({4'b0000, adjusted[7:3]}) :
-                                $signed({4'b0000, adjusted[7:3]});
+
+    // Representative magnitudes: 16->1, 25->2, 51->5, 76->11,
+    // 102->20, 127->30. The otherwise-impossible magnitude 128 (-128 input)
+    // saturates to the same maximum instead of wrapping into the deadzone.
+    if (magnitude[7]) begin
+        speed = 5'd30;
+    end
+    else begin
+        case (magnitude[6:4])
+            3'd0: speed = 5'd0;                         //  0..15: deadzone
+            3'd1: speed = magnitude[3] ? 5'd2 : 5'd1;  // 16..31
+            3'd2: speed = 5'd3;                         // 32..47
+            3'd3: speed = 5'd5;                         // 48..63
+            3'd4: speed = 5'd11;                        // 64..79
+            3'd5: speed = 5'd15;                        // 80..95
+            3'd6: speed = 5'd20;                        // 96..111
+            3'd7: speed = 5'd23 + {2'b00, magnitude[3:1]}; // 112..127
+        endcase
+    end
+
+    axis_velocity = raw[7] ? -$signed({4'b0000, speed}) :
+                             $signed({4'b0000, speed});
 end
 endfunction
 

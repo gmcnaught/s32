@@ -45,7 +45,7 @@
       <part name="mpr-15871.ic25" crc="58eb10ae" map="21000000"/>
     </interleave>
   </rom>
-  <rom index="2">
+  <rom index="2" zip="alien3.zip|alien3j.zip" md5="none">
     <part name="93c45_eeprom.ic76" crc="6e1d9df3"/>
   </rom>
   <nvram index="3" size="128"/>

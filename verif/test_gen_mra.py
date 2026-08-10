@@ -1,9 +1,10 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS
+from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS, gen
 
 
 class BoardDescriptorTests(unittest.TestCase):
@@ -91,6 +92,55 @@ class ButtonMetadataTests(unittest.TestCase):
                           "Start", "Coin", "Test", "Service"])
         self.assertEqual(defaults.split(","),
                          ["A", "B", "X", "Start", "Select", "R", "L"])
+
+
+class EepromArchiveSourceTests(unittest.TestCase):
+    def generate_radr(self, setname: str, parent: str) -> ElementTree.Element:
+        data = {
+            "parent": parent,
+            "title": f"EEPROM source fixture {setname}",
+            "year": "1991",
+            "manu": "Sega",
+            "regions": [
+                {
+                    "region": "maincpu", "size": 1,
+                    "loads": [{
+                        "macro": "ROM_LOAD", "file": "program.bin",
+                        "offset": 0, "size": 1, "crc": "00000000",
+                    }],
+                },
+                {
+                    "region": "eeprom", "size": 0x80,
+                    "loads": [{
+                        "macro": "ROM_LOAD16_WORD",
+                        "file": "eeprom-radr.ic76",
+                        "offset": 0, "size": 0x80, "crc": "602032c6",
+                    }],
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(gen(setname, data, tmp))
+            path = next(Path(tmp).glob("*.mra"))
+            return ElementTree.parse(path).getroot()
+
+    def test_parent_and_clone_eeprom_roms_name_their_archives(self) -> None:
+        for setname, parent, expected_zip in (
+            ("radr", "", "radr.zip"),
+            ("radru", "radr", "radr.zip|radru.zip"),
+        ):
+            with self.subTest(setname=setname):
+                root = self.generate_radr(setname, parent)
+                eeprom = next(
+                    rom for rom in root.findall("rom")
+                    if rom.attrib["index"] == "2"
+                )
+                self.assertEqual(eeprom.attrib.get("zip"), expected_zip)
+                self.assertEqual(eeprom.attrib.get("md5"), "none")
+                self.assertEqual(
+                    eeprom.find("part").attrib,
+                    {"name": "eeprom-radr.ic76", "crc": "602032c6"},
+                )
 
 
 class OptimizedLayoutTests(unittest.TestCase):
