@@ -2,6 +2,36 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-10: restore busy-scene sprite throughput and completed ownership
+
+System 32's cached-pixel path is again the algebraically identical two-stage
+`R_PIXEL` -> `R_EMIT` pipeline.  A timing-oriented change had inserted
+`R_PIXEL_DATA` between them, charging every ordinary destination pixel three
+renderer clocks instead of two.  That 50% increase in pixel-stage work is
+load-dependent: quiet scenes remain inside a field, while dense object lists
+miss publication fields and make the entire sprite layer advance in steps.
+Cache misses, sprite-RAM reads, skipped-word END scans, zoom, clipping,
+priority and transparency retain their existing general paths and semantics.
+The focused regression includes a cached-pixel cycle budget so the extra
+per-pixel state cannot return silently.
+
+Scanout also uses a completed physical sprite-framebuffer selector separate
+from the CPU-visible logical A/B controller bit.  The renderer erases and draws
+into a hidden work buffer, waits for the final framebuffer flush, marks it ready
+at `R_DONE`, and publishes it at VBLANK start.  A third physical slot absorbs a
+remaining overrun without erasing, rendering into, or exposing the scanned
+buffer.  Both corrections are shared by both production profiles and are not
+game-gated.
+
+Hardware recordings from Jurassic Park and Rad Rally showed the causal shape:
+quiet/short sprite lists were smooth, while all trees, roadside objects, cars
+and dinosaurs in dense scenes stepped together.  Road/tile scanout continued
+smoothly, isolating the sprite renderer's field budget rather than V60 cadence
+or one object's transparency.  The overrun regression also requires the third
+slot and asserts that scanout cannot change until a complete field is
+published.  Quartus/RBF and post-fix MiSTer hardware verification remain
+pending.
+
 ## 2026-08-06: split back into two dedicated profiles
 
 The single merged `s32` profile (2026-08-05 below) is retired in favor of two

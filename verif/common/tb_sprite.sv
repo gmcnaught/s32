@@ -16,6 +16,7 @@
 //  14. latched sprite-control global X/Y flip mirrors the framebuffer scan
 //  15. self-referential JUMP is bounded to 8192 commands (no frame freeze)
 //      saturating command counters without changing the renderer path
+//  16. cached pixels retain the two-clock R_PIXEL/R_EMIT throughput contract
 //============================================================================
 `timescale 1ns/1ps
 
@@ -91,6 +92,7 @@ wire rendering;
 
 s32_sprite #(.POST_VBLANK_CYCLES(4)) dut (
     .clk(clk), .rst(rst), .is_multi32(is_multi32),
+    .present(1'b0),
     .verify_srom(1'b0),
     .srom_bank_mask(srom_bank_mask),
     .vblank(vblank),
@@ -103,7 +105,7 @@ s32_sprite #(.POST_VBLANK_CYCLES(4)) dut (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_busy(1'b0),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .disp_buf()
+    .disp_buf(), .scan_buf(), .scan_buf_prev()
 );
 assign rendering = dut.rs != 0;
 
@@ -121,9 +123,14 @@ task wctl(input [2:0] a, input [7:0] d);
 endtask
 
 integer errors = 0;
+integer sim_cycles = 0;
+integer last_frame_cycles = 0;
+always @(posedge clk) sim_cycles = sim_cycles + 1;
 // run one frame: pulse vblank, wait for the walker to finish
 task frame;
     integer k;
+    integer frame_start_cycles;
+    frame_start_cycles = sim_cycles;
     for (k = 0; k < 512; k = k + 1) begin
         fbcap[k] = 16'hFFFF; fbsh[k] = 0; fbycap[k] = 8'hff;
     end
@@ -154,6 +161,7 @@ task frame;
     wait (rendering === 1'b1);
     wait (rendering === 1'b0);
     repeat (8) @(posedge clk);
+    last_frame_cycles = sim_cycles - frame_start_cycles;
 endtask
 
 task check(input [8:0] x, input [15:0] want);
@@ -199,6 +207,15 @@ initial begin
     entry(0, W0_PLAIN, W1_1x1, 16'h0001, 16'h0008, 16'd10, 16'd100, 16'h0000, COLOR);
     entry(1, 16'hC000, 0,0,0,0,0,0,0);
     frame;
+    // The timing-oriented R_PIXEL_DATA regression made this exact fixture take
+    // 793 clocks by charging an extra state to all eight cached pixels.  Keep
+    // a little harness-edge tolerance while requiring the restored two-stage
+    // production path (785 clocks in this model).
+    if (last_frame_cycles > 789) begin
+        errors = errors + 1;
+        $display("  FAIL cached-pixel throughput cycles=%0d want<=789",
+                 last_frame_cycles);
+    end
     check(100, 16'h8101); check(101, 16'h8102); check(102, 16'h8103);
     check(103, 16'h8104); check(104, 16'h8105); check(105, 16'h8106);
     check(106, 16'h8107); check(107, 16'h8108);

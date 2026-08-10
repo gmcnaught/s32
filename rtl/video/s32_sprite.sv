@@ -2,8 +2,9 @@
 //  System 32 object/sprite engine — 315-5386A
 //  (DESIGN.md §6.3/§6.4, Appendix C.6/C.7)
 //  Walks the sprite command list in sprite RAM, renders scaled sprites into
-//  the off-chip framebuffer via s32_fb_if. Double-buffered; swap/erase per
-//  control regs, latched at swap exactly like m_sprite_control_latched.
+//  the off-chip framebuffer via s32_fb_if. CPU-visible A/B control is paired
+//  with completed-frame physical rotation; swap/erase registers latch exactly
+//  like m_sprite_control_latched.
 //
 //  Sprite list entry (8 words) — DESIGN.md §6.3.
 //  Framebuffer pixel = 0x8000 | color | pen ; shadow clears bit15.
@@ -22,6 +23,7 @@ module s32_sprite #(
     input       [1:0] srom_bank_mask,
 
     // frame control
+    input             present,      // start-of-vblank: publish completed physical frame
     input             verify_srom,     // GA2: confirm repeated SDRAM bursts agree
     input             vblank,       // end-of-vblank pulse (1 clk_sys wide =
                                     // 2 clk_ram samples; edge-detected below)
@@ -58,7 +60,9 @@ module s32_sprite #(
     output reg  [7:0] fb_er_y,
     input             fb_er_ack,
 
-    output reg  [1:0] disp_buf      // ordinary A/B framebuffer selector
+    output reg  [1:0] disp_buf,     // CPU-visible logical A/B selector
+    output reg  [1:0] scan_buf,     // completed physical buffer used by scanout
+    output reg  [1:0] scan_buf_prev // preceding completed buffer for HUD blend
 
 );
 
@@ -68,16 +72,41 @@ reg [7:0] ctl_latched [0:7];
 reg       render_count;             // MAME m_sprite_render_count (0/1)
 reg       render_after_erase;       // combined command: render after hidden erase
 reg       erase_after_swap;         // combined command: swap before destructive clear
-reg       erase_buf_sel;            // A/B buffer selected for erase
+reg [1:0] erase_buf_sel;            // physical buffer selected for erase
 reg       erase_mon;                // Multi32 erase visits both monitors
+reg [1:0] work_buf;                 // hidden System 32 erase/render target
+reg [1:0] ready_buf;                // completed frame awaiting vblank publication
+reg       ready_valid;
+reg       publish_on_done;          // current command produces a publishable frame
 reg [15:0] post_vblank_count;
 reg        vblank_pending;          // audit R20 SP-3: vblank seen mid-render
 reg        vblank_d;                // edge-detect the end-of-vblank pulse
+reg        present_d;               // edge-detect the start-of-vblank pulse
 // The video pulse is one clk_sys wide; on the 2x clk_ram domain it is
 // sampled high on two consecutive edges.  Treat only its rising edge as a new
 // frame event, or the SP-3 pending latch re-catches the same pulse and fires a
 // second full erase/swap/render pass mid-frame (the sprite-buffer tear).
 wire       vblank_rise = vblank & ~vblank_d;
+wire       present_rise = present & ~present_d;
+
+// The serialized FPGA renderer can overrun a field in sprite-heavy scenes.
+// System 32 leaves framebuffer slots 2/3 unused by the original A/B mapping,
+// so use slot 2 as a third physical buffer.  Never select the scanned buffer
+// or a completed buffer waiting to be published as the next work target.
+function automatic [1:0] choose_work_buf(
+    input [1:0] scan,
+    input [1:0] ready,
+    input       valid
+);
+    begin
+        if (scan != 2'd0 && (!valid || ready != 2'd0))
+            choose_work_buf = 2'd0;
+        else if (scan != 2'd1 && (!valid || ready != 2'd1))
+            choose_work_buf = 2'd1;
+        else
+            choose_work_buf = 2'd2;
+    end
+endfunction
 
 always @(*) begin
     case (ctl_raddr)
@@ -107,7 +136,7 @@ typedef enum logic [4:0] {
     R_ROW, R_ROWDATA, R_ROWDATAW,
     R_RAMDATA, R_RAMDATAP, R_RAMDATAW,
     R_PIXEL, R_EMIT, R_SCAN,
-    R_PIXEL_DATA, R_DONE, R_DELAY,
+    R_DONE, R_DELAY,
     R_ROM_GAP, R_ROM_VERIFY, R_ROM_VERIFYW, R_ROM_RETRY
 } rst_t;
 `ifdef S32_PROFILE_STANDARD
@@ -199,7 +228,6 @@ reg        [9:0]  pixel_sx_px;
 reg        [2:0]  pixel_piw, pixel_piw_last;
 reg        [9:0]  pixel_wordi;
 reg        [7:0]  pixel_pen8;
-reg        [23:0] pixel_byteaddr;
 reg        [23:0] scan_byteaddr;
 
 // Width is latched at buffer swap; a live write cannot alter this pass.
@@ -250,6 +278,8 @@ always @(posedge clk) begin
     if (rst) begin
         rs <= R_IDLE;
         disp_buf <= 2'b00;
+        scan_buf <= 2'b00;
+        scan_buf_prev <= 2'b00;
         srom_verify_data <= 128'd0;
         srom_retry_count <= 16'd0;
         list_count <= 0;
@@ -259,8 +289,13 @@ always @(posedge clk) begin
         render_count <= 0; render_after_erase <= 0;
         erase_after_swap <= 0; erase_buf_sel <= 0;
         erase_mon <= 0; post_vblank_count <= 0;
+        work_buf <= 2'd1;
+        ready_buf <= 2'd0;
+        ready_valid <= 1'b0;
+        publish_on_done <= 1'b0;
         vblank_pending <= 1'b0;         // audit R20 SP-3
         vblank_d <= 1'b0;
+        present_d <= 1'b0;
         jump_xoff <= 0; jump_yoff <= 0;
         // control regs power up cleared (auto swap mode) — leaving them
         // uninitialized stalls the walker in R_IDLE until the game writes them
@@ -273,10 +308,20 @@ always @(posedge clk) begin
         fb_wr_valid <= 0;
         fb_wr_end   <= 0;
         vblank_d    <= vblank;
+        present_d   <= present;
 
         // CPU control writes
         if (ctl_we) begin
             ctl[ctl_addr] <= ctl_wdata;
+        end
+
+        // Keep logical controller timing separate from physical ownership.
+        // Only a frame that reached R_DONE may become visible, and publication
+        // occurs at the raster boundary before the line-0 framebuffer fetch.
+        if (present_rise && !is_multi32 && ready_valid) begin
+            scan_buf_prev <= scan_buf;
+            scan_buf <= ready_buf;
+            ready_valid <= 1'b0;
         end
 
         // audit R20 SP-3: a vblank pulse arriving while the FSM is still
@@ -320,20 +365,29 @@ always @(posedge clk) begin
             end
             ctl[0] <= 0;
             if (command == 2'b11) begin
-                // Publish the completed back buffer first, then clear the old
-                // front buffer while it is hidden.  The logical result is the
-                // same as MAME's instantaneous erase/swap, without exposing a
-                // partially-cleared display while DDR erase takes real time.
+                // Toggle the logical controller, then clear/render a hidden
+                // physical buffer. Scanout changes only after R_DONE.
                 erase_after_swap <= 1'b1;
                 render_after_erase <= 1'b0;
                 rs <= R_SWAP;
             end
             else if (command[1]) begin
+                logic [1:0] erase_work;
                 render_after_erase <= 1'b0;
                 erase_after_swap <= 1'b0;
                 fb_er_y <= 0;
                 erase_mon <= 1'b0;
-                erase_buf_sel <= disp_buf[0];
+                if (is_multi32) begin
+                    publish_on_done <= 1'b0;
+                    erase_buf_sel <= {1'b0, disp_buf[0]};
+                end
+                else begin
+                    erase_work = choose_work_buf(scan_buf, ready_buf,
+                                                 ready_valid);
+                    work_buf <= erase_work;
+                    erase_buf_sel <= erase_work;
+                    publish_on_done <= 1'b1;
+                end
                 rs <= R_ERASE;
             end
             else if (command[0]) begin
@@ -345,11 +399,21 @@ always @(posedge clk) begin
         end
 
         R_SWAP: begin
+            logic [1:0] next_work;
+            next_work = choose_work_buf(scan_buf, ready_buf, ready_valid);
             disp_buf <= {1'b0, ~disp_buf[0]}; // bit0 is the sole A/B selector
+            publish_on_done <= 1'b1;
+            if (is_multi32)
+                scan_buf <= {1'b0, ~disp_buf[0]};
+            else begin
+                work_buf <= next_work;
+                erase_buf_sel <= next_work;
+            end
             for (int i = 0; i < 8; i++) ctl_latched[i] <= ctl[i];
             ctl[0] <= 0;
             if (erase_after_swap) begin
-                erase_buf_sel <= disp_buf[0];
+                if (is_multi32)
+                    erase_buf_sel <= {1'b0, disp_buf[0]};
                 erase_after_swap <= 1'b0;
                 render_after_erase <= 1'b1;
                 fb_er_y <= 8'd0;
@@ -372,7 +436,8 @@ always @(posedge clk) begin
         end
         R_ERASE: begin
             fb_er_req <= 1'b1;
-            fb_er_buf <= {erase_mon, erase_buf_sel};
+            fb_er_buf <= is_multi32 ? {erase_mon, erase_buf_sel[0]}
+                                    : erase_buf_sel;
             rs <= R_ERASEW;
         end
         R_ERASEW: if (fb_er_ack) begin
@@ -387,7 +452,8 @@ always @(posedge clk) begin
                 end
                 else begin
                     render_after_erase <= 1'b0;
-                    rs <= render_after_erase ? R_RENDER : R_DONE;
+                    if (render_after_erase) rs <= R_RENDER;
+                    else                    rs <= R_DONE;
                 end
             end
             else begin
@@ -421,6 +487,7 @@ always @(posedge clk) begin
             if (list_count == 14'd8192) begin
                 // Bounded-list overdraw: abandon this frame and return to
                 // R_IDLE so the next vblank can start a fresh sprite pass.
+                publish_on_done <= 1'b0;
                 rs <= R_DONE;
             end
             else begin
@@ -513,7 +580,8 @@ always @(posedge clk) begin
         R_SCALE: if (scale_done) begin
             ystep <= scale_yquot;
             xstep <= scale_xquot;
-            rs <= d_ind ? R_INDTAB : R_ROW;
+            if (d_ind) rs <= R_INDTAB;
+            else       rs <= R_ROW;
         end
 
         // indirect palette table load (inline or spriteram)
@@ -565,7 +633,7 @@ always @(posedge clk) begin
                 do_clipout_row <= clipout_en && scry >= $signed(cout_t)
                                              && scry <= $signed(cout_b);
                 fb_wr_start <= 1'b1;
-                fb_wr_buf <= {d_mon, ~disp_buf[0]};
+                fb_wr_buf <= is_multi32 ? {d_mon, ~disp_buf[0]} : work_buf;
                 // MAME applies latched controller flip while scanning the
                 // displayed sprite framebuffer.  Mirroring writes into the
                 // back buffer is equivalent and keeps the framebuffer read
@@ -669,6 +737,7 @@ always @(posedge clk) begin
             logic [2:0]  piw, piw_last;// position within the 32-bit word
             logic [9:0]  wordi;        // source 32-bit word index
             logic [23:0] byteaddr;
+            logic [23:4] need;
             logic        scan_pending;
             logic signed [15:0] clip_x_min, clip_x_max;
 
@@ -684,6 +753,8 @@ always @(posedge clk) begin
             wordi    = d_bpp8 ? {2'b0, sx_px[9:2]} : {3'b0, sx_px[9:3]};
             byteaddr = row_byte_base
                      + (d_bpp8 ? {14'b0, sx_px} : {15'b0, sx_px[9:1]});
+            need = d_fromram ? {7'b0, byteaddr[16:4]}
+                             : {d_bank_eff, byteaddr[21:4]};
             scan_pending = end_scan_word < wordi;
 
             // MAME clips the trailing xtarget before its source loop. Keep
@@ -707,14 +778,29 @@ always @(posedge clk) begin
                                + {12'b0, end_scan_word, 2'b00};
                 rs <= R_SCAN;
             end
+            else if (!rowtag_v || need != rowtag) begin
+                rowbase <= need;
+                if (d_fromram) begin
+                    ram_fetch_base <= {byteaddr[16:4], 3'b000};
+                    rs <= R_RAMDATA;
+                end
+                else rs <= R_ROWDATA;
+            end
             else begin
+                // Ordinary cached pixels use the original two-stage pipeline:
+                // R_PIXEL selects/registers the source byte and R_EMIT applies
+                // pen/clip/transparency semantics.  The added R_PIXEL_DATA
+                // state made every destination pixel take three clocks and
+                // pushed sprite-heavy games beyond their per-field budget.
+                // Cache misses and skipped-word END scans retain their fully
+                // general paths above and in R_SCAN.
                 pixel_scrx     <= scrx;
                 pixel_sx_px    <= sx_px;
                 pixel_piw      <= piw;
                 pixel_piw_last <= piw_last;
                 pixel_wordi    <= wordi;
-                pixel_byteaddr <= byteaddr;
-                rs <= R_PIXEL_DATA;
+                pixel_pen8     <= pixrow[{byteaddr[3:0], 3'b000} +: 8];
+                rs <= R_EMIT;
             end
         end
 
@@ -750,26 +836,6 @@ always @(posedge clk) begin
             end
         end
 
-        // Cache-check and register the selected source byte. Separating this
-        // 16:1 mux from xacc/byte-address calculation removes the remaining
-        // accumulator-to-pen critical path. R_EMIT remains the output stage.
-        R_PIXEL_DATA: begin
-            logic [23:4] need;
-            need = d_fromram ? {7'b0, pixel_byteaddr[16:4]}
-                             : {d_bank_eff, pixel_byteaddr[21:4]};
-            if (!rowtag_v || need != rowtag) begin
-                rowbase <= need;
-                if (d_fromram) begin
-                    ram_fetch_base <= {pixel_byteaddr[16:4], 3'b000};
-                    rs <= R_RAMDATA;
-                end
-                else rs <= R_ROWDATA;
-            end
-            else begin
-                pixel_pen8 <= pixrow[{pixel_byteaddr[3:0], 3'b000} +: 8];
-                rs <= R_EMIT;
-            end
-        end
         R_EMIT: begin
             logic [3:0]  pen4;
             logic [7:0]  pen8, pix, trans_now;
@@ -828,7 +894,21 @@ always @(posedge clk) begin
         end
 
         R_DONE: begin
-            rs <= R_IDLE;
+            // The final run can still be draining through s32_fb_if after the
+            // list END has been decoded.  Do not transfer buffer ownership
+            // until that write is committed; otherwise the nominally ready
+            // frame can still change underneath a following publication.
+            if (!fb_busy) begin
+                // A later completed frame may supersede an older unpresented
+                // one, but an incomplete frame can never be scanned or written
+                // in place.
+                if (!is_multi32 && publish_on_done) begin
+                    ready_buf <= work_buf;
+                    ready_valid <= 1'b1;
+                end
+                publish_on_done <= 1'b0;
+                rs <= R_IDLE;
+            end
         end
         default: rs <= R_IDLE;
         endcase

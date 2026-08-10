@@ -659,6 +659,8 @@ assign sdr_p1_addr = SDR_TILES_BASE[24:3] + {3'b000, tile_rom_addr};
 // sprite engine
 wire [7:0] sprctl_q;
 wire [1:0] disp_buf;
+wire [1:0] spr_scan_buf;
+wire [1:0] spr_scan_buf_prev;
 s32_sprite #(
 `ifdef S32_REAL_V25
     .VERIFY_SROM(1'b1)
@@ -671,7 +673,9 @@ s32_sprite #(
     // Old MRAs predate bank metadata and therefore retain the original
     // four-bank address space. New descriptors mirror 4/8 MiB ROMs exactly.
     .srom_bank_mask(cfg_sprite_bank_valid ? cfg_sprite_bank_mask : 2'b11),
-    .vblank(vbl_end),
+    // Logical swap/render remains 50 us after vblank end. Completed physical
+    // frames publish at vblank start so scanout never sees an in-flight buffer.
+    .present(vbl_start), .vblank(vbl_end),
     .ctl_we(wr_stb && m_we && sel_sprctl && m_be[0]),
     .ctl_addr(A[3:1]), .ctl_wdata(m_wdata[7:0]),
     .ctl_rdata(sprctl_q), .ctl_raddr(A[3:1]),
@@ -684,7 +688,8 @@ s32_sprite #(
     .fb_wr_shadow(fb_wr_shadow), .fb_busy(fb_wr_busy),
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf), .fb_er_y(fb_er_y),
     .fb_er_ack(fb_er_ack),
-    .disp_buf(disp_buf)
+    .disp_buf(disp_buf), .scan_buf(spr_scan_buf),
+    .scan_buf_prev(spr_scan_buf_prev)
 );
 assign sdr_p2_addr[24] = 1'b1;   // sprites region base 0x1000000
 
@@ -736,8 +741,8 @@ always @(posedge clk_ram) begin
             // Ordinary System 32 A/B scanout. Alien 3's optional HUD effect
             // also fetches the hidden A/B buffer, but only for its two small
             // HUD rectangles and never changes renderer buffer ownership.
-            fb_rd_buf_r <= disp_buf;
-            fb_rd_blend_buf_r <= {1'b0, ~disp_buf[0]};
+            fb_rd_buf_r <= spr_scan_buf;
+            fb_rd_blend_buf_r <= spr_scan_buf_prev;
             fb_rd_blend_r <= alien3_hud_blend && fb_next_is_alien3_hud;
             // CRT lines are 0..261. Truncating line 261 before adding produced
             // line 6 instead of the next frame's line 0.

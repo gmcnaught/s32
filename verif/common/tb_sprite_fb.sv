@@ -43,11 +43,14 @@ wire        fbe_req, fbe_ack;
 wire [1:0]  fbe_buf;
 wire [7:0]  fbe_y;
 wire [1:0]  disp_buf;
+wire [1:0]  scan_buf;
 wire        rendering;
 
 reg vblank = 0;
+reg present = 0;
 s32_sprite sprite (
     .clk(clk), .rst(rst), .is_multi32(1'b0),
+    .present(present),
     .verify_srom(1'b0),
     .srom_bank_mask(2'b11),
     .vblank(vblank),
@@ -61,7 +64,8 @@ s32_sprite sprite (
     .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y),
-    .fb_er_ack(fbe_ack), .disp_buf(disp_buf)
+    .fb_er_ack(fbe_ack), .disp_buf(disp_buf), .scan_buf(scan_buf),
+    .scan_buf_prev()
 );
 assign rendering = sprite.rs != 0;
 
@@ -169,6 +173,10 @@ endtask
 
 task run_frame(input [1:0] expected_back_buf);
     integer x;
+    // Publish the prior completed frame at vblank start, then launch the next
+    // logical erase/swap/render at vblank end.
+    @(posedge clk); present <= 1'b1;
+    @(posedge clk); present <= 1'b0;
     @(posedge clk); vblank <= 1'b1;
     @(posedge clk); vblank <= 1'b0;
     wait (rendering === 1'b1);
@@ -196,11 +204,11 @@ initial begin
     rst <= 1'b0;
     repeat (4) @(posedge clk);
 
-    // Vanilla System 32 swaps the visible A/B selector, erases the old front,
-    // then renders the next field into that old front: 0,1,0 from reset.
-    run_frame(2'd0);
+    // Physical scanout and logical A/B ownership are separate. The first
+    // hidden render uses slot 1, then publication rotates work safely.
     run_frame(2'd1);
     run_frame(2'd0);
+    run_frame(2'd1);
 
     if (write_accepts < (3 * 224 * 128)) begin
         errors = errors + 1;
