@@ -22,6 +22,25 @@ class CloneMraRomsetTests(unittest.TestCase):
                                  f"{parent}.zip|{setname}.zip")
         self.assertGreater(clone_count, 0)
 
+    def test_every_external_part_has_an_archive_source(self) -> None:
+        """Named files must resolve from this rom or from the part itself."""
+        mra_dir = Path(__file__).parents[1] / "mra"
+        checked = 0
+        for path in sorted(mra_dir.glob("*.mra")):
+            root = ElementTree.parse(path).getroot()
+            for rom in root.findall("rom"):
+                rom_zip = rom.attrib.get("zip")
+                for part in rom.iter("part"):
+                    if "name" not in part.attrib:
+                        continue
+                    checked += 1
+                    self.assertTrue(
+                        rom_zip or part.attrib.get("zip"),
+                        f"{path.name}: index {rom.attrib['index']} part "
+                        f"{part.attrib['name']} has no zip source",
+                    )
+        self.assertGreater(checked, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

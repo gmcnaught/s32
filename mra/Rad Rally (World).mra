@@ -55,7 +55,7 @@
       <part name="mpr-13518.ic17" crc="9ea4b15d" map="10000000"/>
     </interleave>
   </rom>
-  <rom index="2">
+  <rom index="2" zip="radr.zip" md5="none">
     <part name="eeprom-radr.ic76" crc="602032c6"/>
   </rom>
   <nvram index="3" size="128"/>

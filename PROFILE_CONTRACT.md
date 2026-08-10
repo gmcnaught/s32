@@ -81,7 +81,7 @@ shared ce-gated V60 fetch boundary and never selects a game or RBF.
 |---|---:|---:|
 | Shared V60, video, sprite, audio, I/O, loader, and dedicated V60 ROM cache | yes | yes |
 | MSM6253 ADC | no (`GAME_ONLY` tie-off; neither V25 game has an analog board) | yes, descriptor-driven for Slip Stream (`ANALOG_DRIVING`); right-stick up/down drive accelerator/brake, A/B are full-scale digital fallbacks, and X toggles gear; inactive games do not select the device |
-| Trackball (`s32_upd4701`) | no (no game here has one) | yes, descriptor-driven (`GAME_ONLY_STD`); all three Sonic players use frame-paced left-stick velocity and exact action/start/coin wiring |
+| Trackball (`s32_upd4701`) | no (no game here has one) | yes, descriptor-driven (`GAME_ONLY_STD`); all three Sonic players use frame-paced nonlinear left-stick velocity (15-count deadzone, 30 counts/frame at full deflection) and exact action/start/coin wiring |
 | Generic protection HLE (`s32_prot_hle`) | no (both games are `PROT_NONE`) | yes (`GAME_ONLY_STD`; descriptor-selected Sonic/Dark Edge paths) |
 | Burning Rival / Air Rescue DSP responders and dual-PCB bridge | no | yes, descriptor-gated for `brival`/`arescue` |
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_REAL_V25=1`), enabled per-game by the descriptor's `has_v25` bit | not compiled in at all; HLE responder `s32_v25` only |

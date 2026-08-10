@@ -406,7 +406,11 @@ def gen(setname, data, outdir):
     # Defaults precede index 0 so the descriptor is the final boot commit.
     ee = regions.get("eeprom")
     if ee and ee["loads"]:
-        lines.append('  <rom index="2">')
+        # Every external part needs an archive source on its own rom/part
+        # element. Archive selection is not inherited from earlier region
+        # downloads, so omitting zip here makes MiSTer report the EEPROM as a
+        # missing loose file even when it is present in the MAME set archive.
+        lines.append(f'  <rom index="2" zip="{rom_zips}" md5="none">')
         lines.append(f'    <part name="{escape(ee["loads"][0]["file"])}" crc="{ee["loads"][0]["crc"]}"/>')
         lines.append('  </rom>')
     lines.append('  <nvram index="3" size="128"/>')
