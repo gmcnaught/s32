@@ -2,8 +2,11 @@ import unittest
 
 from verif.reference.s32_mixer_ref import (
     BACKGROUND,
+    BITMAP,
     NBG0,
+    NBG1,
     SPRITE,
+    TEXT,
     mix_pixel,
     sprite_blend_mask,
     sprite_group_params,
@@ -20,6 +23,8 @@ def palette(index: int) -> int:
     return {
         0x001: 0x7FFF,
         0x002: 0x2000,
+        0x020: 0x03E0,
+        0x030: 0x001F,
         0x200: 0x000F,
     }.get(index, 0)
 
@@ -67,6 +72,79 @@ class MixerReferenceTests(unittest.TestCase):
         self.assertEqual(result.partner, SPRITE)
         self.assertTrue(result.blended)
         self.assertEqual(result.rgb, 0x787898)
+
+    def test_opaque_zero_is_only_a_backdrop_fallback(self) -> None:
+        regs = blank_regs()
+        regs[0x12] = 0x000F
+        pixels = [0, 0, 0x2020, 0, 0, 0]
+
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, NBG1)
+        self.assertEqual(result.first_palette_index, 0x020)
+
+        regs[0x15] = 0x0001
+        pixels[BITMAP] = 0x2002
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, BITMAP)
+
+        pixels[BITMAP] = 0
+        regs[0x15] = 0
+        regs[0x01] = 0x0001
+        result = mix_pixel(regs, pixels, 0x8001, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, SPRITE)
+
+        regs[0x01] = 0
+        regs[0x10] = 0x0001
+        pixels[TEXT] = 0x2001
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, TEXT)
+
+        pixels[TEXT] = 0
+        regs[0x10] = 0
+        regs[0x11] = 0x0001
+        pixels[NBG0] = 0x2001
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, NBG0)
+
+        pixels[NBG0] = 0
+        result = mix_pixel(regs, pixels, 0xFFFF, 1 << NBG1, 0x0200, 0, palette)
+        self.assertEqual(result.winner, BACKGROUND)
+        regs[0x12] = 0
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, BACKGROUND)
+
+    def test_opaque_zero_uses_fixed_nbg_rank_and_blends(self) -> None:
+        regs = blank_regs()
+        regs[0x11] = 0x0001
+        regs[0x12] = 0x000F
+        regs[0x14] = 0x000F
+        pixels = [0, 0x2030, 0, 0, 0x2020, 0]
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, NBG0)
+        self.assertEqual(result.first_palette_index, 0x030)
+
+        # Normal NBG0 blends with fallback NBG1.
+        regs[0x11] = 0x000F
+        regs[0x14] = 0
+        regs[0x19] = 0x0100
+        regs[0x27] = 0x0B00
+        pixels = [0, 0x2001, 0x2020, 0, 0, 0]
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, NBG0)
+        self.assertEqual(result.partner, NBG1)
+        self.assertTrue(result.blended)
+        self.assertEqual(result.rgb, 0x78F878)
+
+        # Fallback NBG1 blends with the backdrop when no real pixel exists.
+        regs[0x11] = 0
+        regs[0x19] = 0
+        regs[0x1A] = 0x2000
+        pixels[NBG0] = 0
+        result = mix_pixel(regs, pixels, 0xFFFF, 0, 0x0200, 0, palette)
+        self.assertEqual(result.winner, NBG1)
+        self.assertEqual(result.partner, BACKGROUND)
+        self.assertTrue(result.blended)
+        self.assertEqual(result.rgb, 0x387800)
 
     def test_all_sprite_group_modes_and_blend_encodings(self) -> None:
         self.assertEqual([sprite_group_params(mode) for mode in range(16)], [

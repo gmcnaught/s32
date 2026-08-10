@@ -9,6 +9,7 @@
 //  7. all four color-offset modes select bank 0/1/none correctly
 //  8. backdrop static/line-color indices come from VRAM $1FF5E, not mixer $5E
 //  9. offset-before-blend arithmetic and both palette operands are phase-safe
+// 10. $1FF8E NBG pen-0 pixels are backdrop fallbacks, never normal-priority
 //============================================================================
 `timescale 1ns/1ps
 
@@ -46,6 +47,7 @@ reg  [13:0] lb_wpix = 0;
 reg         lb_bank = 0;
 reg  [15:0] spr_pix = 16'hffff;
 reg  [15:0] bg_ctrl = 16'h0000;
+reg   [5:0] layer_off = 6'b000000;
 wire [23:0] rgb;
 reg         rst = 1;
 wire [13:0] px_text, px_nbg0, px_nbg1, px_nbg2, px_nbg3, px_bmp;
@@ -65,7 +67,7 @@ s32_mixer mix (
     .reg_rdata(), .reg_raddr(6'h0), .reg_r4e(),
     .disp_x(disp_x), .disp_y(disp_y), .disp_active(1'b1), .display_en(1'b1),
     .flip_y(1'b0),
-    .layer_off(6'b000000), .bg_ctrl(bg_ctrl),
+    .layer_off(layer_off), .bg_ctrl(bg_ctrl),
     .px_text(px_text), .px_nbg0(px_nbg0), .px_nbg1(px_nbg1),
     .px_nbg2(px_nbg2), .px_nbg3(px_nbg3), .px_bmp(px_bmp),
     .spr_pix(spr_pix),
@@ -142,7 +144,9 @@ initial begin
     wpal(15'h0001, 16'h7FFF);
     wpal(15'h0002, 16'h2000);          // B=8
     wpal(15'h0003, 16'h4210);          // B=G=R=16
+    wpal(15'h0020, 16'h03E0);          // G=31 (opaque-zero fallback)
     wpal(15'h0021, 16'h000F);          // R=15 (pal idx 0x21)
+    wpal(15'h0030, 16'h001F);          // R=31 (fallback-rank check)
     wpal(15'h0400, 16'h000F);          // static backdrop: R=15
     wpal(15'h0203, 16'h03E0);          // line backdrop: G=31
 
@@ -188,6 +192,13 @@ initial begin
     wlb(3'd1, 1'b0, 9'd20, 14'h2001);
     wlb(3'd1, 1'b1, 9'd20, 14'h2021);
     wlb(3'd1, 1'b0, 9'd22, 14'h2003);
+    // Valid NBG pen 0 is produced only by $1FF8E[8+bg].  Keep two
+    // differently coloured payloads to verify its special fallback order.
+    wlb(3'd2, 1'b0, 9'd24, 14'h2020); // NBG1 fallback -> green
+    wlb(3'd1, 1'b0, 9'd26, 14'h2030); // NBG0 fallback -> red
+    wlb(3'd4, 1'b0, 9'd26, 14'h2020); // NBG3 fallback -> green
+    wlb(3'd1, 1'b0, 9'd28, 14'h2001); // ordinary NBG0 -> white
+    wlb(3'd2, 1'b0, 9'd28, 14'h2020); // NBG1 fallback -> green
 
     // A disp_x transition issues the RAM read first.  The timing-closed mixer
     // then snapshots candidates and resolves winner/partner/index on three
@@ -252,6 +263,79 @@ initial begin
     check(rgb, 24'h00F800, 9'd9);       // palette[$0203]
     bg_ctrl = 16'h0000;
     disp_y = 9'd0;
+
+    // --- $1FF8E opaque-zero ordering ---
+    // MAME documents the hardware theory as pen 0 above backdrop but behind
+    // every real pixel.  The line-buffer encoding makes valid && pen==0
+    // unique to that path for NBG0-3.
+    bg_ctrl = 16'h0400;                // red backdrop
+    px(9'd24);
+    check(rgb, 24'h00F800, 9'd24);     // fallback beats backdrop -> green
+
+    // Even the lowest-priority ordinary bitmap pixel must beat a fallback
+    // from NBG1 configured at priority 7.
+    wreg(6'h15, 16'h0001);
+    wlb(3'd5, 1'b0, 9'd24, 14'h2002);
+    px(9'd24);
+    check(rgb, 24'h000040, 9'd24);     // bitmap blue, not fallback green
+    wlb(3'd5, 1'b0, 9'd24, 14'h0000);
+    wreg(6'h15, 16'h0000);
+
+    // A lowest-priority sprite also beats the fallback.  Mixer mode 0 maps
+    // raw group 0 to effective group 1.
+    wreg(6'h01, 16'h0001);
+    spr_pix = 16'h8001;
+    px(9'd24);
+    check(rgb, 24'hF8F8F8, 9'd24);
+    spr_pix = 16'hffff;
+    wreg(6'h01, 16'h0000);
+
+    // Lowest-priority text and ordinary NBG pixels also beat the fallback.
+    wreg(6'h10, 16'h0001);
+    wlb(3'd0, 1'b0, 9'd24, 14'h2001);
+    px(9'd24);
+    check(rgb, 24'hF8F8F8, 9'd24);
+    wlb(3'd0, 1'b0, 9'd24, 14'h0000);
+    wreg(6'h10, 16'h0000);
+    wreg(6'h11, 16'h0001);
+    wlb(3'd1, 1'b0, 9'd24, 14'h2001);
+    px(9'd24);
+    check(rgb, 24'hF8F8F8, 9'd24);
+    wlb(3'd1, 1'b0, 9'd24, 14'h0000);
+    wreg(6'h11, 16'h000F);
+
+    // Layer disable and mixer priority zero both suppress the fallback.
+    layer_off[2] = 1'b1;
+    px(9'd24);
+    check(rgb, 24'h780000, 9'd24);     // backdrop red
+    layer_off = 6'b000000;
+    wreg(6'h12, 16'h0000);
+    px(9'd24);
+    check(rgb, 24'h780000, 9'd24);
+    wreg(6'h12, 16'h0007);
+
+    // Simultaneous fallbacks use the mixer's deterministic NBG tie-rank, not
+    // their configured priorities: the chosen order resolves NBG0 above NBG3.
+    wreg(6'h11, 16'h0001);
+    wreg(6'h14, 16'h000F);
+    px(9'd26);
+    check(rgb, 24'hF80000, 9'd26);
+    wreg(6'h11, 16'h000F);
+    wreg(6'h14, 16'h0000);
+
+    // The fallback remains a real mixer candidate for blending.  A normal
+    // winner sees it as the runner-up, and a fallback winner sees backdrop.
+    wreg(6'h27, 16'h0B00);             // blend enable, factor 3
+    wreg(6'h19, 16'h0100);             // NBG0 blends with NBG1
+    px(9'd28);
+    check(rgb, 24'h78F878, 9'd28);     // white + green
+    wreg(6'h19, 16'h0000);
+    wreg(6'h1a, 16'h2000);             // NBG1 blends with background
+    px(9'd24);
+    check(rgb, 24'h387800, 9'd24);     // green + red backdrop
+    wreg(6'h1a, 16'h0000);
+    wreg(6'h27, 16'h0000);
+    bg_ctrl = 16'h0000;
 
     // --- 2: blend NBG0 (winner) with NBG1 at x=10 ---
     // enable: reg 0x4E bit11, factor 3; NBG0 blend reg 0x32 (word 0x19):

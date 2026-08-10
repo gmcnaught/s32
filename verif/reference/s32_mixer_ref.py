@@ -1,9 +1,10 @@
 """Independent, scalar reference for the System 32 315-5387 mixer.
 
 The implementation follows MAME ``segas32_v.cpp::mix_all_layers`` rather
-than the pipelined structure of ``rtl/video/s32_mixer.sv``.  Line-buffer
-pixels use the RTL boundary format: bit 13 is opaque and bits 12:0 are the
-MAME layer pixel value.
+than the pipelined structure of ``rtl/video/s32_mixer.sv``, plus MAME's
+documented System 24-style theory for $1FF8E opaque NBG pen 0: above the
+backdrop, behind every ordinary pixel.  Line-buffer pixels use the RTL
+boundary format: bit 13 is opaque and bits 12:0 are the layer pixel value.
 """
 
 from __future__ import annotations
@@ -116,9 +117,16 @@ def mix_pixel(
         priority = control & 0xF
         if not ((layer_off >> layer) & 1) and priority:
             blendreg = regs[0x18 + layer]
+            pixel = layer_pixels[layer]
+            opaque_zero = (
+                NBG0 <= layer <= NBG3
+                and bool(pixel & 0x2000)
+                and (pixel & 0xF) == 0
+            )
             layers.append(_Layer(
                 index=layer,
-                effpri=(priority << 3) | (6 - layer),
+                effpri=(6 - layer) if opaque_zero
+                       else (priority << 3) | (6 - layer),
                 palbase=(control & 0xF0) << 6,
                 mixshift=(control >> 8) & 3,
                 blendmask=((blendreg >> 6) & 0xFF) if r4e & 0x0800 else 0,
@@ -129,7 +137,9 @@ def mix_pixel(
     bgreg = regs[0x16]
     layers.append(_Layer(
         index=BACKGROUND,
-        effpri=8,
+        # Only relative order is observable.  Key 1 leaves keys 2..5 for
+        # NBG3..NBG0 opaque-zero fallbacks; ordinary layers start at key 9.
+        effpri=1,
         palbase=(bgreg & 0xF0) << 6,
         mixshift=(bgreg >> 8) & 3,
         blendmask=0,
@@ -138,15 +148,19 @@ def mix_pixel(
     ))
 
     sprite_pal = r4c if (r4c & 3) == 3 else sprreg
-    layers.append(_Layer(
-        index=SPRITE,
-        effpri=((sprreg & 0xF) << 3) | 7,
-        palbase=(sprite_pal & 0xF0) << 6,
-        mixshift=(sprreg >> 8) & 3,
-        blendmask=0,
-        sprblendmask=0,
-        coloroffs=_color_offset(regs, SPRITE, bool(r4c & 0x8000)),
-    ))
+    # MAME inserts priority-zero sprites below its key-8 backdrop, where the
+    # terminating backdrop makes them unobservable.  Omitting that slot is
+    # equivalent and preserves room for the fallback keys above.
+    if sprreg & 0xF:
+        layers.append(_Layer(
+            index=SPRITE,
+            effpri=((sprreg & 0xF) << 3) | 7,
+            palbase=(sprite_pal & 0xF0) << 6,
+            mixshift=(sprreg >> 8) & 3,
+            blendmask=0,
+            sprblendmask=0,
+            coloroffs=_color_offset(regs, SPRITE, bool(r4c & 0x8000)),
+        ))
     layers.sort(key=lambda item: item.effpri, reverse=True)
 
     sprshadowmask = 0x8000 if r4c & 4 else 0
