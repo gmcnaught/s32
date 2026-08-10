@@ -75,6 +75,9 @@ module s32_core #(
     // its own clk_v25-domain CE generator, so it must be told separately or
     // it keeps running against a frozen V60 (mailbox tear on ga2/arabfgt).
     input             pause,
+    // Reset-latched optional instruction-fetch accelerator. This selects the
+    // wide ROM-cache port only; the physical V60 bus remains on ce_cpu.
+    input             fast_v60,
     // Alien 3-only display option. The top-level gates this with the exact
     // cabinet descriptor before it reaches the shared System 32 core.
     input             alien3_hud_blend,
@@ -278,18 +281,12 @@ reg         if_served;
 wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU never
                                     // misses it between its enable ticks
 
-// The production board contract keeps instruction fetches on the same
-// ce-gated 16-bit bus as data accesses. The V60's internal prefetch queue is
-// still modelled in s32_v60; the wide cache port is retained as an explicit
-// diagnostic/performance override only. This prevents a synthetic, uncapped
-// fetch path from making a production bitstream run faster than the PCB.
-// Override at build time (+define+FAST_IFETCH_EN=1'b0/1'b1) for A/B tests.
+// Compile the optional wide-fetch transport into production. fast_v60 selects
+// it at runtime only after reset; PCB mode still routes instruction prefetches
+// through the ce-gated 16-bit adapter. FAST_IFETCH_EN remains a build-time
+// capability override for focused A/B or resource experiments.
 `ifndef FAST_IFETCH_EN
- `ifdef S32_PCB_TIMING
-  `define FAST_IFETCH_EN 1'b0
- `else
-  `define FAST_IFETCH_EN 1'b1
- `endif
+ `define FAST_IFETCH_EN 1'b1
 `endif
 // The PCB clocks the V60 at 16.108 MHz, but the processor overlaps its
 // decode/EA/execute units while the external BCU continues to issue minimum
@@ -305,6 +302,7 @@ s32_v60_exec_cadence v60_cadence (
 
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
+    .fast_ifetch(fast_v60),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),

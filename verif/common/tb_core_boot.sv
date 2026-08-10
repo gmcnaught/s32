@@ -13,6 +13,12 @@
 
 module tb_core_boot;
 
+`ifdef S32_TEST_FAST_V60
+localparam TEST_FAST_V60 = 1'b1;
+`else
+localparam TEST_FAST_V60 = 1'b0;
+`endif
+
 import s32_pkg::*;
 
 reg clk_sys = 0, clk_ram = 0, rst = 1;
@@ -54,7 +60,7 @@ end
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram), .rst(rst), .video_rst(rst), .board(board),
-    .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0),
+    .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(TEST_FAST_V60),
     .alien3_hud_blend(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(), .sdr_p1_addr(), .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b0),

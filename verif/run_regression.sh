@@ -115,6 +115,15 @@ echo "[16/35] V60 short backward-branch fetch performance"
 iverilog -g2012 -o /tmp/s32_v60_fetch \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_fetch.sv
 vvp /tmp/s32_v60_fetch | grep -q "FETCH PERF PASS" && echo "V60 FETCH PERF: PASS" || { echo "V60 FETCH PERF: FAIL"; exit 1; }
+iverilog -g2012 -o /tmp/s32_v60_fetch_mode \
+  rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_fetch_wide.sv
+vvp /tmp/s32_v60_fetch_mode | grep -q "V60 FETCH WIDE PASS" && echo "V60 FETCH MODE: PASS" || { echo "V60 FETCH MODE: FAIL"; exit 1; }
+iverilog -g2012 -o /tmp/s32_v60_fetch_ram \
+  rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_fetch_ram.sv
+vvp /tmp/s32_v60_fetch_ram | grep -q "V60 FETCH RAM PASS" && echo "V60 FETCH RAM: PASS" || { echo "V60 FETCH RAM: FAIL"; exit 1; }
+iverilog -g2012 -o /tmp/s32_v60_ea_overlap \
+  rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_ea_overlap_disp.sv
+vvp /tmp/s32_v60_ea_overlap | grep -q "V60 EA_OVERLAP DISP PASS" && echo "V60 EA OVERLAP: PASS" || { echo "V60 EA OVERLAP: FAIL"; exit 1; }
 echo "[17/35] ROM loader reset / mapping / completion gating"
 iverilog -g2012 -o /tmp/s32_rom_loader \
   rtl/s32_pkg.sv rtl/mem/s32_rom_loader.sv verif/common/tb_rom_loader.sv

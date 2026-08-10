@@ -25,6 +25,7 @@ wire [1:0]  m_be;
 
 s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .clk(clk), .ce(1'b1), .rst(rst),
+    .fast_ifetch(1'b0),
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
@@ -87,13 +88,13 @@ initial begin
     $display("FETCH PERF: iterations=%0d cycles=%0d reads=%0d r0=%0d halted=%0d",
         ITERATIONS, cycles, read_txns, cpu.r[0], cpu.halted);
     if (cpu.halted && cpu.r[0] == 0 && cpu.r[1] == 32'h1234_5678 &&
-        cycles <= 4000 && read_txns <= 32)
+        cycles <= 2800 && read_txns <= 16)
         $display("FETCH PERF PASS");
     else begin
-        if (cycles > 4000)
-            $display("  cycle budget exceeded: %0d > 4000", cycles);
-        if (read_txns > 32)
-            $display("  read budget exceeded: %0d > 32", read_txns);
+        if (cycles > 2800)
+            $display("  cycle budget exceeded: %0d > 2800", cycles);
+        if (read_txns > 16)
+            $display("  read budget exceeded: %0d > 16", read_txns);
         $display("FETCH PERF FAIL");
     end
     $finish;

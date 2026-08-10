@@ -187,6 +187,7 @@ localparam CONF_STR = {
     "O[7],Service Mode,Off,On;",
     // h0 hides this line unless menumask[0] identifies Alien 3.
     "h0O[8],Alien 3 Flicker Blend,Off,On;",
+    "O[29],V60 Fetch,PCB,Fast (Reset);",
     "-;",
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
     "O[9],CRT Adjust,Off,On;",
@@ -220,6 +221,15 @@ assign CLK_VIDEO = clk_sys;
 // reset and NVRAM transfers do not forget that ROM is already resident.
 wire video_reset = RESET | status[0] | buttons[1] | ~pll_locked;
 wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
+
+// Optional throughput aid: latch only while the core is reset so an in-flight
+// prefetch can never change transport underneath the V60. This selects the
+// existing wide ROM-cache instruction port; the physical 16.108 MHz data/I/O
+// bus and every other subsystem retain their PCB cadence.
+reg fast_v60_fetch;
+always @(posedge clk_sys) begin
+    if (reset) fast_v60_fetch <= status[29];
+end
 
 // Synchronise the controller-ready level from clk_ram before it gates the
 // loader and the game logic in clk_sys.
@@ -740,7 +750,8 @@ s32_core core (
     // Production profiles have no debug/screenshot pause control. Keep the
     // core port constant so standalone verification benches can still test
     // V25 pause semantics without carrying the menu logic into an RBF.
-    .pause(1'b0), .alien3_hud_blend(alien3_controls && status[8]),
+    .pause(1'b0), .fast_v60(fast_v60_fetch),
+    .alien3_hud_blend(alien3_controls && status[8]),
     .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
     .sdr_p1_ack(p1_ack),

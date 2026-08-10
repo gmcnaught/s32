@@ -423,6 +423,7 @@ try {
     Write-Tier 4 "full-core integration boot (universal + System32-only profile)"
     Run-HdlTest "t04_boot_universal" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION") @("-novopt")
     Run-HdlTest "t04_boot_standard" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING") @("-novopt")
+    Run-HdlTest "t04_boot_standard_fast_v60" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING", "S32_TEST_FAST_V60") @("-novopt")
     Write-RunLine "CORE BUILD-PROFILE BOOTS: PASS"
 
     Write-Tier 5 "V60 differential co-sim vs independent reference ($Seeds seeds)"
@@ -498,6 +499,9 @@ try {
 
     Write-Tier 16 "V60 short backward-branch fetch performance"
     Run-HdlTest "t16_v60_fetch" "tb_v60_fetch" ($V60Sources + "verif/v60/tb_v60_fetch.sv") "FETCH PERF PASS"
+    Run-HdlTest "t16_v60_fetch_mode" "tb_v60_fetch_wide" ($V60Sources + "verif/v60/tb_v60_fetch_wide.sv") "V60 FETCH WIDE PASS"
+    Run-HdlTest "t16_v60_fetch_ram" "tb_v60_fetch_ram" ($V60Sources + "verif/v60/tb_v60_fetch_ram.sv") "V60 FETCH RAM PASS"
+    Run-HdlTest "t16_v60_ea_overlap" "tb_v60_ea_overlap_disp" ($V60Sources + "verif/v60/tb_v60_ea_overlap_disp.sv") "V60 EA_OVERLAP DISP PASS"
 
     Write-Tier 17 "ROM loader reset / mapping / completion gating"
     Run-HdlTest "t17_rom_loader" "tb_rom_loader" @("rtl/s32_pkg.sv", "rtl/mem/s32_rom_loader.sv", "verif/common/tb_rom_loader.sv") "ROM LOADER PASS"

@@ -101,6 +101,25 @@ class GlobalProfileContractTests(unittest.TestCase):
             self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
             self.assertIn('VERILOG_MACRO "S32_SYSTEM32_ONLY=1"', text)
 
+    def test_optional_v60_fetch_keeps_the_physical_bus_fixed(self) -> None:
+        """Fast fetch is reset-latched and must never multiply ce_cpu."""
+        top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        cpu = (ROOT / "rtl/cpu/v60/s32_v60.sv").read_text(encoding="utf-8")
+        self.assertIn('"O[29],V60 Fetch,PCB,Fast (Reset);"', top)
+        self.assertIn("if (reset) fast_v60_fetch <= status[29];", top)
+        self.assertIn(".fast_v60(fast_v60_fetch)", top)
+        self.assertIn(".fast_ifetch(fast_v60)", core)
+        self.assertIn(".clk(clk_sys), .ce(ce_cpu), .rst(rst)", core)
+        self.assertIn("FAST_IFETCH && fast_ifetch && fetch_is_rom", cpu)
+        self.assertIn("reg        seq_pd_valid;", cpu)
+        self.assertIn("function automatic [4:0] exact_need_at", cpu)
+        self.assertIn("wire [4:0] pf_high = pf_loop_hint ? 5'd24 : 5'd20", cpu)
+        self.assertIn("task automatic complete_ea_now", cpu)
+        self.assertIn("pf_fast      <= use_fast_ifetch;", cpu)
+        self.assertIn("wire        fetch_ack = pf_fast ? if_ack_i : pf_ack;", cpu)
+        self.assertNotIn("cpu_turbo", top)
+
     def test_sprite_throughput_and_publication_are_shared_by_both_profiles(self) -> None:
         """Busy lists keep two-stage pixels and never expose an in-flight FB."""
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")

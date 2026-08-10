@@ -1,26 +1,26 @@
 <misterromdescription>
-  <name>Rad Rally (Japan)</name>
-  <setname>radrj</setname>
+  <name>Rad Rally (US)</name>
+  <setname>radru</setname>
   <parent>radr</parent>
   <year>1991</year>
   <manufacturer>Sega</manufacturer>
   <rbf>Arcade-SegaSystem32</rbf>
   <buttons names="Gear Change,-,-,-,-,-,Start,Coin,Test,Service" default="A,Start,Select,R,L" count="1"/>
-  <rom index="4" zip="radr.zip|radrj.zip" md5="none">
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
-    <part name="epr-14111.ic21" crc="7adc6d17"/>
+  <rom index="4" zip="radr.zip|radru.zip" md5="none">
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
+    <part name="epr-14240.ic21" crc="8473e7ab"/>
     <interleave output="16">
       <part name="epr-14106.ic37" crc="e73c63bf" map="01"/>
       <part name="epr-14107.ic38" crc="832f797a" map="10"/>
     </interleave>
   </rom>
-  <rom index="5" zip="radr.zip|radrj.zip" md5="none">
+  <rom index="5" zip="radr.zip|radru.zip" md5="none">
     <part name="epr-14108.ic9" crc="38a99b4d"/>
     <part name="epr-14108.ic9" crc="38a99b4d"/>
     <part name="epr-14108.ic9" crc="38a99b4d"/>
@@ -36,7 +36,7 @@
     <part name="epr-14237.ic22" crc="0a4b4b29"/>
     <part name="epr-14237.ic22" crc="0a4b4b29"/>
   </rom>
-  <rom index="6" zip="radr.zip|radrj.zip" md5="none">
+  <rom index="6" zip="radr.zip|radru.zip" md5="none">
     <interleave output="32">
       <part name="epr-14102.ic3" crc="5626e80f" map="0001"/>
       <part name="epr-14104.ic12" crc="b0173646" map="0010"/>
@@ -44,7 +44,7 @@
       <part name="epr-14105.ic16" crc="614843b6" map="1000"/>
     </interleave>
   </rom>
-  <rom index="9" zip="radr.zip|radrj.zip" md5="none">
+  <rom index="9" zip="radr.zip|radru.zip" md5="none">
     <interleave output="64">
       <part name="mpr-13511.ic1" crc="f8f15b11" map="00000001"/>
       <part name="mpr-13512.ic5" crc="d0be34a6" map="00000010"/>
@@ -56,7 +56,7 @@
       <part name="mpr-13518.ic17" crc="9ea4b15d" map="10000000"/>
     </interleave>
   </rom>
-  <rom index="2" zip="radr.zip|radrj.zip" md5="none">
+  <rom index="2">
     <part name="eeprom-radr.ic76" crc="602032c6"/>
   </rom>
   <nvram index="3" size="128"/>

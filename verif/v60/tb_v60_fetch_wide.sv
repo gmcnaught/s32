@@ -14,6 +14,7 @@
 module tb_v60_fetch_wide;
 
 reg clk = 0, rst = 1;
+reg fast_mode = 0;
 always #10 clk = ~clk;
 
 wire        c_req, c_we, c_ack;
@@ -33,6 +34,7 @@ wire        if_ack = if_served;
 
 s32_v60 #(.START_PC(32'h0000_0000), .FAST_IFETCH(1'b1)) cpu (
     .clk(clk), .ce(1'b1), .rst(rst),
+    .fast_ifetch(fast_mode),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
@@ -49,11 +51,17 @@ s32_v60_bus adapter (
 
 reg [15:0] ram [0:32767];
 reg ack_r = 0;
+reg if_req_d = 0, m_req_d = 0;
+integer if_starts = 0, m_starts = 0;
 assign m_rdata = ram[m_addr[15:1]];
 assign m_ack = ack_r;
 
 always @(posedge clk) begin
     ack_r <= m_req & ~ack_r;
+    if_req_d <= if_req;
+    m_req_d <= m_req;
+    if (if_req && !if_req_d) if_starts <= if_starts + 1;
+    if (m_req && !m_req_d) m_starts <= m_starts + 1;
     if (m_req && m_we && !ack_r) begin
         if (m_be[0]) ram[m_addr[15:1]][7:0]  <= m_wdata[7:0];
         if (m_be[1]) ram[m_addr[15:1]][15:8] <= m_wdata[15:8];
@@ -99,6 +107,9 @@ endtask
 
 integer i;
 initial begin
+    integer pcb_if, pcb_bus, fast_if, fast_bus;
+    integer errors;
+    errors = 0;
     for (i = 0; i < 32768; i = i + 1) ram[i] = 16'h0000;
     pc_a = 0;
 
@@ -127,14 +138,52 @@ initial begin
     rst = 0;
     repeat (12000) @(posedge clk);
 
-    if (cpu.halted && cpu.pc == 32'd34 &&
-        ram[16'h3000 >> 1] == 16'h5678 &&
-        ram[(16'h3000 >> 1) + 1] == 16'h1234)
-        $display("V60 FETCH WIDE PASS");
-    else
-        $display("V60 FETCH WIDE FAIL halted=%0d pc=%08x dest=%04x_%04x",
+    pcb_if = if_starts;
+    pcb_bus = m_starts;
+    if (!cpu.halted || cpu.pc != 32'd34 ||
+        ram[16'h3000 >> 1] != 16'h5678 ||
+        ram[(16'h3000 >> 1) + 1] != 16'h1234) begin
+        errors = errors + 1;
+        $display("V60 FETCH PCB FAIL halted=%0d pc=%08x dest=%04x_%04x",
                  cpu.halted, cpu.pc,
                  ram[(16'h3000 >> 1) + 1], ram[16'h3000 >> 1]);
+    end
+    if (pcb_if != 0 || pcb_bus == 0) begin
+        errors = errors + 1;
+        $display("V60 FETCH PCB TRANSPORT FAIL if=%0d bus=%0d", pcb_if, pcb_bus);
+    end
+
+    // Change mode only under reset, matching the production OSD contract.
+    rst = 1;
+    fast_mode = 1;
+    ram[16'h3000 >> 1]       = 16'hdead;
+    ram[(16'h3000 >> 1) + 1] = 16'hbeef;
+    repeat (8) @(posedge clk);
+    rst = 0;
+    repeat (12000) @(posedge clk);
+    fast_if = if_starts - pcb_if;
+    fast_bus = m_starts - pcb_bus;
+
+    if (!cpu.halted || cpu.pc != 32'd34 ||
+        ram[16'h3000 >> 1] != 16'h5678 ||
+        ram[(16'h3000 >> 1) + 1] != 16'h1234) begin
+        errors = errors + 1;
+        $display("V60 FETCH FAST FAIL halted=%0d pc=%08x dest=%04x_%04x",
+                 cpu.halted, cpu.pc,
+                 ram[(16'h3000 >> 1) + 1], ram[16'h3000 >> 1]);
+    end
+    if (fast_if == 0 || fast_bus >= pcb_bus) begin
+        errors = errors + 1;
+        $display("V60 FETCH FAST TRANSPORT FAIL if=%0d bus=%0d pcb_bus=%0d",
+                 fast_if, fast_bus, pcb_bus);
+    end
+
+    $display("V60 FETCH MODE SUMMARY pcb_if=%0d pcb_bus=%0d fast_if=%0d fast_bus=%0d",
+             pcb_if, pcb_bus, fast_if, fast_bus);
+    if (errors == 0)
+        $display("V60 FETCH WIDE PASS");
+    else
+        $display("V60 FETCH WIDE FAIL errors=%0d", errors);
     $finish;
 end
 

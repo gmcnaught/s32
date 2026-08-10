@@ -23,6 +23,7 @@ wire [1:0] m_be;
 
 s32_v60 #(.START_PC(32'h0000_0000)) cpu (
     .clk(clk), .ce(1'b1), .rst(rst),
+    .fast_ifetch(1'b0),
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
@@ -65,6 +66,9 @@ endtask
 task halt; begin ab(8'h00); end endtask
 
 integer errors = 0;
+integer sim_cycles = 0;
+integer last_run_cycles = 0;
+always @(posedge clk) sim_cycles = sim_cycles + 1;
 task check16(input [15:0] got, input [15:0] want, input [255:0] label);
     if (got !== want) begin
         errors = errors + 1;
@@ -74,9 +78,20 @@ task check16(input [15:0] got, input [15:0] want, input [255:0] label);
 endtask
 
 task run_one(input [255:0] label, input integer settle_cycles);
+    integer start_cycle;
     begin
         rst = 1; repeat (8) @(posedge clk); rst = 0;
-        repeat (settle_cycles) @(posedge clk);
+        start_cycle = sim_cycles;
+        while (!cpu.halted && (sim_cycles - start_cycle) < settle_cycles)
+            @(posedge clk);
+        last_run_cycles = sim_cycles - start_cycle;
+        $display("  timing %0s: %0d clocks", label, last_run_cycles);
+        if (!cpu.halted) begin
+            errors = errors + 1;
+            $display("  FAIL %0s: did not halt within %0d clocks",
+                     label, settle_cycles);
+        end
+        repeat (4) @(posedge clk);
     end
 endtask
 
@@ -100,6 +115,7 @@ initial begin
     halt();
     run_one("case1", 300);
     check16(ram[16'h0188], 16'd12, "ADDW R1,[R2+byte_disp]");
+    if (last_run_cycles > 105) begin errors = errors + 1; $display("  FAIL case1 throughput"); end
 
     // ---------------------------------------------------------------------
     // Case 2: half-word displacement, same shape, negative offset check via
@@ -117,6 +133,7 @@ initial begin
     halt();
     run_one("case2", 300);
     check16(ram[16'h08a0], 16'd123, "ADDW R1,[R2+half_disp]");
+    if (last_run_cycles > 115) begin errors = errors + 1; $display("  FAIL case2 throughput"); end
 
     // ---------------------------------------------------------------------
     // Case 3: EA base hazard.  MOV R2<-new_base; ADDW R1,[R2+4] immediately
@@ -137,6 +154,40 @@ initial begin
     run_one("case3", 300);
     check16(ram[16'h0102], 16'd10, "ADDW R1,[R2+4] uses FRESH R2 (0x200)");
     check16(ram[16'h0182], 16'hDEAD, "stale-base target must be untouched");
+    if (last_run_cycles > 131) begin errors = errors + 1; $display("  FAIL case3 throughput"); end
+
+    // ---------------------------------------------------------------------
+    // Case 4: common F2 D=1 memory source. ADDW [R2+4],R1 must launch the
+    // physical read directly from S_IF2 while preserving the same result.
+    // ---------------------------------------------------------------------
+    for (ap = 0; ap < 65536; ap = ap + 1) ram[ap] = 16'h0000;
+    ram[16'h0102] = 16'd7;
+    ap = 0;
+    movw_imm(5'd1, 32'd5);
+    movw_imm(5'd2, 32'h0000_0200);
+    ab(8'h84); ab(8'h21); ab(8'h02); ab(8'h04);  // ADDW [R2+4],R1
+    halt();
+    run_one("case4", 300);
+    check16(cpu.r[1][15:0], 16'd12, "ADDW [R2+4],R1 memory-source overlap");
+    if (last_run_cycles > 105) begin
+        errors = errors + 1;
+        $display("  FAIL case4 throughput: %0d clocks want<=105", last_run_cycles);
+    end
+
+    // Case 5: register-indirect source is the zero-displacement companion.
+    for (ap = 0; ap < 65536; ap = ap + 1) ram[ap] = 16'h0000;
+    ram[16'h0100] = 16'd9;
+    ap = 0;
+    movw_imm(5'd1, 32'd4);
+    movw_imm(5'd2, 32'h0000_0200);
+    ab(8'h84); ab(8'h21); ab(8'h62);              // ADDW [R2],R1
+    halt();
+    run_one("case5", 300);
+    check16(cpu.r[1][15:0], 16'd13, "ADDW [R2],R1 indirect-source overlap");
+    if (last_run_cycles > 105) begin
+        errors = errors + 1;
+        $display("  FAIL case5 throughput: %0d clocks want<=105", last_run_cycles);
+    end
 
     if (errors == 0)
         $display("V60 EA_OVERLAP DISP PASS");

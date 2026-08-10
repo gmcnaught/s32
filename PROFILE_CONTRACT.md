@@ -2,6 +2,36 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-10: V60 throughput improvements
+
+Both production profiles compile the existing 8-byte ROM-cache instruction
+port and expose `V60 Fetch: PCB / Fast (Reset)`. The selection is latched only
+while reset is asserted. `PCB` keeps instruction prefetch on the shared,
+ce-gated 16-bit V60 adapter; `Fast` uses the dedicated cache port for the two
+main-ROM windows. Code executing from work/shared RAM automatically stays on
+the ordinary V60 bus. Data, I/O,
+interrupt, video, audio and protection traffic retain their PCB clocks and bus
+ordering in both modes. This is an explicit optional performance aid, not a
+claim that an original V60 had an 8-byte external instruction bus.
+
+The shared V60 now launches common displacement/register-indirect source reads,
+destination reads and result writes as soon as their addresses/data are ready.
+This removes serialized EA and request-setup bubbles while leaving acceptance,
+completion and request re-arm on the unchanged physical bus. Standard MUL/MULU
+uses an exact two-bit radix-4 step (16 iterations instead of 32); DIV/REM remain
+unchanged because their existing latency is already at or faster than the
+published V60 reference. Sequential fallback remains for complex modes.
+
+The follow-up safe throughput package adds a registered exact-length successor
+predecoder for common F2 and short instruction forms, retires resolved simple,
+indexed, auto-update and deferred-address EAs directly from their producer
+state, and uses a DBcc/TB hint to fill the existing retained-loop window to its
+complete 24-byte capacity without increasing ordinary lookahead traffic. The
+timing-sensitive live-window shift remains capped at four bytes;
+there is no cross-instruction register-value speculation or external-bus timing
+change. The 256-iteration loop fixture improved from 2,865 to 2,609 clocks and
+from 14 to 12 physical fetch reads.
+
 ## 2026-08-10: restore busy-scene sprite throughput and completed ownership
 
 System 32's cached-pixel path is again the algebraically identical two-stage
@@ -102,8 +132,9 @@ and `S32_GAME_ONLY_STD` are legitimate production *scope-trim* macros (not
 game-named -- they describe a hardware-capability shape), each set by
 exactly one QSF. Any macro named after a specific game (`S32_GA2_ONLY`,
 `S32_SONIC_ONLY`, etc.) is a test legacy and must not be used to route a
-shipped game. `S32_PCB_TIMING` is a common behavior flag that selects the
-shared ce-gated V60 fetch boundary and never selects a game or RBF.
+shipped game. `S32_PCB_TIMING` is a common behavior flag for fixed production
+timing and never selects a game or RBF. Runtime `V60 Fetch` selection is shared
+by both profiles and never changes the external V60 bus clock.
 
 ## Feature placement (two profiles)
 
@@ -117,6 +148,7 @@ shared ce-gated V60 fetch boundary and never selects a game or RBF.
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_REAL_V25=1`), enabled per-game by the descriptor's `has_v25` bit | not compiled in at all; HLE responder `s32_v25` only |
 | V25 table/cadence selection | descriptor-driven (`v25_table`) | n/a (no V25 hardware) |
 | CPU Turbo | removed (V60 timing relies on fixed CE spacing) | removed (same) |
+| V60 Fetch | reset-latched PCB/Fast instruction transport; data/I/O bus fixed at PCB cadence | same |
 | Multi 32 second screen/peripheral hardware | no | no |
 | HDMI shadow-mask post-process | compiled out (`MISTER_DISABLE_SHADOWMASK`; optional output effect) | compiled out (same) |
 

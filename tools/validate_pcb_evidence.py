@@ -91,8 +91,13 @@ def validate(check_rtl: bool = False) -> list[str]:
             if not needs_real_v25 and has_real_v25:
                 errors.append(f"{qsf.name}: must not compile the real V25 core (no game here has V25 hardware)")
         core_text = (ROOT / "rtl" / "s32_core.sv").read_text(encoding="utf-8")
-        if "S32_PCB_TIMING" not in core_text or "FAST_IFETCH_EN" not in core_text:
-            errors.append("s32_core.sv: production fetch timing boundary is missing")
+        cpu_text = (ROOT / "rtl" / "cpu" / "v60" / "s32_v60.sv").read_text(encoding="utf-8")
+        if "`define FAST_IFETCH_EN 1'b1" not in core_text or ".fast_ifetch(fast_v60)" not in core_text:
+            errors.append("s32_core.sv: reset-latched optional fetch transport is missing")
+        if "s32_v60_bus vbus" not in core_text or ".ce(ce_cpu)" not in core_text:
+            errors.append("s32_core.sv: fixed physical V60 bus cadence is missing")
+        if "FAST_IFETCH && fast_ifetch && fetch_is_rom" not in cpu_text:
+            errors.append("s32_v60.sv: fast fetch must remain restricted to ROM windows")
 
     return errors
 
