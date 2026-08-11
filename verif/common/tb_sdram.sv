@@ -26,7 +26,7 @@ wire wr_ack;
 
 reg p0_req = 1'b0;
 reg [24:1] p0_addr = '0;
-wire [15:0] p0_dout;
+wire [63:0] p0_dout;
 wire p0_ack;
 
 reg p1_req = 1'b0;
@@ -63,7 +63,7 @@ sdram dut (
     .SDRAM_CKE(SDRAM_CKE),
     .wr_req(wr_req), .wr_addr(wr_addr), .wr_din(wr_din),
     .wr_be(wr_be), .wr_ack(wr_ack),
-    .p0_req(p0_req), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
+    .p0_req(p0_req), .p0_burst(1'b0), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
     .p1_req(p1_req), .p1_addr(p1_addr), .p1_dout(p1_dout), .p1_ack(p1_ack),
     .p2_req(p2_req), .p2_addr(p2_addr), .p2_dout(p2_dout), .p2_ack(p2_ack),
     .p3_req(p3_req), .p3_addr(p3_addr), .p3_dout(p3_dout), .p3_ack(p3_ack),
@@ -103,8 +103,8 @@ task automatic wait_ack_p0(input [24:1] addr);
             @(posedge clk); #1; timeout = timeout + 1;
         end
         if (!p0_ack) $fatal(1, "p0 read timed out");
-        if (p0_dout !== expected)
-            $fatal(1, "p0 stale/wrong word: got %h expected %h", p0_dout, expected);
+        if (p0_dout[15:0] !== expected)
+            $fatal(1, "p0 stale/wrong word: got %h expected %h", p0_dout[15:0], expected);
         while (p0_ack) begin @(posedge clk); #1; end
     end
 endtask
@@ -218,9 +218,9 @@ initial begin
         delayed_timeout = delayed_timeout + 1;
         if (p0_ack) begin
             saw_concurrent_p0 = 1'b1;
-            if (p0_dout !== concurrent_p0_expected)
+            if (p0_dout[15:0] !== concurrent_p0_expected)
                 $fatal(1, "concurrent p0 data wrong: got %h expected %h",
-                       p0_dout, concurrent_p0_expected);
+                       p0_dout[15:0], concurrent_p0_expected);
         end
         if (p5_ack) begin
             saw_concurrent_p5 = 1'b1;

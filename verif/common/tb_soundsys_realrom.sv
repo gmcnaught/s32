@@ -3,7 +3,9 @@
 // Production-T80 real-ROM integration probe. The copyrighted image is passed
 // at runtime and remains under ignored roms/. This bench observes only bus
 // activity and subsystem state; it never writes ROM contents to an artifact.
-module tb_soundsys_realrom;
+module tb_soundsys_realrom #(
+    parameter integer ZROM_CACHE_SETS = 4
+);
     reg clk = 1'b0;
     always #10.345 clk = ~clk; // 48.317 MHz, matching the generated 48.317307 MHz PLL output
 
@@ -55,7 +57,10 @@ module tb_soundsys_realrom;
     reg [15:0] rom [0:2097151];
     string rom_path;
 
-    s32_soundsys #(.SYSTEM32_ONLY(1'b1)) dut (
+    s32_soundsys #(
+        .SYSTEM32_ONLY(1'b1),
+        .ZROM_CACHE_SETS(ZROM_CACHE_SETS)
+    ) dut (
         .clk(clk), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
         .rst(rst), .z80_reset(z80_reset), .is_multi32(1'b0),
         .sh_cs(1'b0), .sh_we(1'b0), .sh_addr(12'd0), .sh_be(2'd0), .sh_wdata(16'd0),
@@ -117,8 +122,8 @@ module tb_soundsys_realrom;
         if (^{dut.rf_l, dut.rf_r} === 1'bx) x_rf <= x_rf + 1;
         if (first_audio_x < 0 && ^{audio_l, audio_r} === 1'bx) begin
             first_audio_x <= cycles;
-            $display("SOUNDSYS REALROM first audio X cycle=%0d pc=%04x io_wr=%b port=%02x data=%02x fm=%h/%h %h/%h rf=%h/%h",
-                     cycles, dut.z_reg_debug[79:64], dut.z_io_wr,
+            $display("SOUNDSYS REALROM first audio X cycle=%0d bus_addr=%04x io_wr=%b port=%02x data=%02x fm=%h/%h %h/%h rf=%h/%h",
+                     cycles, dut.z_addr, dut.z_io_wr,
                      dut.z_addr[7:0], dut.z_dout, dut.fm1_l, dut.fm1_r,
                      dut.fm2_l, dut.fm2_r, dut.rf_l, dut.rf_r);
         end

@@ -29,11 +29,14 @@ def run_trace(
     output: Path,
     cycles: int,
     model_sim_bin: Path | None,
+    cache_sets: int = 4,
 ) -> str:
     if not sound_rom.is_file():
         raise ValueError(f"missing Holosseum sound image {sound_rom}")
     if cycles < 1:
         raise ValueError("cycles must be positive")
+    if cache_sets < 1 or cache_sets & (cache_sets - 1):
+        raise ValueError("cache sets must be a positive power of two")
 
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="s32-holo-soundsys-") as temporary:
@@ -93,6 +96,7 @@ def run_trace(
                 "-lib",
                 str(library),
                 "tb_soundsys_realrom",
+                f"-gZROM_CACHE_SETS={cache_sets}",
                 f"+ROM={sound_rom.resolve().as_posix()}",
                 f"+CYCLES={cycles}",
                 "-do",
@@ -128,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
         default=REPO_ROOT / "roms/audio_trace/holo-soundsys",
     )
     parser.add_argument("--cycles", type=int, default=5_000_000)
+    parser.add_argument("--cache-sets", type=int, default=4)
     parser.add_argument("--modelsim-bin", type=Path)
     args = parser.parse_args(argv)
     try:
@@ -135,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
             sound_rom=args.sound_rom.resolve(),
             output=args.output.resolve(),
             cycles=args.cycles,
+            cache_sets=args.cache_sets,
             model_sim_bin=args.modelsim_bin,
         )
     except (OSError, ValueError, RuntimeError) as exc:

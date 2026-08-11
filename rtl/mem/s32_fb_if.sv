@@ -125,7 +125,8 @@ reg rd_blend_latched;
 // DDR engine
 typedef enum logic [3:0] { D_IDLE, D_WR_PF, D_WR, D_ER, D_RD, D_RD_W,
                            D_RD_BLEND, D_RD_BLEND_W, D_RD_BLEND_FLUSH,
-                           D_SH_R, D_SH_RW, D_SH_W } dstate_t;
+                           D_SH_R, D_SH_RW, D_SH_W,
+                           D_WR_SKIP, D_WR_SKIP_PF, D_SH_SKIP } dstate_t;
 dstate_t dst = D_IDLE;
 
 reg [28:0] daddr;
@@ -208,17 +209,21 @@ endfunction
 wire [6:0] run_word_base = run_x0[8:2];
 wire [6:0] run_cur_word  = run_word_base + beat;
 wire [6:0] run_next_word = run_cur_word + 7'd1;
-wire [6:0] run_ram_raddr = (dst == D_IDLE)  ? run_word_base :
-                            (dst == D_WR_PF) ? run_next_word :
-                            (dst == D_WR)    ? run_cur_word
-                                                + (DDRAM_BUSY ? 7'd1 : 7'd2) :
-                                               run_cur_word;
+wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? run_word_base :
+                            (dst == D_WR_PF)      ? run_next_word :
+                            (dst == D_WR_SKIP)    ? run_cur_word :
+                            (dst == D_WR_SKIP_PF) ? run_next_word :
+                            (dst == D_WR)         ? run_cur_word
+                                                     + (DDRAM_BUSY ? 7'd1 : 7'd2) :
+                                                    run_cur_word;
 
 wire [3:0] run_base_mask = run_msk[{run_word_base, 2'b00} +: 4];
 wire [3:0] run_cur_mask  = run_msk[{run_cur_word,  2'b00} +: 4];
 wire [3:0] run_next_mask = run_msk[{run_next_word, 2'b00} +: 4];
 wire [7:0] run_base_be = {{2{run_base_mask[3]}}, {2{run_base_mask[2]}},
                            {2{run_base_mask[1]}}, {2{run_base_mask[0]}}};
+wire [7:0] run_cur_be = {{2{run_cur_mask[3]}}, {2{run_cur_mask[2]}},
+                          {2{run_cur_mask[1]}}, {2{run_cur_mask[0]}}};
 wire [7:0] run_next_be = {{2{run_next_mask[3]}}, {2{run_next_mask[2]}},
                            {2{run_next_mask[1]}}, {2{run_next_mask[0]}}};
 // Shadow writes only the high byte of each valid lane (bit 15 lives there).
@@ -288,7 +293,9 @@ end
 // window before flush_req registers) until the flush completes
 assign wr_busy = wr_end | flush_req |
                  (dst == D_WR_PF) | (dst == D_WR) |
-                 (dst == D_SH_R) | (dst == D_SH_RW) | (dst == D_SH_W);
+                 (dst == D_WR_SKIP) | (dst == D_WR_SKIP_PF) |
+                 (dst == D_SH_R) | (dst == D_SH_RW) | (dst == D_SH_W) |
+                 (dst == D_SH_SKIP);
 
 always @(posedge clk) begin
     if (rst) begin
@@ -371,6 +378,16 @@ always @(posedge clk) begin
         end
         D_WR: if (!DDRAM_BUSY) begin
             if (beat == beats) begin dwe <= 0; dst <= D_IDLE; end
+            else if (run_next_mask == 4'b0000) begin
+                // Transparent/clipped holes can leave complete 64-bit words
+                // empty between the run's first and last written pixels.
+                // A zero-BE DDR write has no framebuffer effect, so walk the
+                // mask locally instead of consuming external acceptance slots.
+                beat  <= beat + 1'd1;
+                daddr <= daddr + 1'd1;
+                dwe   <= 1'b0;
+                dst   <= D_WR_SKIP;
+            end
             else begin
                 beat  <= beat + 1'd1;
                 daddr <= daddr + 1'd1;
@@ -378,6 +395,29 @@ always @(posedge clk) begin
                 dbe   <= run_next_be;
                 dwe   <= 1'b1;
             end
+        end
+        D_WR_SKIP: begin
+            // No DDR request is active in this state, so mask scanning is not
+            // coupled to DDRAM_BUSY. Valid words retain ascending write order.
+            dwe <= 1'b0;
+            if (run_cur_mask != 4'b0000) begin
+                dst <= D_WR_SKIP_PF;
+            end
+            else if (beat == beats) begin
+                dst <= D_IDLE;
+            end
+            else begin
+                beat  <= beat + 1'd1;
+                daddr <= daddr + 1'd1;
+            end
+        end
+        // Restore the same synchronous-RAM lookahead used by D_WR_PF. During
+        // this cycle q is the selected word and the RAM prefetches its successor.
+        D_WR_SKIP_PF: begin
+            ddin <= run_ram_q;
+            dbe  <= run_cur_be;
+            dwe  <= 1'b1;
+            dst  <= D_WR;
         end
         // shadow RMW loop: one 64-bit word per iteration
         D_SH_R: if (!DDRAM_BUSY) begin
@@ -397,9 +437,35 @@ always @(posedge clk) begin
                 beat   <= beat + 1'd1;
                 daddr  <= daddr + 1'd1;
                 dburst <= 8'd1;
+                if (run_next_mask != 4'b0000) begin
+                    drd <= 1'b1;
+                    dbe <= 8'hFF;  // audit R20 PF-4: reads drive all byte lanes
+                    dst <= D_SH_R;
+                end
+                else begin
+                    // Empty shadow words would read DDR and then issue a
+                    // zero-BE write. Both are semantic no-ops; skip them while
+                    // retaining the RMW ordering of every populated word.
+                    drd <= 1'b0;
+                    dst <= D_SH_SKIP;
+                end
+            end
+        end
+        D_SH_SKIP: begin
+            dwe <= 1'b0;
+            drd <= 1'b0;
+            if (run_cur_mask != 4'b0000) begin
+                dburst <= 8'd1;
                 drd    <= 1'b1;
-                dbe    <= 8'hFF;  // audit R20 PF-4: reads drive all byte lanes
+                dbe    <= 8'hFF;
                 dst    <= D_SH_R;
+            end
+            else if (beat == beats) begin
+                dst <= D_IDLE;
+            end
+            else begin
+                beat  <= beat + 1'd1;
+                daddr <= daddr + 1'd1;
             end
         end
         D_RD: if (!DDRAM_BUSY) begin

@@ -28,7 +28,7 @@ MRA or RBF here.
 | Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
 | Service Mode | Off / On |
 | Alien 3 Flicker Blend | Off / On; combines its alternating HUD and gun-sight sprite fields; shown for Alien3: The Gun only |
-| V60 Fetch | PCB / Fast (Reset); optional reset-latched wide ROM instruction-cache fetch while RAM code, data and I/O retain authentic bus timing |
+| V60 Fetch | Fast / PCB (Reset); the reset-latched wide ROM instruction-cache path is the performance default, while PCB remains available; RAM code, data and I/O retain authentic bus timing |
 | Scale | Normal, V-Integer, HV-Integer |
 | CRT Adjust | Off / On; enables the CRT geometry controls below |
 | CRT H-Size | Horizontal stretch/squeeze from `-16` to `+15` |

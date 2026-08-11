@@ -7,7 +7,12 @@
 import s32_pkg::*;
 
 module s32_soundsys #(
-    parameter SYSTEM32_ONLY = 1'b0
+    parameter SYSTEM32_ONLY = 1'b0,
+    // Two ways per set.  The original two-word cache is represented by one
+    // set; production keeps four sets so short ROM-resident loops and a
+    // simultaneous banked-data stream remain resident without speculative
+    // SDRAM reads.  Keep this a power of two.
+    parameter integer ZROM_CACHE_SETS = 4
 ) (
     input             clk,          // clk_sys
     input             ce_z80,       // 8.054 / 8.0 MHz
@@ -113,38 +118,84 @@ reg [8:0] sound_bank;
 wire [23:0] rom_byte_addr = (z_addr < 16'ha000) ? {8'b0, z_addr}
                           : {2'b0, sound_bank, z_addr[12:0]};
 
-// ROM fetch through the SDRAM word port with byte select + a 2-entry cache.
+// ROM fetch through the SDRAM word port with byte select + a two-way cache.
 // A single cached word thrashed on copy loops (LDIR from banked ROM to wave
 // RAM alternates opcode-word and data-word fetches), stalling the Z80 on nearly
-// every access; two ways keep both streams resident (audit R20 AU-8).
+// every access.  Two ways preserve those independent streams; several sets
+// additionally retain the short instruction loops that feed them.  Misses
+// are still demand-only: this cache never creates prefetch/idle SDRAM traffic.
+localparam integer ZROM_SET_BITS = (ZROM_CACHE_SETS <= 1) ? 1 : $clog2(ZROM_CACHE_SETS);
 reg        rreq;
 reg [23:1] raddr;               // outstanding SDRAM request address
-reg [23:1] rtag [0:1];          // per-way tag
-reg [15:0] rdata_w [0:1];       // per-way data word
-reg [1:0]  rvalid;              // per-way valid
-reg        rfill;               // way to fill on the next miss (round-robin)
+reg [ZROM_SET_BITS-1:0] rreq_set;
+reg        rreq_way;
+// The production arrays are deliberately tiny (four asynchronous-read rows
+// per way, 312 tag+data bits total).  Keep them as flat per-way arrays and let
+// Quartus choose logic; claiming MLAB inference for this shallow shape would
+// be misleading and can create an unnecessary block-memory implementation.
+reg [23:1] rtag0 [0:ZROM_CACHE_SETS-1];
+reg [23:1] rtag1 [0:ZROM_CACHE_SETS-1];
+reg [15:0] rdata0 [0:ZROM_CACHE_SETS-1];
+reg [15:0] rdata1 [0:ZROM_CACHE_SETS-1];
+reg [ZROM_CACHE_SETS-1:0] rvalid0;
+reg [ZROM_CACHE_SETS-1:0] rvalid1;
+reg [ZROM_CACHE_SETS-1:0] rreplace; // next victim when both ways are valid
 assign zrom_req  = rreq;
 assign zrom_addr = {raddr, 1'b0};
 wire rom_sel = (z_addr < 16'hc000);
-wire hit0 = rvalid[0] && (rtag[0] == rom_byte_addr[23:1]);
-wire hit1 = rvalid[1] && (rtag[1] == rom_byte_addr[23:1]);
+wire [ZROM_SET_BITS-1:0] rom_set = (ZROM_CACHE_SETS <= 1) ?
+                                      {ZROM_SET_BITS{1'b0}} :
+                                      rom_byte_addr[ZROM_SET_BITS:1];
+wire hit0 = rvalid0[rom_set] && (rtag0[rom_set] == rom_byte_addr[23:1]);
+wire hit1 = rvalid1[rom_set] && (rtag1[rom_set] == rom_byte_addr[23:1]);
 wire rom_hit = hit0 || hit1;
-wire [15:0] rom_word = hit0 ? rdata_w[0] : rdata_w[1];
+wire [15:0] rom_word = hit0 ? rdata0[rom_set] : rdata1[rom_set];
 assign z_wait_n = ~(rom_sel && (z_mem_rd) && !rom_hit);
 
 always @(posedge clk) begin
-    if (rst) begin rreq <= 0; rvalid <= 2'b00; rfill <= 1'b0; end
+    if (rst) begin
+        rreq <= 1'b0;
+        rvalid0 <= {ZROM_CACHE_SETS{1'b0}};
+        rvalid1 <= {ZROM_CACHE_SETS{1'b0}};
+        rreplace <= {ZROM_CACHE_SETS{1'b0}};
+    end
     else begin
-        if (rom_sel && z_mem_rd && !rom_hit && !rreq) begin
+        // ACK must return low before another request is armed.  This makes a
+        // stretched completion unambiguous: it cannot be mistaken for the
+        // response to a newly launched miss on the following address.
+        if (rom_sel && z_mem_rd && !rom_hit && !rreq && !zrom_ack) begin
             rreq  <= 1'b1;
             raddr <= rom_byte_addr[23:1];
+            rreq_set <= rom_set;
+            // Fill an invalid way first; use the per-set LRU victim only once
+            // both ways in this set contain demand-fetched data.
+            if (!rvalid0[rom_set])      rreq_way <= 1'b0;
+            else if (!rvalid1[rom_set]) rreq_way <= 1'b1;
+            else                        rreq_way <= rreplace[rom_set];
         end
-        if (zrom_ack) begin
+        // Consume exactly one completion for the outstanding request.  Some
+        // integration models (and a conservatively stretched CDC pulse) can
+        // hold ACK beyond one clk edge; a second fill must not advance the
+        // victim state or duplicate the same word into both ways.
+        if (zrom_ack && rreq) begin
             rreq <= 0;
-            rdata_w[rfill] <= zrom_data;
-            rtag[rfill]    <= raddr;
-            rvalid[rfill]  <= 1'b1;
-            rfill          <= ~rfill;   // alternate ways so LDIR keeps both live
+            if (rreq_way) begin
+                rdata1[rreq_set]  <= zrom_data;
+                rtag1[rreq_set]   <= raddr;
+                rvalid1[rreq_set] <= 1'b1;
+            end
+            else begin
+                rdata0[rreq_set]  <= zrom_data;
+                rtag0[rreq_set]   <= raddr;
+                rvalid0[rreq_set] <= 1'b1;
+            end
+            rreplace[rreq_set] <= ~rreq_way;
+        end
+        else if (rom_sel && z_mem_rd && rom_hit) begin
+            // True LRU for each two-way set.  An LDIR-style hot opcode word
+            // is touched between streaming source words, so the source stream
+            // repeatedly replaces its own old word instead of the opcode.
+            rreplace[rom_set] <= hit0;
         end
     end
 end

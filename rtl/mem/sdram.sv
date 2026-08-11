@@ -5,7 +5,7 @@
 //  explicitly precharge before row changes, reads, or refreshes.
 //  Six request ports with bounded tile-deadline priority and round-robin
 //  background fairness (DESIGN.md §4.2):
-//    p0: V60 fetch/data (latency critical, 16-bit single)
+//    p0: V60 fetch/data (16-bit exact word or aligned 64-bit cache line)
 //    p1: tile fetch      (64-bit burst = 4 words)
 //    p2: sprite fetch    (128-bit burst = 8 words)
 //    p3: Z80 ROM         (16-bit single, byte laned)
@@ -48,8 +48,9 @@ module sdram (
 
     // p0: V60
     input             p0_req,
+    input             p0_burst,
     input      [24:1] p0_addr,
-    output reg [15:0] p0_dout,
+    output reg [63:0] p0_dout,
     output reg        p0_ack,
 
     // p1: tiles — 4-word burst, aligned to 8 bytes
@@ -144,6 +145,7 @@ reg [1:0]  ack_stretch;     // acks held 2 clk_ram cycles (clk_sys is /2 sync)
 // req or moves on to its next address.  This mirrors the latched per-slot
 // request interfaces used by mature MiSTer SDRAM frameworks.
 reg p0_pend, p1_pend, p2_pend, p3_pend, p4_pend, p5_pend, wr_pend;
+reg p0_burst_p;
 reg [24:1] p0_addr_p, p3_addr_p, p4_addr_p, wr_addr_p;
 reg [24:3] p1_addr_p;
 reg [24:3] p5_addr_p;
@@ -222,6 +224,7 @@ always @(posedge clk) begin
     // level held until ack), so an unqualified rising-edge latch is exact.
     if (p0_req && !p0_req_d) begin
         p0_pend <= 1'b1; p0_addr_p <= p0_addr;
+        p0_burst_p <= p0_burst;
     end
     if (p1_req && !p1_req_d) begin
         p1_pend <= 1'b1; p1_addr_p <= p1_addr;
@@ -247,6 +250,7 @@ always @(posedge clk) begin
         {p0_req_d,p1_req_d,p2_req_d,p3_req_d,p4_req_d,p5_req_d,wr_req_d} <= '0;
         {p0_ack_d2,p1_ack_d2,p2_ack_d2,p3_ack_d2,p4_ack_d2,p5_ack_d2,wr_ack_d2} <= '0;
         p0_addr_p <= '0; p1_addr_p <= '0; p2_addr_p <= '0;
+        p0_burst_p <= 1'b0;
         p3_addr_p <= '0; p4_addr_p <= '0; p5_addr_p <= '0; wr_addr_p <= '0;
         wr_din_p <= '0; wr_be_p <= '0;
     end
@@ -294,7 +298,12 @@ task automatic deliver(input [15:0] final_word);
     case (grant)
         // The final buffer write and delivery share an edge.  Use the staged
         // word directly for the last lane instead of returning stale cap_buf.
-        3'd0: begin p0_dout <= final_word; p0_ack <= 1'b1; end
+        3'd0: begin
+            p0_dout <= (rd_total == 4'd4)
+                       ? {final_word, cap_buf[2], cap_buf[1], cap_buf[0]}
+                       : {48'd0, final_word};
+            p0_ack <= 1'b1;
+        end
         3'd1: begin p1_dout <= {final_word, cap_buf[2], cap_buf[1], cap_buf[0]}; p1_ack <= 1'b1; end
         3'd2: begin p2_dout <= {final_word, cap_buf[6], cap_buf[5], cap_buf[4],
                                 cap_buf[3], cap_buf[2], cap_buf[1], cap_buf[0]}; p2_ack <= 1'b1; end
@@ -386,7 +395,12 @@ always @(posedge clk) begin
                     if (!p1_priority_grant)
                         rr_next <= (read_grant == 3'd5) ? 3'd0 : read_grant + 1'd1;
                     case (read_grant)
-                        3'd0: begin a = p0_addr_p;           rd_total <= 4'd1; end
+                        3'd0: begin
+                            // Cache-line fills are exactly four aligned words;
+                            // protection and other exact reads stay single-word.
+                            a = p0_burst_p ? {p0_addr_p[24:3], 2'b00} : p0_addr_p;
+                            rd_total <= p0_burst_p ? 4'd4 : 4'd1;
+                        end
                         3'd1: begin a = {p1_addr_p, 2'b00};  rd_total <= 4'd4; end
                         3'd2: begin a = {p2_addr_p, 3'b000}; rd_total <= 4'd8; end
                         3'd3: begin a = p3_addr_p;           rd_total <= 4'd1; end
@@ -450,7 +464,10 @@ always @(posedge clk) begin
 
         // tRCD >= 21ns = 3 cycles ACT->READ/WRITE
         ST_RCD1: state <= ST_RCD2;
-        ST_RCD2: state <= is_write ? ST_WR : ST_RD;
+        ST_RCD2: begin
+            if (is_write) state <= ST_WR;
+            else          state <= ST_RD;
+        end
 
         ST_WR: begin
             cmd      <= CMD_WRITE;

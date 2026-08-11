@@ -80,9 +80,18 @@ iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PC
   rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_ga_rom_cache.sv
 vvp /tmp/s32_ga_rom_cache | grep -q "PASS: Golden Axe ROM cache directed/reference tests passed" && \
   echo "GOLDEN AXE ROM CACHE: PASS" || { echo "GOLDEN AXE ROM CACHE: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING \
+  -DS32_TEST_CACHE32 -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache_32 \
+  rtl/s32_pkg.sv rtl/s32_core.sv verif/common/tb_ga_rom_cache.sv
+vvp /tmp/s32_ga_rom_cache_32 | grep -q "CACHE CONFLICT index_bits=5 pressure_requests=8" && \
+  echo "GOLDEN AXE ROM CACHE 32-LINE BASELINE: PASS" || { echo "GOLDEN AXE ROM CACHE 32-LINE BASELINE: FAIL"; exit 1; }
 echo "[9/35] framebuffer interface directed test (runs / shadow RMW / erase / read)"
 iverilog -g2012 -o /tmp/s32_fbif rtl/mem/s32_fb_if.sv verif/common/tb_fb_if.sv
 vvp /tmp/s32_fbif | grep -q "FB IF PASS" && echo "FB IF: PASS" || { echo "FB IF: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -s tb_fb_if_throughput -o /tmp/s32_fbif_throughput \
+  rtl/mem/s32_fb_if.sv verif/common/tb_fb_if_throughput.sv
+vvp /tmp/s32_fbif_throughput | grep -q "FB THROUGHPUT PASS" && \
+  echo "FB THROUGHPUT: PASS" || { echo "FB THROUGHPUT: FAIL"; exit 1; }
 echo "[10/35] mixer directed + pixel latency + 512-case independent differential test"
 iverilog -g2012 -o /tmp/s32_mix rtl/video/s32_linebuf.sv rtl/video/s32_mixer.sv \
   rtl/video/s32_palette.sv verif/common/tb_mixer.sv
@@ -97,8 +106,13 @@ python3 -m verif.mixer_diff.generate_vectors /tmp/s32_mixer_vectors.hex --seed 5
 iverilog -g2012 -o /tmp/s32_mixdiff rtl/video/s32_mixer.sv verif/mixer_diff/tb_mixer_diff.sv
 vvp /tmp/s32_mixdiff +VECTORS=/tmp/s32_mixer_vectors.hex | grep -q "MIXER DIFF PASS cases=512" && echo "MIXER DIFFERENTIAL: PASS (512 cases)" || { echo "MIXER DIFFERENTIAL: FAIL"; exit 1; }
 echo "[11/35] sprite pixel-path directed test (pen rules / end codes / flip / zoom / indirect)"
-iverilog -g2012 -o /tmp/s32_spr rtl/video/s32_sprite.sv verif/common/tb_sprite.sv
+iverilog -g2012 -s tb_sprite -o /tmp/s32_spr rtl/video/s32_sprite.sv verif/common/tb_sprite.sv
 vvp /tmp/s32_spr | grep -q "SPRITE PASS" && echo "SPRITE: PASS" || { echo "SPRITE: FAIL"; exit 1; }
+iverilog -g2012 -s tb_sprite_fallback -o /tmp/s32_spr_fallback \
+  rtl/video/s32_sprite.sv verif/common/tb_sprite.sv \
+  verif/common/tb_sprite_fallback.sv
+vvp /tmp/s32_spr_fallback | grep -q "SPRITE FALLBACK PASS" && \
+  echo "SPRITE FALLBACK: PASS" || { echo "SPRITE FALLBACK: FAIL"; exit 1; }
 echo "[12/35] sprite scale divider exactness / fixed-latency test"
 iverilog -g2012 -s tb_sprite_div -o /tmp/s32_sprdiv rtl/video/s32_sprite.sv verif/common/tb_sprite_div.sv
 vvp /tmp/s32_sprdiv | grep -q "SPRITE DIV PASS" && echo "SPRITE DIV: PASS" || { echo "SPRITE DIV: FAIL"; exit 1; }
@@ -190,6 +204,9 @@ vvp /tmp/s32_sdram | grep -q "SDRAM CAPTURE PASS" && echo "SDRAM CAPTURE: PASS" 
 iverilog -g2012 -s tb_sdram_tile_deadline -o /tmp/s32_sdram_tile_deadline \
   rtl/mem/sdram.sv verif/common/tb_sdram_tile_deadline.sv
 vvp /tmp/s32_sdram_tile_deadline | grep -q "SDRAM TILE DEADLINE PASS" && echo "SDRAM TILE DEADLINE: PASS" || { echo "SDRAM TILE DEADLINE: FAIL"; exit 1; }
+iverilog -g2012 -s tb_sdram_p0_throughput -o /tmp/s32_sdram_p0_throughput \
+  rtl/mem/sdram.sv verif/common/tb_sdram_p0_throughput.sv
+vvp /tmp/s32_sdram_p0_throughput | grep -q "SDRAM P0 THROUGHPUT PASS" && echo "SDRAM P0 THROUGHPUT: PASS" || { echo "SDRAM P0 THROUGHPUT: FAIL"; exit 1; }
 echo "[27/35] integrated sprite renderer / backpressured DDR framebuffer stress"
 iverilog -g2012 -s tb_sprite_fb -o /tmp/s32_sprite_fb \
   rtl/video/s32_sprite.sv rtl/mem/s32_fb_if.sv \
@@ -215,13 +232,26 @@ iverilog -g2012 -DS32_SYSTEM32_ONLY -s tb_audio_mix_diff -o /tmp/s32_audio_mix_d
   rtl/audio/s32_audio_mix.sv verif/common/tb_audio_mix_diff.sv
 vvp /tmp/s32_audio_mix_diff_ga | grep -q "PASS: audio mixer differential checks=20012" && \
   echo "AUDIO MIX DIFFERENTIAL (GOLDEN AXE): PASS" || { echo "AUDIO MIX DIFFERENTIAL (GOLDEN AXE): FAIL"; exit 1; }
-echo "[30/35] sound map + production JT12 MLAB-shift reset"
+echo "[30/35] sound map/cache throughput + production JT12 MLAB-shift reset"
 iverilog -g2012 -DSIMULATION -o /tmp/s32_soundsys_bus \
   rtl/s32_pkg.sv rtl/video/s32_big_dpram.sv \
   rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv \
   verif/common/jt12_stub.v verif/common/tb_soundsys_bus.sv
 vvp /tmp/s32_soundsys_bus | grep -q "SOUNDSYS BUS PASS" && echo "SOUNDSYS BUS: PASS" || { echo "SOUNDSYS BUS: FAIL"; exit 1; }
+for cache_sets in 1 4; do
+  iverilog -g2012 -DSIMULATION -s tb_soundsys_zrom_cache \
+    -P "tb_soundsys_zrom_cache.ZROM_CACHE_SETS=$cache_sets" \
+    -o "/tmp/s32_soundsys_zrom_cache_$cache_sets" \
+    rtl/s32_pkg.sv rtl/video/s32_big_dpram.sv \
+    rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
+    rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv \
+    verif/common/jt12_stub.v verif/common/tb_soundsys_zrom_cache.sv
+  vvp "/tmp/s32_soundsys_zrom_cache_$cache_sets" | grep -q "SOUNDSYS ZROM CACHE PASS" || {
+    echo "SOUNDSYS ZROM CACHE ($cache_sets sets): FAIL"; exit 1;
+  }
+done
+echo "SOUNDSYS ZROM CACHE A/B: PASS"
 jt12_sources=$(sed -n 's/.*"\([^"]*\)".*/rtl\/audio\/jt12\/\1/p' rtl/audio/jt12/jt12.qip)
 # QIP paths contain no whitespace; intentional splitting supplies one source per argument.
 # shellcheck disable=SC2086
@@ -258,6 +288,11 @@ for profile in standard v25; do
   }
   echo "V60 EXEC CADENCE ($profile): PASS"
 done
+iverilog -g2012 -s tb_v60_exec_retire -o /tmp/s32_v60_exec_retire \
+  rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
+  verif/common/tb_v60_exec_retire.sv
+vvp /tmp/s32_v60_exec_retire | grep -q "V60 EXEC RETIRE PASS" && \
+  echo "V60 EXEC RETIRE: PASS" || { echo "V60 EXEC RETIRE: FAIL"; exit 1; }
 echo "[34/35] System32 palette/mixer/I-O/V25 mirrored address decode"
 iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \

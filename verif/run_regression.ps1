@@ -464,9 +464,18 @@ try {
     ) "PASS: Golden Axe ROM cache directed/reference tests passed" @(
         "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING"
     )
+    Run-HdlTest "t08_ga_rom_cache_32_baseline" "tb_ga_rom_cache" @(
+        "rtl/s32_pkg.sv", "rtl/s32_core.sv", "verif/common/tb_ga_rom_cache.sv"
+    ) "CACHE CONFLICT index_bits=5 pressure_requests=8" @(
+        "SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING",
+        "S32_TEST_CACHE32"
+    )
 
     Write-Tier 9 "framebuffer interface directed test (runs / shadow RMW / erase / read)"
     Run-HdlTest "t09_fb_if" "tb_fb_if" @("rtl/mem/s32_fb_if.sv", "verif/common/tb_fb_if.sv") "FB IF PASS"
+    Run-HdlTest "t09_fb_if_throughput" "tb_fb_if_throughput" @(
+        "rtl/mem/s32_fb_if.sv", "verif/common/tb_fb_if_throughput.sv"
+    ) "FB THROUGHPUT PASS" @("SIMULATION")
 
     Write-Tier 10 "mixer directed + pixel latency + 512-case independent differential test"
     Run-HdlTest "t10_mixer" "tb_mixer" @("rtl/video/s32_linebuf.sv", "rtl/video/s32_mixer.sv", "rtl/video/s32_palette.sv", "verif/common/tb_mixer.sv") "MIXER PASS"
@@ -484,6 +493,7 @@ try {
 
     Write-Tier 11 "sprite pixel-path directed test (pen rules / end codes / flip / zoom / indirect)"
     Run-HdlTest "t11_sprite" "tb_sprite" @("rtl/video/s32_sprite.sv", "verif/common/tb_sprite.sv") "SPRITE PASS"
+    Run-HdlTest "t11_sprite_fallback" "tb_sprite_fallback" @("rtl/video/s32_sprite.sv", "verif/common/tb_sprite.sv", "verif/common/tb_sprite_fallback.sv") "SPRITE FALLBACK PASS"
 
     Write-Tier 12 "sprite scale divider exactness / fixed-latency test"
     Run-HdlTest "t12_sprite_div" "tb_sprite_div" @("rtl/video/s32_sprite.sv", "verif/common/tb_sprite_div.sv") "SPRITE DIV PASS"
@@ -552,6 +562,9 @@ try {
     Run-HdlTest "t26_sdram_tile_deadline" "tb_sdram_tile_deadline" @(
         "rtl/mem/sdram.sv", "verif/common/tb_sdram_tile_deadline.sv"
     ) "SDRAM TILE DEADLINE PASS"
+    Run-HdlTest "t26_sdram_p0_throughput" "tb_sdram_p0_throughput" @(
+        "rtl/mem/sdram.sv", "verif/common/tb_sdram_p0_throughput.sv"
+    ) "SDRAM P0 THROUGHPUT PASS"
 
     Write-Tier 27 "integrated sprite renderer / backpressured DDR framebuffer stress"
     Run-HdlTest "t27_sprite_fb" "tb_sprite_fb" @("rtl/video/s32_sprite.sv", "rtl/mem/s32_fb_if.sv", "verif/common/tb_sprite_fb.sv") "SPRITE FB PASS"
@@ -569,13 +582,23 @@ try {
         "rtl/audio/s32_audio_mix.sv", "verif/common/tb_audio_mix_diff.sv"
     ) "PASS: audio mixer differential checks=20012" @("S32_SYSTEM32_ONLY")
 
-    Write-Tier 30 "sound map/T80 boot + production JT12 MLAB-shift reset"
+    Write-Tier 30 "sound map/cache throughput/T80 boot + production JT12 MLAB-shift reset"
     Run-HdlTest "t30_soundsys_bus" "tb_soundsys_bus" @(
         "rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv",
         "rtl/audio/s32_rf5c68.sv", "rtl/audio/s32_multipcm.sv",
         "rtl/audio/s32_audio_mix.sv", "rtl/audio/s32_soundsys.sv",
         "verif/common/jt12_stub.v", "verif/common/tb_soundsys_bus.sv"
     ) "SOUNDSYS BUS PASS" @("SIMULATION")
+    $soundCacheSources = @(
+        "rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv",
+        "rtl/audio/s32_rf5c68.sv", "rtl/audio/s32_multipcm.sv",
+        "rtl/audio/s32_audio_mix.sv", "rtl/audio/s32_soundsys.sv",
+        "verif/common/jt12_stub.v", "verif/common/tb_soundsys_zrom_cache.sv"
+    )
+    Run-HdlTest "t30_soundsys_zrom_cache_2" "tb_soundsys_zrom_cache" $soundCacheSources `
+        "SOUNDSYS ZROM CACHE sets=1 ldir_requests=33 conflict_requests=160" @() @("-gZROM_CACHE_SETS=1")
+    Run-HdlTest "t30_soundsys_zrom_cache_8" "tb_soundsys_zrom_cache" $soundCacheSources `
+        "SOUNDSYS ZROM CACHE sets=4 ldir_requests=33 conflict_requests=8" @() @("-gZROM_CACHE_SETS=4")
     Run-JT12ResetTest
     Run-SoundZ80Test
     Run-SoundSharedTest
@@ -612,6 +635,10 @@ try {
         "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
         "verif/v60/tb_v60_sonic_burst_timing.sv"
     ) "SONIC BURST TIMING PASS"
+    Run-HdlTest "t33_v60_exec_retire" "tb_v60_exec_retire" @(
+        "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
+        "verif/common/tb_v60_exec_retire.sv"
+    ) "V60 EXEC RETIRE PASS"
 
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")

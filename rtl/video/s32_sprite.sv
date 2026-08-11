@@ -15,7 +15,10 @@ module s32_sprite #(
     // is round(50 us * clk_ram) = 4,832 clocks.
     parameter integer POST_VBLANK_CYCLES = 4832,
     // Dedicated Golden Axe hardware profile: verify FPGA SDRAM sprite bursts.
-    parameter bit VERIFY_SROM = 1'b0
+    parameter bit VERIFY_SROM = 1'b0,
+    // Exact common-path accelerator.  Set false only in differential benches
+    // to retain the fully general R_PIXEL/R_EMIT cadence as a fallback model.
+    parameter bit FAST_1X = 1'b1
 ) (
     input             clk,          // clk_ram
     input             rst,
@@ -228,6 +231,7 @@ reg        [9:0]  pixel_sx_px;
 reg        [2:0]  pixel_piw, pixel_piw_last;
 reg        [9:0]  pixel_wordi;
 reg        [7:0]  pixel_pen8;
+reg        [3:0]  pixel_byteoff;
 reg        [23:0] scan_byteaddr;
 
 // Width is latched at buffer swap; a live write cannot alter this pass.
@@ -800,6 +804,7 @@ always @(posedge clk) begin
                 pixel_piw_last <= piw_last;
                 pixel_wordi    <= wordi;
                 pixel_pen8     <= pixrow[{byteaddr[3:0], 3'b000} +: 8];
+                pixel_byteoff  <= byteaddr[3:0];
                 rs <= R_EMIT;
             end
         end
@@ -841,6 +846,13 @@ always @(posedge clk) begin
             logic [7:0]  pen8, pix, trans_now;
             logic [15:0] outpix, indpix;
             logic        gate_clip, gate_draw;
+            logic signed [13:0] next_scrx;
+            logic signed [15:0] clip_x_min, clip_x_max;
+            logic [9:0]  next_dx, next_sx_px, next_wordi;
+            logic [2:0]  next_piw;
+            logic [3:0]  next_byteoff;
+            logic        same_cache;
+            logic        fast_continue;
 
             // Pen extract: bits 31:28 of the BE word = leftmost pixel;
             // even source px = high nibble of its byte.
@@ -889,7 +901,57 @@ always @(posedge clk) begin
                     end_scan_word <= pixel_wordi + 1'd1;
                 dx <= dx + 1'd1;
                 xacc <= xacc + xstep;
-                rs <= R_PIXEL;
+
+                // The common unscaled path advances exactly one source pixel
+                // per destination pixel.  Preselect the following byte while
+                // this pixel is emitted, sustaining one output per clock.
+                // Cache boundaries, trailing clipping, scaling, and END codes
+                // retain the fully general R_PIXEL fallback above/next cycle.
+                next_dx = dx + 1'd1;
+                next_sx_px = pixel_sx_px + 1'd1;
+                next_scrx = d_flipx ? (pixel_scrx - 14'sd1)
+                                        : (pixel_scrx + 14'sd1);
+                next_piw = (pixel_piw == pixel_piw_last)
+                         ? 3'd0 : (pixel_piw + 1'd1);
+                next_wordi = (pixel_piw == pixel_piw_last)
+                           ? (pixel_wordi + 1'd1) : pixel_wordi;
+                if (d_bpp8) begin
+                    next_byteoff = pixel_byteoff + 1'd1;
+                    same_cache = pixel_byteoff != 4'hf;
+                end
+                else if (!pixel_sx_px[0]) begin
+                    // The second 4bpp pixel shares the current source byte.
+                    next_byteoff = pixel_byteoff;
+                    same_cache = 1'b1;
+                end
+                else begin
+                    next_byteoff = pixel_byteoff + 1'd1;
+                    same_cache = pixel_byteoff != 4'hf;
+                end
+                clip_x_min = (clip_en && $signed(clip_l) > 0)
+                           ? $signed(clip_l) : 16'sd0;
+                clip_x_max = (clip_en && $signed(clip_r) <
+                               $signed({7'b0, hpix}) - 1)
+                           ? $signed(clip_r)
+                           : $signed({7'b0, hpix}) - 1;
+                fast_continue = FAST_1X && (xstep == 25'h1_0000) &&
+                                (next_dx < d_dstw) && rowtag_v &&
+                                same_cache &&
+                                ((!d_flipx && next_scrx <= clip_x_max) ||
+                                 ( d_flipx && next_scrx >= clip_x_min));
+                if (fast_continue) begin
+                    pixel_scrx     <= next_scrx;
+                    pixel_sx_px    <= next_sx_px;
+                    pixel_piw      <= next_piw;
+                    pixel_wordi    <= next_wordi;
+                    pixel_byteoff  <= next_byteoff;
+                    pixel_pen8     <= pixrow[
+                        {next_byteoff, 3'b000} +: 8];
+                    rs <= R_EMIT;
+                end
+                else begin
+                    rs <= R_PIXEL;
+                end
             end
         end
 

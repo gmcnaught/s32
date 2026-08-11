@@ -86,7 +86,7 @@ typedef enum logic [4:0] {
     T_NAME, T_NAMEW, T_NAMER, T_PIX, T_PIXW, T_EMIT,
     T_TXT_NAME, T_TXT_NAMEW, T_TXT_NAMER,
     T_TXT_PIX, T_TXT_PIXW, T_TXT_PIXR, T_TXT_EMIT,
-    T_BMP, T_BMPW, T_BMPR, T_DONE
+    T_BMP, T_BMPW, T_BMPR, T_BMP_EMIT, T_DONE
 } tst_t;
 tst_t tst;
 
@@ -102,6 +102,18 @@ reg [15:0] rowscroll_add;
 reg [8:0]  rowselect_y;
 reg        use_rowsel;
 
+// Bitmap VRAM is word-wide while the renderer consumes one pixel per cycle.
+// Retain an explicitly tagged word for its two 8bpp or four 4bpp lanes rather
+// than paying the synchronous VRAM latency again for every pixel.  The tag is
+// checked on every emit, so a live scroll/mode change falls back to a fresh
+// read instead of reusing data from a different word interpretation.
+reg [15:0] bmp_word;
+reg [15:0] bmp_word_addr;
+reg [15:0] bmp_req_addr;
+reg        bmp_word_bpp8;
+reg        bmp_req_bpp8;
+reg        bmp_word_valid;
+
 // NBG0/1 use MAME's exact (0x200 << 20)/zoom calculation on both axes.
 // A shared restoring divider keeps that work off the 96.6 MHz render path.
 reg         scale_start;
@@ -113,6 +125,13 @@ reg signed [10:0] scale_ybase;
 reg        [31:0] scale_xorigin, scale_yorigin;
 reg signed [33:0] scale_yprod, scale_xprod;
 reg               scale_flipx;
+reg               scale_cache_hit;
+reg        [22:0] scale_cached_xquot, scale_cached_yquot;
+reg               scale_cache_valid [0:1];
+reg        [11:0] scale_cache_zx [0:1];
+reg        [11:0] scale_cache_zy [0:1];
+reg        [22:0] scale_cache_xquot [0:1];
+reg        [22:0] scale_cache_yquot [0:1];
 
 // The reciprocal quotient is 23 bits, while the signed destination-center
 // offset is 11 bits.  Explicitly widen both operands before multiplying: an
@@ -122,6 +141,8 @@ wire signed [33:0] scale_xbase_ext = {{23{scale_xbase[10]}}, scale_xbase};
 wire signed [33:0] scale_ybase_ext = {{23{scale_ybase[10]}}, scale_ybase};
 wire signed [33:0] scale_xquot_ext = {11'b0, scale_xquot};
 wire signed [33:0] scale_yquot_ext = {11'b0, scale_yquot};
+wire signed [33:0] scale_cached_xquot_ext = {11'b0, scale_cached_xquot};
+wire signed [33:0] scale_cached_yquot_ext = {11'b0, scale_cached_yquot};
 
 s32_tilemap_scale_div scale_div (
     .clk(clk), .rst(rst), .start(scale_start),
@@ -150,6 +171,11 @@ endfunction
 // tile name address within VRAM: page*0x200 + row*32 + col
 function automatic [15:0] name_addr(input [6:0] pg, input [9:0] sx, input [8:0] sy);
     name_addr = {pg, 9'b0} + {7'b0, sy[7:4], sx[8:4]};
+endfunction
+
+function automatic [15:0] bitmap_addr(input [8:0] bx, input [8:0] by,
+                                      input bpp8);
+    bitmap_addr = bpp8 ? {by[7:0], bx[8:1]} : {by, bx[8:2]};
 endfunction
 
 // layer clip windows (MAME compute_clipping_extents, per-pixel form):
@@ -181,6 +207,10 @@ always @(posedge clk) begin
     if (rst) begin
         tst <= T_IDLE; line_done <= 0; lb_we <= 0; tile_req <= 0;
         scale_start <= 0;
+        scale_cache_hit <= 1'b0;
+        scale_cache_valid[0] <= 1'b0;
+        scale_cache_valid[1] <= 1'b0;
+        bmp_word_valid <= 1'b0;
     end
     else begin
         lb_we <= 1'b0;
@@ -196,6 +226,8 @@ always @(posedge clk) begin
             lay <= 0;
             x   <= 0;
             line_done <= 0;
+            // A cached bitmap word never crosses a scanline epoch.
+            bmp_word_valid <= 1'b0;
             tst <= T_LSTART;
         end
 
@@ -212,6 +244,8 @@ always @(posedge clk) begin
                 end
                 else if (lay < 2) begin
                     logic [11:0] zy, zx;
+                    logic [11:0] zy_eff;
+                    logic cache_hit;
                     logic fx, fy;
                     logic signed [10:0] xdest;
                     logic signed [10:0] ydest;
@@ -221,10 +255,19 @@ always @(posedge clk) begin
                     fy = r1ff00[9] ^ (r1ff00[lay_idx] & ~r1ff00[8]);
                     zy = (zoomy[lay][11:0] < 12'h080) ? 12'h080 : zoomy[lay][11:0];
                     zx = (zoomx[lay][11:0] < 12'h080) ? 12'h080 : zoomx[lay][11:0];
+                    zy_eff = r1ff00[14] ? zy : zx;
+                    // The reciprocal divider's numerator is constant. Its
+                    // complete input key is therefore the pair of clamped,
+                    // effective X/Y denominators (the independent-Y select is
+                    // already folded into zy_eff). Keep one exact entry per
+                    // zoomable layer so different NBG0/NBG1 zooms do not thrash.
+                    cache_hit = scale_cache_valid[lay[0]] &&
+                                scale_cache_zx[lay[0]] == zx &&
+                                scale_cache_zy[lay[0]] == zy_eff;
                     scale_zx <= zx;
                     // MAME uses zoom X for both axes unless independent Y
                     // zoom is selected by $1FF00 bit 14.
-                    scale_zy <= r1ff00[14] ? zy : zx;
+                    scale_zy <= zy_eff;
                     // MAME treats the destination center as signed 9-bit at
                     // neutral zoom and signed 10-bit whenever that axis is
                     // zoomed.  This subtle rule is required by Holo and by
@@ -244,7 +287,14 @@ always @(posedge clk) begin
                     scale_yorigin <= {3'b0, scrolly[lay][8:0], 20'b0} +
                                      {12'b0, scrollfracy[lay][15:9], 13'b0};
                     scale_flipx <= fx;
-                    scale_start <= 1'b1;
+                    scale_cache_hit <= cache_hit;
+                    if (cache_hit) begin
+                        scale_cached_xquot <= scale_cache_xquot[lay[0]];
+                        scale_cached_yquot <= scale_cache_yquot[lay[0]];
+                    end
+                    else begin
+                        scale_start <= 1'b1;
+                    end
                     x <= 0;
                     use_rowsel <= 0;
                     rowscroll_add <= 0;
@@ -297,12 +347,27 @@ always @(posedge clk) begin
         // destination zoom floored at 0x80.
         // Register the two DSP products before the final coordinate add so
         // neither operation spans the full 96 MHz cycle.
-        T_SCALE: if (scale_done) begin
-            scale_yprod <= scale_ybase_ext * scale_yquot_ext;
-            scale_xprod <= scale_xbase_ext * scale_xquot_ext;
-            xstep <= scale_flipx ? -$signed({9'b0, scale_xquot})
-                                 :  $signed({9'b0, scale_xquot});
-            tst <= T_SCALE_APPLY;
+        T_SCALE: begin
+            if (scale_cache_hit) begin
+                scale_yprod <= scale_ybase_ext * scale_cached_yquot_ext;
+                scale_xprod <= scale_xbase_ext * scale_cached_xquot_ext;
+                xstep <= scale_flipx ? -$signed({9'b0, scale_cached_xquot})
+                                     :  $signed({9'b0, scale_cached_xquot});
+                scale_cache_hit <= 1'b0;
+                tst <= T_SCALE_APPLY;
+            end
+            else if (scale_done) begin
+                scale_yprod <= scale_ybase_ext * scale_yquot_ext;
+                scale_xprod <= scale_xbase_ext * scale_xquot_ext;
+                xstep <= scale_flipx ? -$signed({9'b0, scale_xquot})
+                                     :  $signed({9'b0, scale_xquot});
+                scale_cache_valid[lay[0]] <= 1'b1;
+                scale_cache_zx[lay[0]] <= scale_zx;
+                scale_cache_zy[lay[0]] <= scale_zy;
+                scale_cache_xquot[lay[0]] <= scale_xquot;
+                scale_cache_yquot[lay[0]] <= scale_yquot;
+                tst <= T_SCALE_APPLY;
+            end
         end
         T_SCALE_APPLY: begin
             logic [31:0] ycoord;
@@ -492,37 +557,83 @@ always @(posedge clk) begin
         //   color = (reg 0x1FF8C << 4) masked above the pen bits
         T_BMP: begin
             logic [8:0] bx, by;
+            logic [15:0] addr;
             bx = x[8:0] + r1ff88[8:0];
             by = line + r1ff8a[8:0];
-            if (r1ff00[11]) // 8bpp
-                vram_addr <= {by[7:0], bx[8:1]};
-            else
-                vram_addr <= {by[8:0], bx[8:2]};
+            addr = bitmap_addr(bx, by, r1ff00[11]);
+            vram_addr <= addr;
+            bmp_req_addr <= addr;
+            bmp_req_bpp8 <= r1ff00[11];
+            bmp_word_valid <= 1'b0;
             tst <= T_BMPW;
         end
         T_BMPW: begin
             tst <= T_BMPR;
         end
         T_BMPR: begin
+            bmp_word <= vram_rdata;
+            bmp_word_addr <= bmp_req_addr;
+            bmp_word_bpp8 <= bmp_req_bpp8;
+            bmp_word_valid <= 1'b1;
+            tst <= T_BMP_EMIT;
+        end
+        T_BMP_EMIT: begin
             logic [8:0] bx;
+            logic [8:0] by;
+            logic [8:0] next_bx;
+            logic [15:0] want_addr, next_addr;
             logic [7:0] pen8;
             bx = x[8:0] + r1ff88[8:0];
-            if (r1ff00[11]) pen8 = bx[0] ? vram_rdata[15:8] : vram_rdata[7:0];
-            else            pen8 = {4'b0, vram_rdata[{bx[1:0],2'b00} +: 4]};
-            lb_we    <= 1'b1;
-            lb_layer <= 3'd5;
-            lb_x     <= x[8:0];
-            // bitmap clip: $1FF02 bit15 enable / bit10 clip-out, rect 4 only
-            if (r1ff00[11])
-                lb_pix <= {(|pen8) && clip_vis(x[8:0], line,
-                              r1ff02[15], r1ff02[10], 5'b10000),
-                           r1ff8c[8:4], pen8};                   // 8bpp
-            else
-                lb_pix <= {(|pen8[3:0]) && clip_vis(x[8:0], line,
-                              r1ff02[15], r1ff02[10], 5'b10000),
-                           r1ff8c[8:0], pen8[3:0]};              // 4bpp
-            if (x == hpix-1) tst <= T_DONE;
-            else begin x <= x + 1'd1; tst <= T_BMP; end
+            by = line + r1ff8a[8:0];
+            want_addr = bitmap_addr(bx, by, r1ff00[11]);
+            if (!bmp_word_valid || bmp_word_addr != want_addr ||
+                bmp_word_bpp8 != r1ff00[11]) begin
+                // Fully general fallback for a word/mode miss. Keep x fixed
+                // until the correctly tagged synchronous read completes.
+                vram_addr <= want_addr;
+                bmp_req_addr <= want_addr;
+                bmp_req_bpp8 <= r1ff00[11];
+                bmp_word_valid <= 1'b0;
+                tst <= T_BMPW;
+            end
+            else begin
+                if (r1ff00[11])
+                    pen8 = bx[0] ? bmp_word[15:8] : bmp_word[7:0];
+                else
+                    pen8 = {4'b0, bmp_word[{bx[1:0],2'b00} +: 4]};
+                lb_we    <= 1'b1;
+                lb_layer <= 3'd5;
+                lb_x     <= x[8:0];
+                // bitmap clip: $1FF02 bit15 enable / bit10 clip-out, rect 4 only
+                if (r1ff00[11])
+                    lb_pix <= {(|pen8) && clip_vis(x[8:0], line,
+                                  r1ff02[15], r1ff02[10], 5'b10000),
+                               r1ff8c[8:4], pen8};               // 8bpp
+                else
+                    lb_pix <= {(|pen8[3:0]) && clip_vis(x[8:0], line,
+                                  r1ff02[15], r1ff02[10], 5'b10000),
+                               r1ff8c[8:0], pen8[3:0]};          // 4bpp
+                if (x == hpix-1) begin
+                    bmp_word_valid <= 1'b0;
+                    tst <= T_DONE;
+                end
+                else begin
+                    x <= x + 1'd1;
+                    // Stay in the cached word for all remaining lanes. At
+                    // the final lane, launch the next word immediately so
+                    // the old address-setup state does not add a bubble.
+                    if ((r1ff00[11] && bx[0]) ||
+                        (!r1ff00[11] && bx[1:0] == 2'b11)) begin
+                        next_bx = bx + 1'd1;
+                        next_addr = bitmap_addr(next_bx, by, r1ff00[11]);
+                        vram_addr <= next_addr;
+                        bmp_req_addr <= next_addr;
+                        bmp_req_bpp8 <= r1ff00[11];
+                        bmp_word_valid <= 1'b0;
+                        tst <= T_BMPW;
+                    end
+                end
+            end
         end
 
         T_DONE: begin

@@ -49,9 +49,22 @@ module s32_v60 #(
     // baseline without editing this file (the full-core testbenches do not
     // override module parameters, so a define is the only lever they have).
 `ifdef V60_NO_SEQ_DISPATCH
-    parameter        SEQ_DISPATCH = 1'b0
+    parameter        SEQ_DISPATCH = 1'b0,
 `else
-    parameter        SEQ_DISPATCH = 1'b1
+    parameter        SEQ_DISPATCH = 1'b1,
+`endif
+    // EXEC_RETIRE=1: simple F12/short instructions whose result is committed
+    // only to a register (or has no writeback, such as CMP/TEST) retire their sequential
+    // fetch window on the execute edge.  The real V60 overlaps its EXU and IDU;
+    // keeping a separate S_NEXT edge after the result is already complete is an
+    // artifact of this serial microsequencer.  Memory destinations, control
+    // transfers and iterative operations retain their existing states and all
+    // external bus transactions retain their exact ordering.  The define is an
+    // A/B lever for focused throughput and architectural-equivalence tests.
+`ifdef V60_NO_EXEC_RETIRE
+    parameter        EXEC_RETIRE = 1'b0
+`else
+    parameter        EXEC_RETIRE = 1'b1
 `endif
 )(
     input             clk,
@@ -563,12 +576,6 @@ wire [4:0] seq_required = (seq_pd_valid && seq_pd_start == total_len)
 // (total_len<=4) AND the successor is already complete within it.
 wire seq_dispatch_now = seq_shift_ok && (total_len <= 5'd4)
                         && (seq_valid_after >= seq_required);
-// True in any cycle the main FSM shifts fb[] itself.  A prefetch ack landing in
-// such a cycle must be discarded: its append indexes off the pre-shift frontier
-// and would race the shift's own assignment to the same fb[] bytes.
-wire win_shift_now = (st == S_FILL && fb_base != pc)
-                     || (st == S_NEXT && seq_shift_ok);
-
 // One restoring-division bit per enabled CPU clock.  The 33-bit trial value
 // is the only compare/subtract datapath used for all 64 dividend bits.
 wire [32:0] xdiv_trial = {xdiv_rem[31:0], xdiv_shift[63]};
@@ -595,6 +602,36 @@ typedef enum logic [4:0] {
 cls_t cls;
 
 reg [7:0] cur_op;
+
+// A simple register-result F12 operation has finished all architectural and
+// bus work in S_EXEC.  Shift at most the same four bytes as S_NEXT.  Direct
+// dispatch deliberately uses the conservative 20-byte threshold rather than
+// putting the exact successor decoder on this execute-edge path; shorter
+// windows fall through to the unchanged S_FILL safety path.
+wire [4:0] exec_retire_len = (cls == C_SHORT) ? (5'd1 + len1)
+                                                 : (5'd2 + len1 + len2);
+wire [4:0] exec_retire_s = (exec_retire_len >= 5'd4) ? 5'd4 : exec_retire_len;
+wire       exec_retire_f12 = (cls == C_F12) &&
+                             f12_simple_register_retire(cur_op) &&
+                             (flag2 || f12_no_writeback(cur_op));
+wire       exec_retire_short = (cls == C_SHORT) &&
+                               short_simple_register_retire(cur_op) &&
+                               (flag1 || short_no_writeback(cur_op));
+wire       exec_retire_candidate = EXEC_RETIRE && (st == S_EXEC) &&
+                                   (exec_retire_f12 || exec_retire_short);
+wire       exec_retire_shift_ok = exec_retire_candidate && (fb_base == pc) &&
+                                  (exec_retire_len != 5'd0) &&
+                                  (exec_retire_len < fb_valid);
+wire [4:0] exec_retire_valid_after = fb_valid - exec_retire_len;
+wire       exec_retire_dispatch_now = exec_retire_shift_ok &&
+                                      (exec_retire_len <= 5'd4) &&
+                                      (exec_retire_valid_after >= FB_THRESH);
+// True in any cycle the main FSM shifts fb[] itself.  A prefetch ack landing in
+// such a cycle must be discarded: its append indexes off the pre-shift frontier
+// and would race the shift's own assignment to the same fb[] bytes.
+wire win_shift_now = (st == S_FILL && fb_base != pc)
+                     || (st == S_NEXT && seq_shift_ok)
+                     || exec_retire_shift_ok;
 
 // Consolidate every dynamic general-register read onto two explicit ports.
 // The architectural register array remains flip-flop based with its existing
@@ -2170,6 +2207,47 @@ else if (ce) begin
             st <= S_NEXT;   // default: single-cycle exec, then advance
             total_len <= 5'd2 + len1 + len2;
             exec_op();      // task below sets wb / flags / possibly overrides st
+            if (exec_retire_candidate) begin
+                logic keep_prev_for_dbr;
+                logic [31:0] successor_pc, successor_target;
+                keep_prev_for_dbr = 1'b0;
+                successor_pc = pc + {27'b0, exec_retire_len};
+                successor_target = 32'd0;
+
+                // Preserve the retained-loop ownership rule from S_NEXT.  A
+                // following DBcc/TB may branch back to the saved window, so do
+                // not overwrite it with the current one in that case.
+                if (fb_prev_valid != 0 && exec_retire_len <= 5'd20 &&
+                    fb_valid >= exec_retire_len + 5'd4 &&
+                    (fb[exec_retire_len] == 8'hc6 ||
+                     fb[exec_retire_len] == 8'hc7)) begin
+                    successor_target = successor_pc +
+                        {{16{fb[exec_retire_len + 5'd3][7]}},
+                          fb[exec_retire_len + 5'd3],
+                          fb[exec_retire_len + 5'd2]};
+                    keep_prev_for_dbr = (successor_target == fb_prev_base);
+                    pf_loop_hint <= 1'b1;
+                end
+
+                pc <= successor_pc;
+                st <= S_FILL;
+                st_after_fill <= S_DECODE;
+                if (exec_retire_shift_ok) begin
+                    if (!keep_prev_for_dbr) begin
+                        for (int i = 0; i < 24; i++) fb_prev[i] <= fb[i];
+                        fb_prev_base  <= fb_base;
+                        fb_prev_valid <= fb_valid;
+                    end
+                    for (int i = 0; i < 24; i++)
+                        if (i + exec_retire_s < 24)
+                            fb[i] <= fb[i + exec_retire_s];
+                    fb_base  <= fb_base + {27'b0, exec_retire_s};
+                    fb_valid <= fb_valid - exec_retire_s;
+                    fb_wr    <= fb_wr - exec_retire_s;
+                    fb_realigning <= (exec_retire_len > 5'd4);
+                    if (exec_retire_dispatch_now) st <= S_DECODE;
+                end
+            end
         end
     end
     S_OP2_LD: begin
@@ -3769,6 +3847,8 @@ else if (ce) begin
 `ifdef SIMULATION
     if (st == S_NEXT && dbus_req && dbus_we)
         $fatal(1, "V60 Stage A: data write outstanding in S_NEXT (pc=%08x) -- the SMC window invalidation can race the fast dispatch", pc);
+    if (exec_retire_candidate && dbus_req)
+        $fatal(1, "V60 execute-retire: data transaction outstanding in S_EXEC (pc=%08x)", pc);
 `endif
 
     // Self-modifying-code guard (audit R20 V60-19): a completing data write that
@@ -3872,6 +3952,56 @@ function automatic f12_reads_dest(input [7:0] op);
         8'h13, 8'h4a,                        // UPDPSW.W / UPDPSW.H mask
         8'h4b:  f12_reads_dest = 1;          // CHLVL level data
         default: f12_reads_dest = 0;
+    endcase
+endfunction
+
+// F12 operations whose execute task completes in one edge when op2 is a
+// register.  This explicit allowlist keeps every iterative, exceptional,
+// control-transfer, privileged, multiword and memory-RMW path on S_NEXT or its
+// dedicated continuation state.  CMP is the sole allowed no-writeback class.
+function automatic f12_simple_register_retire(input [7:0] op);
+    case (op)
+        8'h08,8'h09,8'h0a,8'h0b,8'h0c,8'h0d,
+        8'h19,8'h1b,8'h1c,8'h1d,8'h29,8'h2b,8'h2c,8'h2d,
+        8'h38,8'h39,8'h3a,8'h3b,8'h3c,8'h3d,
+        8'h40,8'h42,8'h44,8'h47,
+        8'h80,8'h82,8'h84,8'h88,8'h8a,8'h8c,
+        8'h90,8'h92,8'h94,8'h98,8'h9a,8'h9c,
+        8'ha0,8'ha2,8'ha4,8'ha8,8'haa,8'hac,
+        8'hb0,8'hb2,8'hb4,8'hb8,8'hba,8'hbc:
+            f12_simple_register_retire = 1'b1;
+        default: f12_simple_register_retire = 1'b0;
+    endcase
+endfunction
+
+function automatic f12_no_writeback(input [7:0] op);
+    case (op)
+        8'hb8,8'hba,8'hbc: f12_no_writeback = 1'b1; // CMP.B/H/W
+        default:            f12_no_writeback = 1'b0;
+    endcase
+endfunction
+
+// Common single-operand instructions have the same artificial S_EXEC->S_NEXT
+// bubble as F12.  Register INC/DEC and GETPSW are safe once their register
+// result is queued; TEST and CLRTLB have no writeback.  Memory RMW/write forms
+// are excluded by flag1 and retain their dedicated bus continuation states.
+function automatic short_simple_register_retire(input [7:0] op);
+    case (op)
+        8'hd0,8'hd1,8'hd2,8'hd3,8'hd4,8'hd5, // DEC B/H/W
+        8'hd8,8'hd9,8'hda,8'hdb,8'hdc,8'hdd, // INC B/H/W
+        8'hf0,8'hf1,8'hf2,8'hf3,8'hf4,8'hf5, // TEST B/H/W
+        8'hf6,8'hf7,                         // GETPSW
+        8'hfe,8'hff:                         // CLRTLB (operand consumed)
+            short_simple_register_retire = 1'b1;
+        default: short_simple_register_retire = 1'b0;
+    endcase
+endfunction
+
+function automatic short_no_writeback(input [7:0] op);
+    case (op)
+        8'hf0,8'hf1,8'hf2,8'hf3,8'hf4,8'hf5,
+        8'hfe,8'hff: short_no_writeback = 1'b1;
+        default:     short_no_writeback = 1'b0;
     endcase
 endfunction
 

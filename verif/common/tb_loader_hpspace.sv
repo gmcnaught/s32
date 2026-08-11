@@ -86,7 +86,7 @@ assign SDRAM_DQ = mem_oe ? mem_dq : 16'hzzzz;
 
 reg p0_req=0,p1_req=0,p2_req=0,p3_req=0,p4_req=0;
 reg [24:1] p0_addr=0,p3_addr=0,p4_addr=0; reg [24:3] p1_addr=0; reg [24:4] p2_addr=0;
-wire [15:0] p0_dout,p3_dout,p4_dout; wire [63:0] p1_dout; wire [127:0] p2_dout;
+wire [15:0] p3_dout,p4_dout; wire [63:0] p0_dout,p1_dout; wire [127:0] p2_dout;
 wire p0_ack,p1_ack,p2_ack,p3_ack,p4_ack;
 reg         p5_req = 1'b0;
 reg  [24:3] p5_addr = '0;
@@ -100,7 +100,7 @@ sdram sdr (
     .SDRAM_nCS(SDRAM_nCS), .SDRAM_nCAS(SDRAM_nCAS),
     .SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_CKE(SDRAM_CKE),
     .wr_req(sw_req), .wr_addr(sw_addr), .wr_din(sw_din), .wr_be(sw_be), .wr_ack(sw_ack),
-    .p0_req(p0_req), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
+    .p0_req(p0_req), .p0_burst(1'b0), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
     .p1_req(p1_req), .p1_addr(p1_addr), .p1_dout(p1_dout), .p1_ack(p1_ack),
     .p2_req(p2_req), .p2_addr(p2_addr), .p2_dout(p2_dout), .p2_ack(p2_ack),
     .p3_req(p3_req), .p3_addr(p3_addr), .p3_dout(p3_dout), .p3_ack(p3_ack),

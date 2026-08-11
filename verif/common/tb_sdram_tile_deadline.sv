@@ -34,7 +34,7 @@ wire wr_ack;
 
 reg p0_req = 1'b0;
 reg [24:1] p0_addr = 24'h000020;
-wire [15:0] p0_dout;
+wire [63:0] p0_dout;
 wire p0_ack;
 
 reg p1_req = 1'b0;
@@ -71,7 +71,7 @@ sdram dut (
     .SDRAM_CKE(SDRAM_CKE),
     .wr_req(wr_req), .wr_addr(wr_addr), .wr_din(wr_din),
     .wr_be(wr_be), .wr_ack(wr_ack),
-    .p0_req(p0_req), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
+    .p0_req(p0_req), .p0_burst(1'b0), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
     .p1_req(p1_req), .p1_addr(p1_addr), .p1_dout(p1_dout), .p1_ack(p1_ack),
     .p2_req(p2_req), .p2_addr(p2_addr), .p2_dout(p2_dout), .p2_ack(p2_ack),
     .p3_req(p3_req), .p3_addr(p3_addr), .p3_dout(p3_dout), .p3_ack(p3_ack),

@@ -79,6 +79,22 @@ always @(posedge clk_ram) begin
         tile_ack <= 1'b1;
 end
 
+integer errors = 0;
+integer timeout;
+reg found;
+integer sim_cycles = 0;
+integer render_start_cycles = 0;
+integer last_render_cycles = 0;
+reg [31:0] render_hash = 32'h811c9dc5;
+reg [31:0] last_render_hash = 0;
+
+always @(posedge clk_ram) begin
+    sim_cycles = sim_cycles + 1;
+    if (lb_we)
+        render_hash = {render_hash[26:0], render_hash[31:27]} ^
+                      {6'b0, lb_layer, lb_x, lb_pix};
+end
+
 task automatic cpu_write(input [15:0] a, input [15:0] d);
 begin
     @(negedge clk_sys);
@@ -90,14 +106,12 @@ endtask
 
 task automatic start_render;
 begin
+    render_start_cycles = sim_cycles;
+    render_hash = 32'h811c9dc5;
     @(negedge clk_ram); line_start = 1'b1;
     @(negedge clk_ram); line_start = 1'b0;
 end
 endtask
-
-integer errors = 0;
-integer timeout;
-reg found;
 
 task automatic expect_first_tile(input [18:0] want_addr,
                                  input [2:0] want_layer,
@@ -239,6 +253,8 @@ begin
         if (line_done) found = 1;
     end
     if (!found) begin $display("FAIL renderer timeout"); errors = errors + 1; end
+    last_render_cycles = sim_cycles - render_start_cycles;
+    last_render_hash = render_hash;
     repeat (2) @(posedge clk_ram);
 end
 endtask
@@ -318,6 +334,28 @@ initial begin
     expect_first_pixel(3'd1, 14'h2001);
     expect_pixel(3'd1, 9'd1, 14'h2005);
     wait_done;
+    begin : check_scale_cache
+        integer miss_cycles;
+        reg [31:0] miss_hash;
+        miss_cycles = last_render_cycles;
+        miss_hash = last_render_hash;
+        start_render;
+        expect_first_pixel(3'd1, 14'h2001);
+        expect_pixel(3'd1, 9'd1, 14'h2005);
+        wait_done;
+        $display("TILEMAP SCALE CACHE cycles=%0d->%0d",
+                 miss_cycles, last_render_cycles);
+        if (last_render_hash !== miss_hash) begin
+            $display("FAIL scale-cache pixel hash %08x != %08x",
+                     last_render_hash, miss_hash);
+            errors = errors + 1;
+        end
+        if ((miss_cycles - last_render_cycles) < 60) begin
+            $display("FAIL scale-cache throughput %0d->%0d (want >=60 saved)",
+                     miss_cycles, last_render_cycles);
+            errors = errors + 1;
+        end
+    end
     cpu_write(16'hffa8, 16'h0200);
     cpu_write(16'hff88, 16'h0000);
 
@@ -372,6 +410,15 @@ initial begin
     expect_pixel(3'd5, 9'd2, 14'h2003);
     expect_pixel(3'd5, 9'd3, 14'h2004);
     wait_done;
+    $display("BITMAP 4BPP cycles=%0d", last_render_cycles);
+    // A renderer that refetches the same synchronous VRAM word for every
+    // nibble takes 969 clocks for this 320-pixel line. Tagged word reuse must
+    // retain all four lane values above while completing within 500 clocks.
+    if (last_render_cycles > 500) begin
+        $display("FAIL bitmap throughput: %0d cycles (want <= 500)",
+                 last_render_cycles);
+        errors = errors + 1;
+    end
 
     // 4bpp scroll and palette: source (x=5,y=2) is word $0101 nibble 1.
     // $1FF8C contributes all nine palette bits above the four-bit pen.
@@ -397,6 +444,12 @@ initial begin
     expect_first_pixel(3'd5, 14'h2310);
     expect_pixel(3'd5, 9'd1, 14'h2334);
     wait_done;
+    $display("BITMAP 8BPP cycles=%0d", last_render_cycles);
+    if (last_render_cycles > 660) begin
+        $display("FAIL 8bpp bitmap throughput: %0d cycles (want <= 660)",
+                 last_render_cycles);
+        errors = errors + 1;
+    end
 
     // Bitmap clip rectangle is slot 4.  With clip-in, only x=1 is visible;
     // clip-out inverts the same union.  The pen data may remain in a

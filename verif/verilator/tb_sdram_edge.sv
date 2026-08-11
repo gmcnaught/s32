@@ -17,8 +17,10 @@
 //    * Drives clk_sys either EDGE-ALIGNED (default, = hardware PLL) or
 //      HALF-OFFSET (`+define+HALF_OFFSET`, = the ModelSim TBs) so the same
 //      stimulus proves both phases.
-//    * Reproduces the V60 icache-fill chain on p0: every next request rises
-//      the clk_sys cycle after its ack — the exact drop pattern.
+//    * Retains the historical four-exact-word V60 icache-fill chain on p0 as
+//      an adversarial edge-latch regression: every next request rises the
+//      clk_sys cycle after its ack — the exact drop pattern.  Production now
+//      fills a line with one p0 burst; tb_sdram_p0_throughput covers that path.
 //    * Runs concurrent p5 (V25) bursts to reshuffle arbitration parity — the
 //      real trigger that sank ga2 while lighter boards never faulted.
 //    * Scoreboards req-vs-ack counts and hard-fails on any hung transaction.
@@ -56,7 +58,7 @@ module tb_sdram_edge;
     wire        SDRAM_DQML, SDRAM_DQMH, SDRAM_nCS, SDRAM_nCAS, SDRAM_nRAS, SDRAM_nWE, SDRAM_CKE;
 
     // p0 (V60), p5 (V25) driven; other ports idle.
-    reg         p0_req = 0;  reg [24:1] p0_addr = 0;  wire [15:0] p0_dout;  wire p0_ack;
+    reg         p0_req = 0;  reg [24:1] p0_addr = 0;  wire [63:0] p0_dout;  wire p0_ack;
     reg         p5_req = 0;  reg [24:3] p5_addr = 0;  wire [63:0] p5_dout;  wire p5_ack;
 
     sdram dut (
@@ -67,7 +69,7 @@ module tb_sdram_edge;
         .SDRAM_nWE(SDRAM_nWE), .SDRAM_CKE(SDRAM_CKE),
         // download write port — idle
         .wr_req(1'b0), .wr_addr(24'd0), .wr_din(16'd0), .wr_be(2'b11), .wr_ack(),
-        .p0_req(p0_req), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
+        .p0_req(p0_req), .p0_burst(1'b0), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
         .p1_req(1'b0), .p1_addr(22'd0), .p1_dout(), .p1_ack(),
         .p2_req(1'b0), .p2_addr(21'd0), .p2_dout(), .p2_ack(),
         .p3_req(1'b0), .p3_addr(24'd0), .p3_dout(), .p3_ack(),
@@ -121,13 +123,12 @@ module tb_sdram_edge;
         end
     end
 
-    // ---- p0 requester: FAITHFUL V60 icache 4-word line fill ---------------
-    // Mirrors rtl/s32_core.sv:1148 exactly: each word's request is a SINGLE
-    // clk_sys-cycle pulse, and word N+1's request is asserted the SAME clk_sys
-    // cycle p0_ack for word N is observed (chained directly off ack, no gap).
-    // That request edge lands right as the previous ack/pend clears — the drop
-    // window the edge-latch fix closes.  Between lines there is a 1-cycle gap
-    // (the icache miss lookup), matching the RTL.
+    // ---- p0 requester: historical exact-word cache-fill stress ------------
+    // This deliberately retains the pre-burst four-request pattern: each
+    // word's request is a single clk_sys-cycle pulse, and word N+1 rises in the
+    // same clk_sys cycle that observes word N's ack.  That collision remains
+    // the strongest regression for the edge-latch clear-before-set contract,
+    // even though production V60 misses now use one four-beat p0 transaction.
     reg        rom_filling = 1'b0;
     reg [1:0]  fill_word   = 2'd0;
     reg [23:0] line_base   = 24'h010000;

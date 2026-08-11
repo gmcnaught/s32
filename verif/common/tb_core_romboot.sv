@@ -276,12 +276,17 @@ end
 
 // p0: V60 program (clk_sys single-cycle toggle ack)
 wire        p0_req;
+wire        p0_burst;
 wire [24:1] p0_addr;
-reg  [15:0] p0_dout;
+reg  [63:0] p0_dout;
 reg         p0_ack = 0;
 always @(posedge clk_sys) begin
     p0_ack  <= p0_req & ~p0_ack;
-    p0_dout <= mc[p0_addr[20:1]];
+    if (p0_burst)
+        p0_dout <= {mc[{p0_addr[20:3],2'b11}], mc[{p0_addr[20:3],2'b10}],
+                    mc[{p0_addr[20:3],2'b01}], mc[{p0_addr[20:3],2'b00}]};
+    else
+        p0_dout <= {48'd0, mc[p0_addr[20:1]]};
 end
 
 // p5: production real-V25 program path. The loader stores the descrambled
@@ -606,6 +611,8 @@ wire signed [15:0] audio_l, audio_r;
 reg        eep_ld_wr = 1'b0;
 reg  [5:0] eep_ld_addr = 6'd0;
 reg [15:0] eep_ld_data = 16'hffff;
+reg        test_fast_v60 = 1'b0;
+initial test_fast_v60 = $test$plusargs("FASTV60");
 
 // Reproduce the live loader's index-2 default transfer before reset releases.
 // eeprom.hex already contains the little-endian 16-bit words that ioctl_dout
@@ -651,9 +658,10 @@ s32_core core (
     .clk_v25(clk_v25),
 `endif
     .rst(rst), .video_rst(rst), .board(board),
-    .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0), .fast_v60(1'b0),
+    .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0), .fast_v60(test_fast_v60),
     .alien3_hud_blend(1'b0),
-    .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
+    .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
+    .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(p1_req), .sdr_p1_addr(p1_addr), .sdr_p1_dout(p1_dout), .sdr_p1_ack(p1_ack),
     .sdr_p2_req(p2_req), .sdr_p2_addr(p2_addr), .sdr_p2_dout(p2_dout), .sdr_p2_ack(p2_ack),
     .sdr_p3_req(p3_req), .sdr_p3_addr(p3_addr), .sdr_p3_dout(p3_dout), .sdr_p3_ack(p3_ack),
@@ -1803,7 +1811,7 @@ always @(posedge clk_sys) begin
     end
     if (rom_log_max > 0 && p0_ack && !p0_ack_d && rom_log_n < rom_log_max) begin
         rom_log_n = rom_log_n + 1;
-        $display("[rom-p0-ack] n=%0d a=%06x d=%04x", rom_log_n, p0_addr, p0_dout);
+        $display("[rom-p0-ack] n=%0d a=%06x d=%016x", rom_log_n, p0_addr, p0_dout);
     end
     if (rom_log_max > 0 && core.m_req && core.m_ack && !core.m_we &&
         core.A[23:20] == 4'hf && rom_log_n < rom_log_max) begin
@@ -1819,7 +1827,7 @@ always @(posedge clk_sys) begin
     if (vec_log_max > 0 && p0_ack && !p0_ack_d &&
         p0_addr[20:1] == 20'h7f880 && vec_log_n < vec_log_max) begin
         vec_log_n = vec_log_n + 1;
-        $display("[vec-p0-ack] n=%0d a=%06x d=%04x", vec_log_n, p0_addr, p0_dout);
+        $display("[vec-p0-ack] n=%0d a=%06x d=%016x", vec_log_n, p0_addr, p0_dout);
     end
     if (vec_log_max > 0 && core.m_req && core.m_ack && !core.m_we &&
         (core.A[19:0] == 20'hff100 || core.A[19:0] == 20'hff102 ||

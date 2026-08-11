@@ -20,10 +20,19 @@ reg  [20:0] data_addr = 21'd0;
 wire [15:0] data_data;
 wire        data_ack;
 wire        rom_req;
+wire        rom_burst;
 wire [23:1] rom_addr;
-reg  [15:0] rom_data = 16'd0;
+reg  [63:0] rom_data = 64'd0;
 reg         rom_ack = 1'b0;
 wire        cache_busy;
+
+`ifdef S32_TEST_CACHE32
+localparam integer CACHE_INDEX_BITS = 5;
+localparam integer CONFLICT_REQUESTS = 1;
+`else
+localparam integer CACHE_INDEX_BITS = 6;
+localparam integer CONFLICT_REQUESTS = 0;
+`endif
 
 integer errors = 0;
 integer rom_request_count = 0;
@@ -33,7 +42,7 @@ reg     rom_pending = 1'b0;
 reg [22:0] pending_addr = 23'd0;
 reg [22:0] request_log [0:255];
 
-s32_ga_rom_cache dut (
+s32_ga_rom_cache #(.INDEX_BITS(CACHE_INDEX_BITS)) dut (
     .clk(clk),
     .rst(rst),
     .invalidate(invalidate),
@@ -47,6 +56,7 @@ s32_ga_rom_cache dut (
     .data_data(data_data),
     .data_ack(data_ack),
     .rom_req(rom_req),
+    .rom_burst(rom_burst),
     .rom_addr(rom_addr),
     .rom_data(rom_data),
     .rom_ack(rom_ack),
@@ -79,18 +89,16 @@ begin
 end
 endtask
 
-task automatic check_request_sequence(
+task automatic check_line_request(
     input integer first,
     input [17:0] line_addr
 );
-integer i;
 reg [22:0] base;
 begin
     base = {3'b000, line_addr, 2'b00};
-    for (i = 0; i < 4; i = i + 1)
-        if (request_log[first+i] !== base + i)
-            fail($sformatf("ROM request %0d was %06x, expected %06x",
-                           first+i, request_log[first+i], base+i));
+    if (request_log[first] !== base)
+        fail($sformatf("ROM line request %0d was %06x, expected %06x",
+                       first, request_log[first], base));
 end
 endtask
 
@@ -121,8 +129,8 @@ begin
     if ((rom_request_count - req_start) != expected_rom_requests)
         fail($sformatf("instruction lookup made %0d ROM requests, expected %0d",
                        rom_request_count-req_start, expected_rom_requests));
-    if (expected_rom_requests == 4)
-        check_request_sequence(req_start, line_addr);
+    if (expected_rom_requests == 1)
+        check_line_request(req_start, line_addr);
 
     repeat (3) begin
         @(negedge clk);
@@ -169,8 +177,8 @@ begin
     if ((rom_request_count - req_start) != expected_rom_requests)
         fail($sformatf("data lookup made %0d ROM requests, expected %0d",
                        rom_request_count-req_start, expected_rom_requests));
-    if (expected_rom_requests == 4)
-        check_request_sequence(req_start, line_addr);
+    if (expected_rom_requests == 1)
+        check_line_request(req_start, line_addr);
 
     repeat (2) begin
         @(negedge clk);
@@ -190,7 +198,7 @@ always @(negedge clk) begin
     rom_ack = 1'b0;
     if (rom_pending) begin
         if (pending_delay == 0) begin
-            rom_data = reference_word(pending_addr);
+            rom_data = reference_line(pending_addr[19:2]);
             rom_ack = 1'b1;
             rom_pending = 1'b0;
         end
@@ -201,6 +209,8 @@ always @(negedge clk) begin
     if (rom_req) begin
         if (rom_pending)
             fail("DUT issued a second ROM request req_start the prior response");
+        if (!rom_burst)
+            fail("cache miss did not request an aligned p0 line burst");
         pending_addr = rom_addr;
         pending_delay = response_delay;
         rom_pending = 1'b1;
@@ -215,32 +225,61 @@ initial begin : run_tests
     reg [17:0] line_c;
     reg [17:0] line_d;
     reg [17:0] line_e;
+    reg [17:0] line_f;
     integer req_start;
     integer timeout;
     reg [22:0] base;
 
     line_a = 18'h01234;
-    line_b = line_a ^ 18'h00020; // same direct-map index, different tag
+    line_b = line_a ^ 18'h00040; // same 64-line direct-map index, different tag
     line_c = 18'h05549;
     line_d = 18'h0a61e;
     line_e = 18'h1b203;
+    // A 256-byte separation aliases in the old 32-line cache but occupies a
+    // distinct index in the production 64-line cache.
+    line_f = line_a ^ 18'h00020;
 
     repeat (4) @(negedge clk);
     rst = 1'b0;
 
-    // Cold instruction fill, byte-offset alignment, and held acknowledge.
-    fetch_line(line_a, 3'd0, 4);
+    // Conflict-pressure benchmark.  Warm both lines, then alternate them four
+    // times.  The old 32-line organization misses on every access; 64 lines
+    // retains both and generates no further SDRAM traffic.
+    fetch_line(line_a, 3'd0, 1);
+    fetch_line(line_f, 3'd0, 1);
+    req_start = rom_request_count;
+    repeat (4) begin
+        fetch_line(line_a, 3'd0, CONFLICT_REQUESTS);
+        fetch_line(line_f, 3'd0, CONFLICT_REQUESTS);
+    end
+    $display("CACHE CONFLICT index_bits=%0d pressure_requests=%0d",
+             CACHE_INDEX_BITS, rom_request_count-req_start);
+    if ((rom_request_count-req_start) != (CONFLICT_REQUESTS * 8))
+        fail("cache conflict-pressure request count mismatch");
+
+    // Isolate the directed functional cases below from benchmark residency.
+    @(negedge clk); invalidate = 1'b1;
+    @(negedge clk); invalidate = 1'b0;
+    // line_a has production index bit 5 set.  Check the upper half explicitly
+    // so a future fixed-width clear cannot leave entries 32..63 resident.
+    if (CACHE_INDEX_BITS == 6 && dut.cache_valid[63:32] !== 32'd0)
+        fail("invalidation did not clear upper cache indices 32..63");
+
+    // Cold instruction fill at an upper index, byte-offset alignment, and held
+    // acknowledge.  The expected miss also proves line_a did not survive the
+    // invalidation above.
+    fetch_line(line_a, 3'd0, 1);
     fetch_line(line_a, 3'd3, 0);
 
     // The single shared lookup port also serves V60 data reads from the line.
     read_data(line_a, 2'd2, 0);
 
     // Direct-map aliasing must miss, replace, and then miss again on the old tag.
-    fetch_line(line_b, 3'd1, 4);
-    fetch_line(line_a, 3'd0, 4);
+    fetch_line(line_b, 3'd1, 1);
+    fetch_line(line_a, 3'd0, 1);
 
     // Cache a data line at another index, then launch simultaneous requests.
-    fetch_line(line_c, 3'd0, 4);
+    fetch_line(line_c, 3'd0, 1);
     req_start = rom_request_count;
     @(negedge clk);
     if_line_addr = line_d;
@@ -261,10 +300,10 @@ initial begin : run_tests
     // Shifting preserves the same upper-word comparison portably.
     if (data_data !== (reference_line(line_c) >> 48))
         fail("queued data result did not match cached reference word");
-    if ((rom_request_count-req_start) != 4)
+    if ((rom_request_count-req_start) != 1)
         fail("simultaneous request did not give the instruction miss sole ROM priority");
     else
-        check_request_sequence(req_start, line_d);
+        check_line_request(req_start, line_d);
     if_req = 1'b0;
     data_req = 1'b0;
     @(negedge clk);
@@ -274,10 +313,10 @@ initial begin : run_tests
     invalidate = 1'b1;
     @(negedge clk);
     invalidate = 1'b0;
-    fetch_line(line_c, 3'd0, 4);
+    fetch_line(line_c, 3'd0, 1);
 
     // Invalidation while a response is outstanding drains that response,
-    // abandons the partial line, then retries the held request from word zero.
+    // discards the complete line, then retries the held request as one burst.
     response_delay = 3;
     req_start = rom_request_count;
     @(negedge clk);
@@ -302,13 +341,13 @@ initial begin : run_tests
         fail("invalidated in-flight fill did not retry to completion");
     if (if_data !== reference_line(line_e))
         fail("retried fill returned data different from the reference model");
-    if ((rom_request_count-req_start) != 5)
-        fail($sformatf("invalidated fill made %0d requests, expected drained word plus four-word retry",
+    if ((rom_request_count-req_start) != 2)
+        fail($sformatf("invalidated fill made %0d requests, expected drained line plus one-line retry",
                        rom_request_count-req_start));
     base = {3'b000, line_e, 2'b00};
     if (request_log[req_start] !== base || request_log[req_start+1] !== base)
         fail("invalidated fill did not restart at word zero");
-    check_request_sequence(req_start+1, line_e);
+    check_line_request(req_start+1, line_e);
     if_req = 1'b0;
     @(negedge clk);
 

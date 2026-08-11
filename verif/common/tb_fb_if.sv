@@ -214,6 +214,9 @@ integer arb_read_start;
 integer arb_write_start;
 integer blend_read_start;
 integer stable_read_start;
+integer sparse_write_start;
+integer sparse_shadow_read_start;
+integer sparse_shadow_write_start;
 initial begin
     repeat (5) @(posedge clk);
     rst <= 0;
@@ -277,6 +280,25 @@ initial begin
     check(ddr_pix(5, 0), 16'hFFFF, 0);
     check(ddr_pix(5, 3), 16'h8003, 3);       // earlier data intact
 
+    // 2d: two populated qwords separated by a whole-line transparent hole.
+    // Empty qwords must be skipped locally instead of issuing zero-BE writes.
+    sparse_write_start = write_accepts;
+    @(posedge clk); wr_start <= 1; wr_y <= 8'd5; wr_buf <= 0; wr_shadow <= 0;
+    @(posedge clk); wr_start <= 0;
+    wr_valid <= 1; wr_x <= 9'd0;   wr_pix <= 16'h9234; @(posedge clk);
+    wr_valid <= 1; wr_x <= 9'd511; wr_pix <= 16'h9567; @(posedge clk);
+    wr_valid <= 0; wr_end <= 1; @(posedge clk); wr_end <= 0;
+    wait ((dut.dst == 4'd0) && !dut.flush_req && !wr_end);
+    repeat (4) @(posedge clk);
+    if ((write_accepts - sparse_write_start) != 2) begin
+        errors = errors + 1;
+        $display("  FAIL sparse run accepted %0d writes, expected 2",
+                 write_accepts - sparse_write_start);
+    end
+    check(ddr_pix(5, 0),   16'h9234, 0);
+    check(ddr_pix(5, 256), 16'hFFFF, 256);
+    check(ddr_pix(5, 511), 16'h9567, 511);
+
     // 3: shadow run x=5..6 -> those two lose bit15, neighbours keep it
     @(posedge clk); wr_start <= 1; wr_shadow <= 1;
     @(posedge clk); wr_start <= 0;
@@ -291,6 +313,28 @@ initial begin
     check(ddr_pix(5, 5), 16'h0005, 5);       // bit15 cleared, pen kept
     check(ddr_pix(5, 6), 16'h0006, 6);
     check(ddr_pix(5, 7), 16'h8007, 7);
+
+    // 3b: sparse shadow spans preserve the exact RMW result while avoiding
+    // reads and zero-BE writes for words containing no shadow pixels.
+    sparse_shadow_read_start = read_accepts;
+    sparse_shadow_write_start = write_accepts;
+    @(posedge clk); wr_start <= 1; wr_shadow <= 1;
+    @(posedge clk); wr_start <= 0;
+    wr_valid <= 1; wr_x <= 9'd0;   wr_pix <= 16'hDEAD; @(posedge clk);
+    wr_valid <= 1; wr_x <= 9'd511; wr_pix <= 16'hDEAD; @(posedge clk);
+    wr_valid <= 0; wr_end <= 1; @(posedge clk); wr_end <= 0; wr_shadow <= 0;
+    wait ((dut.dst == 4'd0) && !dut.flush_req && !wr_end);
+    repeat (4) @(posedge clk);
+    if ((read_accepts - sparse_shadow_read_start) != 2 ||
+        (write_accepts - sparse_shadow_write_start) != 2) begin
+        errors = errors + 1;
+        $display("  FAIL sparse shadow accepted %0d reads/%0d writes, expected 2/2",
+                 read_accepts - sparse_shadow_read_start,
+                 write_accepts - sparse_shadow_write_start);
+    end
+    check(ddr_pix(5, 0),   16'h1234, 0);
+    check(ddr_pix(5, 256), 16'hFFFF, 256);
+    check(ddr_pix(5, 511), 16'h1567, 511);
 
     // 4: read line back through rd port.  Hold rd_req across ack as a second
     // check of the request/ack level protocol.

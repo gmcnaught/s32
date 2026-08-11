@@ -21,8 +21,8 @@ reg [15:0] wr_din = '0;
 reg [1:0] wr_be = 2'b11;
 wire wr_ack;
 wire p0_ack, p1_ack, p2_ack, p3_ack, p4_ack, p5_ack;
-wire [15:0] p0_dout, p3_dout, p4_dout;
-wire [63:0] p1_dout, p5_dout;
+wire [15:0] p3_dout, p4_dout;
+wire [63:0] p0_dout, p1_dout, p5_dout;
 wire [127:0] p2_dout;
 reg p0_req=0,p3_req=0,p4_req=0,p5_req=0,p1_req=0,p2_req=0;
 reg [24:1] p0_addr=0,p3_addr=0,p4_addr=0;
@@ -56,7 +56,7 @@ sdram dut(
     .SDRAM_DQML(dqml), .SDRAM_DQMH(dqmh), .SDRAM_nCS(ncs),
     .SDRAM_nCAS(ncas), .SDRAM_nRAS(nras), .SDRAM_nWE(nwe), .SDRAM_CKE(cke),
     .wr_req(wr_req), .wr_addr(wr_addr), .wr_din(wr_din), .wr_be(wr_be), .wr_ack(wr_ack),
-    .p0_req(p0_req), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
+    .p0_req(p0_req), .p0_burst(1'b0), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
     .p1_req(p1_req), .p1_addr(p1_addr), .p1_dout(p1_dout), .p1_ack(p1_ack),
     .p2_req(p2_req), .p2_addr(p2_addr), .p2_dout(p2_dout), .p2_ack(p2_ack),
     .p3_req(p3_req), .p3_addr(p3_addr), .p3_dout(p3_dout), .p3_ack(p3_ack),

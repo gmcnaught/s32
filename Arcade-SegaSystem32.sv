@@ -187,7 +187,7 @@ localparam CONF_STR = {
     "O[7],Service Mode,Off,On;",
     // h0 hides this line unless menumask[0] identifies Alien 3.
     "h0O[8],Alien 3 Flicker Blend,Off,On;",
-    "O[29],V60 Fetch,PCB,Fast (Reset);",
+    "O[29],V60 Fetch,Fast,PCB (Reset);",
     "-;",
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
     "O[9],CRT Adjust,Off,On;",
@@ -228,7 +228,7 @@ wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
 // bus and every other subsystem retain their PCB cadence.
 reg fast_v60_fetch;
 always @(posedge clk_sys) begin
-    if (reset) fast_v60_fetch <= status[29];
+    if (reset) fast_v60_fetch <= ~status[29];
 end
 
 // Synchronise the controller-ready level from clk_ram before it gates the
@@ -374,15 +374,15 @@ s32_rom_loader #(.WIDE(1)) loader (
 );
 
 /////////////////////////////////   SDRAM   ///////////////////////////////////
-wire        p0_req, p0_ack, p1_req, p1_ack, p2_req, p2_ack, p3_req, p3_ack, p4_req, p4_ack, p5_req, p5_ack;
+wire        p0_req, p0_burst, p0_ack, p1_req, p1_ack, p2_req, p2_ack, p3_req, p3_ack, p4_req, p4_ack, p5_req, p5_ack;
 wire        core_p1_req, core_p2_req;
 wire [24:1] p0_addr, p3_addr, p4_addr;
 wire [24:3] p1_addr, p5_addr;
 wire [24:4] p2_addr;
 wire [24:3] core_p1_addr;
 wire [24:4] core_p2_addr;
-wire [15:0] p0_dout, p3_dout, p4_dout;
-wire [63:0] p1_dout, p5_dout;
+wire [15:0] p3_dout, p4_dout;
+wire [63:0] p0_dout, p1_dout, p5_dout;
 wire[127:0] p2_dout;
 
 assign p1_req  = core_p1_req;
@@ -396,7 +396,8 @@ sdram sdram (
     .SDRAM_nCS(SDRAM_nCS), .SDRAM_nCAS(SDRAM_nCAS),
     .SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_CKE(SDRAM_CKE),
     .wr_req(sw_req), .wr_addr(sw_addr), .wr_din(sw_din), .wr_be(sw_be), .wr_ack(sw_ack),
-    .p0_req(p0_req), .p0_addr(p0_addr), .p0_dout(p0_dout), .p0_ack(p0_ack),
+    .p0_req(p0_req), .p0_burst(p0_burst), .p0_addr(p0_addr),
+    .p0_dout(p0_dout), .p0_ack(p0_ack),
     .p1_req(p1_req), .p1_addr(p1_addr), .p1_dout(p1_dout), .p1_ack(p1_ack),
     .p2_req(p2_req), .p2_addr(p2_addr), .p2_dout(p2_dout), .p2_ack(p2_ack),
     .p3_req(p3_req), .p3_addr(p3_addr), .p3_dout(p3_dout), .p3_ack(p3_ack),
@@ -752,7 +753,8 @@ s32_core core (
     // V25 pause semantics without carrying the menu logic into an RBF.
     .pause(1'b0), .fast_v60(fast_v60_fetch),
     .alien3_hud_blend(alien3_controls && status[8]),
-    .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
+    .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
+    .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
     .sdr_p1_ack(p1_ack),
     .sdr_p2_req(core_p2_req), .sdr_p2_addr(core_p2_addr), .sdr_p2_dout(p2_dout),

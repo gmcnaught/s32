@@ -84,8 +84,9 @@ module s32_core #(
 
     // SDRAM ports (to sdram.sv in emu top)
     output            sdr_p0_req,
+    output            sdr_p0_burst,
     output     [24:1] sdr_p0_addr,
-    input      [15:0] sdr_p0_dout,
+    input      [63:0] sdr_p0_dout,
     input             sdr_p0_ack,
     output            sdr_p1_req,
     output     [24:3] sdr_p1_addr,
@@ -1158,7 +1159,7 @@ wire [15:0] dsp_q, dual_q;
 wire        prot_rom_req;
 wire [23:0] prot_rom_addr;
 wire        prot_rom_ack;
-wire [15:0] prot_rom_data = sdr_p0_dout;
+wire [15:0] prot_rom_data = sdr_p0_dout[15:0];
 wire [7:0]  v25_q;
 wire        br_rom_req;
 wire [23:0] br_rom_addr;
@@ -1304,14 +1305,17 @@ assign sdr_p5_addr = '0;
 `endif
 
 // V60 ROM fetch via SDRAM p0, through a small I/D cache (perf):
-//   32 lines x 8 bytes direct-mapped. Hit = 1 clk_sys; miss = 4 sequential
-//   p0 word reads to fill the line. Reset (incl. ROM download) invalidates.
+//   Production profiles use 64 lines x 8 bytes direct-mapped. Hit = 1
+//   clk_sys; a miss uses one aligned four-beat p0 burst. Reset (including ROM
+//   download) invalidates the complete cache.
 // ---------------------------------------------------------------------------
 `ifdef S32_AREA_ROM_CACHE
 wire        rom_req_r;
+wire        rom_burst_r;
 wire [23:1] rom_addr_r;
 `else
 reg        rom_req_r;
+reg        rom_burst_r;
 reg [23:1] rom_addr_r;
 `endif
 // Transaction-acked flag (the read-mux ack register below).  Forward-declared
@@ -1332,8 +1336,9 @@ wire        prot_any_rom_req = prot_rom_req | br_rom_req;
 wire [23:0] prot_any_rom_addr = br_rom_req ? br_rom_addr : prot_rom_addr;
 assign prot_rom_ack = prot_rom_grant && sdr_p0_ack;
 assign sdr_p0_req  = prot_rom_grant ? prot_any_rom_req : rom_req_r;
+assign sdr_p0_burst = prot_rom_grant ? 1'b0 : rom_burst_r;
 assign sdr_p0_addr = prot_rom_grant ? {2'b00, prot_any_rom_addr[21:1]} :
-                                       {2'b00, rom_addr_r[21:1]};
+                                        {2'b00, rom_addr_r[21:1]};
 
 `ifdef S32_AREA_ROM_CACHE
 // Dedicated-game area cache. The generic asynchronous cache below provides a
@@ -1359,6 +1364,7 @@ s32_ga_rom_cache ga_rom_cache (
     .data_data(rom_word_r),
     .data_ack(rom_ready),
     .rom_req(rom_req_r),
+    .rom_burst(rom_burst_r),
     .rom_addr(rom_addr_r),
     .rom_data(sdr_p0_dout),
     .rom_ack(sdr_p0_ack),
@@ -1387,6 +1393,11 @@ always @(posedge clk_sys) begin
         prot_rom_grant <= 1'b1;
 end
 `else
+// Non-production/general fallback.  Its original 32-line geometry is retained
+// deliberately: every production profile selects s32_ga_rom_cache above, and
+// the measured 64-line conflict win/resource evidence applies to that flat,
+// synchronous MLAB implementation.  Address coverage remains exact here:
+// index byte bits [7:3] plus tag bits [20:8] cover every line-address bit.
 reg  [63:0] icache_data [0:31];
 reg  [12:0] icache_tag  [0:31];      // addr[20:8]
 reg  [31:0] icache_valid;
@@ -1414,7 +1425,6 @@ wire        if_hit     = icache_valid[if_line_ix] && (icache_tag[if_line_ix] == 
 // path, keeps it off the V60's tight execution clock domain (timing-closure guard).
 wire [63:0] if_hit_data = icache_data[if_line_ix] >> {if_addr[2:0], 3'b000};
 
-reg  [1:0]  fill_word;
 reg         rom_filling;
 reg         rom_ready;               // pulses when requested word available
 reg  [15:0] rom_word_r;
@@ -1422,7 +1432,6 @@ reg  [15:0] rom_word_r;
 // live A/if_addr can change mid-fill, so the fill FSM uses its own latched line.
 reg  [4:0]  fill_line;
 reg  [12:0] fill_tag;
-reg  [17:0] fill_wbase;              // 8-byte line address (byte_a[20:3])
 reg         fill_isfetch;
 reg  [1:0]  fill_dsel;               // data-read word select (byte_a[2:1])
 reg  [2:0]  fill_foff;               // fetch intra-line offset (if_addr[2:0]) to align
@@ -1445,40 +1454,38 @@ end
 
 always @(posedge clk_sys) begin
     if (rst) begin
-        rom_req_r <= 0; rom_filling <= 0; rom_ready <= 0;
+        rom_req_r <= 0; rom_burst_r <= 0; rom_filling <= 0; rom_ready <= 0;
         icache_valid <= 32'h0;
         if_served <= 1'b0;
     end
     else begin
         rom_req_r <= 0;
+        rom_burst_r <= 0;
         rom_ready <= 0;
         // re-arm the fetch port once the CPU drops if_req (having consumed if_ack)
         if (!if_req) if_served <= 1'b0;
 
         if (rom_filling) begin
             if (sdr_p0_ack) begin
-                icache_data[fill_line][{fill_word, 4'b0000} +: 16] <= sdr_p0_dout;
-                if (fill_word == 2'd3) begin
-                    rom_filling <= 0;
-                    icache_tag[fill_line]   <= fill_tag;
-                    icache_valid[fill_line] <= 1'b1;
-                    if (fill_isfetch) begin
-                        // return the line (word 3 is on sdr_p0_dout now), pre-aligned
-                        // by the latched offset so byte 0 is the frontier byte.
-                        if_data   <= ({sdr_p0_dout, icache_data[fill_line][47:0]})
-                                     >> {fill_foff, 3'b000};
-                        if_served <= 1'b1;
-                    end
-                    else begin
-                        rom_word_r <= (fill_dsel == 2'd3) ? sdr_p0_dout
-                                     : icache_data[fill_line][{fill_dsel, 4'b0000} +: 16];
-                        rom_ready  <= 1'b1;
-                    end
+                // p0 returns the complete aligned cache line atomically.  This
+                // removes three arbitration/ACT/tRCD/CAS round trips per miss
+                // without exposing a partial cache line to either CPU client.
+                icache_data[fill_line]  <= sdr_p0_dout;
+                rom_filling             <= 1'b0;
+                icache_tag[fill_line]   <= fill_tag;
+                icache_valid[fill_line] <= 1'b1;
+                if (fill_isfetch) begin
+                    if_data   <= sdr_p0_dout >> {fill_foff, 3'b000};
+                    if_served <= 1'b1;
                 end
                 else begin
-                    fill_word  <= fill_word + 1'd1;
-                    rom_req_r  <= 1'b1;
-                    rom_addr_r <= {3'b000, fill_wbase, fill_word + 2'd1};
+                    case (fill_dsel)
+                        2'd0: rom_word_r <= sdr_p0_dout[15:0];
+                        2'd1: rom_word_r <= sdr_p0_dout[31:16];
+                        2'd2: rom_word_r <= sdr_p0_dout[47:32];
+                        default: rom_word_r <= sdr_p0_dout[63:48];
+                    endcase
+                    rom_ready <= 1'b1;
                 end
             end
         end
@@ -1494,9 +1501,8 @@ always @(posedge clk_sys) begin
                 fill_foff    <= if_addr[2:0];  // remember offset to align on completion
                 fill_line    <= if_line_ix;
                 fill_tag     <= if_tag_ix;
-                fill_wbase   <= if_byte_a[20:3];
-                fill_word    <= 0;
                 rom_req_r    <= 1'b1;
+                rom_burst_r  <= 1'b1;
                 rom_addr_r   <= {3'b000, if_byte_a[20:3], 2'b00};
             end
         end
@@ -1511,10 +1517,9 @@ always @(posedge clk_sys) begin
                 fill_isfetch <= 1'b0;
                 fill_line    <= ic_line;
                 fill_tag     <= ic_tag;
-                fill_wbase   <= rom_byte_a[20:3];
                 fill_dsel    <= rom_byte_a[2:1];
-                fill_word    <= 0;
                 rom_req_r    <= 1'b1;
+                rom_burst_r  <= 1'b1;
                 rom_addr_r   <= {3'b000, rom_byte_a[20:3], 2'b00};
             end
         end
@@ -1633,15 +1638,19 @@ endmodule
 `undef S32_AREA_ROM_CACHE
 `endif
 //============================================================================
-// Golden Axe main-ROM cache: 32 direct-mapped 8-byte lines.
+// Main-ROM cache: 64 direct-mapped 8-byte lines.
 //
 // A single synchronous lookup port is sufficient because instruction fetches
 // have priority and the V60 data bus holds a request until acknowledge. The
-// whole line is committed after the fourth SDRAM beat, avoiding partial writes
-// so Quartus can implement {tag,data} as four 32x20 MLAB lanes. Valid bits stay
+// whole line is committed after one four-beat SDRAM burst, avoiding partial
+// writes so Quartus can implement {tag,data} as MLAB lanes. Valid bits stay
 // outside the memory so reset/invalidation remains a one-cycle operation.
 //============================================================================
-module s32_ga_rom_cache (
+module s32_ga_rom_cache #(
+    // Six index bits retain 64 lines (512 bytes).  Keep this parameter for the
+    // focused 32-vs-64 conflict benchmark; production uses the larger default.
+    parameter integer INDEX_BITS = 6
+) (
     input              clk,
     input              rst,
     input              invalidate,
@@ -1658,8 +1667,9 @@ module s32_ga_rom_cache (
     output reg         data_ack,
 
     output reg         rom_req,
+    output reg         rom_burst,
     output reg  [23:1] rom_addr,
-    input       [15:0] rom_data,
+    input       [63:0] rom_data,
     input              rom_ack,
 
     // Held high by an external SDRAM-p0 arbiter while a competing client
@@ -1673,16 +1683,22 @@ module s32_ga_rom_cache (
     output             busy
 );
 
-// 32 x 77 = 2,464 bits. Cyclone V MLABs support a synchronous 32-word read;
-// keeping the validity vector separate avoids a reset loop on the RAM itself.
-(* ramstyle = "MLAB" *) reg [76:0] cache_mem [0:31]; // {tag[12:0], data[63:0]}
-reg [76:0] cache_q;
-reg [31:0] cache_valid;
+localparam integer LINE_COUNT = 1 << INDEX_BITS;
+localparam integer TAG_BITS = 18 - INDEX_BITS;
+localparam integer CACHE_WIDTH = 64 + TAG_BITS;
+
+// 64 x 76 = 4,864 bits in production.  The previous 32 x 77 shape used 40
+// memory ALMs and no M10Ks in the accepted segas32 fit, so doubling depth here
+// consumes MLAB capacity without worsening the profile's 512/553 M10K ceiling.
+// Keeping validity separate avoids a reset loop on the inferred memory.
+(* ramstyle = "MLAB" *) reg [CACHE_WIDTH-1:0] cache_mem [0:LINE_COUNT-1];
+reg [CACHE_WIDTH-1:0] cache_q;
+reg [LINE_COUNT-1:0] cache_valid;
 
 reg        lookup_pending;
 reg        lookup_fetch;
-reg  [4:0] lookup_index;
-reg [12:0] lookup_tag;
+reg  [INDEX_BITS-1:0] lookup_index;
+reg [TAG_BITS-1:0] lookup_tag;
 reg [17:0] lookup_line_addr;
 reg  [2:0] lookup_if_offset;
 reg  [1:0] lookup_data_word;
@@ -1690,21 +1706,19 @@ reg  [1:0] lookup_data_word;
 reg        filling;
 reg        fill_discard;
 reg        fill_fetch;
-reg  [4:0] fill_index;
-reg [12:0] fill_tag;
-reg [17:0] fill_line_addr;
+reg  [INDEX_BITS-1:0] fill_index;
+reg [TAG_BITS-1:0] fill_tag;
 reg  [2:0] fill_if_offset;
 reg  [1:0] fill_data_word;
-reg  [1:0] fill_word;
-reg [63:0] fill_data;
 
 wire choose_fetch = if_req && !if_ack;
 wire choose_data  = !choose_fetch && data_req && !data_ack;
 wire launch_lookup = !lookup_pending && !filling && (choose_fetch || choose_data);
-wire [4:0] lookup_mem_addr = lookup_pending ? lookup_index :
-                              choose_fetch ? if_line_addr[7:3] : data_addr[7:3];
-wire [63:0] completed_line = {rom_data, fill_data[47:0]};
-wire cache_commit = filling && rom_ack && (fill_word == 2'd3) &&
+wire [INDEX_BITS-1:0] lookup_mem_addr = lookup_pending ? lookup_index :
+    choose_fetch ? if_line_addr[INDEX_BITS+2:3]
+                 : data_addr[INDEX_BITS+2:3];
+wire [63:0] completed_line = rom_data;
+wire cache_commit = filling && rom_ack &&
                     !fill_discard && !invalidate && !rst;
 // Nothing in flight here means it is safe for an external arbiter to steal
 // the shared p0 bus: a cache HIT resolves without ever touching rom_req, so
@@ -1737,38 +1751,37 @@ end
 
 always @(posedge clk) begin
     if (rst) begin
-        cache_valid      <= 32'd0;
+        cache_valid      <= '0;
         lookup_pending   <= 1'b0;
         lookup_fetch     <= 1'b0;
-        lookup_index     <= 5'd0;
-        lookup_tag       <= 13'd0;
+        lookup_index     <= '0;
+        lookup_tag       <= '0;
         lookup_line_addr <= 18'd0;
         lookup_if_offset <= 3'd0;
         lookup_data_word <= 2'd0;
         filling          <= 1'b0;
         fill_discard     <= 1'b0;
         fill_fetch       <= 1'b0;
-        fill_index       <= 5'd0;
-        fill_tag         <= 13'd0;
-        fill_line_addr   <= 18'd0;
+        fill_index       <= '0;
+        fill_tag         <= '0;
         fill_if_offset   <= 3'd0;
         fill_data_word   <= 2'd0;
-        fill_word        <= 2'd0;
-        fill_data        <= 64'd0;
         if_data          <= 64'd0;
         if_ack           <= 1'b0;
         data_data        <= 16'hffff;
         data_ack         <= 1'b0;
         rom_req          <= 1'b0;
+        rom_burst        <= 1'b0;
         rom_addr         <= 23'd0;
     end
     else begin
         rom_req <= 1'b0;
+        rom_burst <= 1'b0;
         if (!if_req)   if_ack   <= 1'b0;
         if (!data_req) data_ack <= 1'b0;
 
         if (invalidate) begin
-            cache_valid    <= 32'd0;
+            cache_valid    <= '0;
             lookup_pending <= 1'b0;
             if_ack          <= 1'b0;
             data_ack        <= 1'b0;
@@ -1789,40 +1802,28 @@ always @(posedge clk) begin
             if (rom_ack) begin
                 if (fill_discard) begin
                     // Drain one response from an invalidated transaction and
-                    // abandon the rest of that line. A held requester retries.
+                    // discard that complete line. A held requester retries.
                     filling      <= 1'b0;
                     fill_discard <= 1'b0;
                 end
                 else begin
-                    case (fill_word)
-                        2'd0: fill_data[15:0]  <= rom_data;
-                        2'd1: fill_data[31:16] <= rom_data;
-                        2'd2: fill_data[47:32] <= rom_data;
-                        default: fill_data[63:48] <= rom_data;
-                    endcase
-                    if (fill_word == 2'd3) begin
-                        cache_valid[fill_index] <= 1'b1;
-                        filling <= 1'b0;
-                        if (fill_fetch) begin
-                            if_data <= completed_line >> {fill_if_offset, 3'b000};
-                            if_ack  <= 1'b1;
-                        end
-                        else begin
-                            data_data <= select_word(completed_line, fill_data_word);
-                            data_ack  <= 1'b1;
-                        end
+                    cache_valid[fill_index] <= 1'b1;
+                    filling <= 1'b0;
+                    if (fill_fetch) begin
+                        if_data <= completed_line >> {fill_if_offset, 3'b000};
+                        if_ack  <= 1'b1;
                     end
                     else begin
-                        fill_word <= fill_word + 1'd1;
-                        rom_addr  <= {3'b000, fill_line_addr, fill_word + 2'd1};
-                        rom_req   <= 1'b1;
+                        data_data <= select_word(completed_line, fill_data_word);
+                        data_ack  <= 1'b1;
                     end
                 end
             end
         end
         else if (lookup_pending && !stall) begin
             lookup_pending <= 1'b0;
-            if (cache_valid[lookup_index] && cache_q[76:64] == lookup_tag) begin
+            if (cache_valid[lookup_index] &&
+                cache_q[CACHE_WIDTH-1:64] == lookup_tag) begin
                 if (lookup_fetch) begin
                     if_data <= cache_q[63:0] >> {lookup_if_offset, 3'b000};
                     if_ack  <= 1'b1;
@@ -1838,28 +1839,26 @@ always @(posedge clk) begin
                 fill_fetch     <= lookup_fetch;
                 fill_index     <= lookup_index;
                 fill_tag       <= lookup_tag;
-                fill_line_addr <= lookup_line_addr;
                 fill_if_offset <= lookup_if_offset;
                 fill_data_word <= lookup_data_word;
-                fill_word      <= 2'd0;
-                fill_data      <= 64'd0;
                 rom_addr       <= {3'b000, lookup_line_addr, 2'b00};
                 rom_req        <= 1'b1;
+                rom_burst      <= 1'b1;
             end
         end
         else if (launch_lookup) begin
             lookup_pending <= 1'b1;
             lookup_fetch   <= choose_fetch;
             if (choose_fetch) begin
-                lookup_index     <= if_line_addr[7:3];
-                lookup_tag       <= if_line_addr[20:8];
+                lookup_index     <= if_line_addr[INDEX_BITS+2:3];
+                lookup_tag       <= if_line_addr[20:INDEX_BITS+3];
                 lookup_line_addr <= if_line_addr;
                 lookup_if_offset <= if_offset;
                 lookup_data_word <= 2'd0;
             end
             else begin
-                lookup_index     <= data_addr[7:3];
-                lookup_tag       <= data_addr[20:8];
+                lookup_index     <= data_addr[INDEX_BITS+2:3];
+                lookup_tag       <= data_addr[20:INDEX_BITS+3];
                 lookup_line_addr <= data_addr[20:3];
                 lookup_if_offset <= 3'd0;
                 lookup_data_word <= data_addr[2:1];

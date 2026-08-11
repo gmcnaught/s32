@@ -49,12 +49,17 @@ end
 // -------------------------------------------------------------------------
 reg [15:0] rom [0:8191];
 wire        p0_req;
+wire        p0_burst;
 wire [24:1] p0_addr;
-reg  [15:0] p0_dout;
+reg  [63:0] p0_dout;
 reg         p0_ack = 0;
 always @(posedge clk_sys) begin
     p0_ack  <= p0_req & ~p0_ack;
-    p0_dout <= rom[p0_addr[13:1]];
+    if (p0_burst)
+        p0_dout <= {rom[{p0_addr[13:3],2'b11}], rom[{p0_addr[13:3],2'b10}],
+                    rom[{p0_addr[13:3],2'b01}], rom[{p0_addr[13:3],2'b00}]};
+    else
+        p0_dout <= {48'd0, rom[p0_addr[13:1]]};
 end
 
 // -------------------------------------------------------------------------
@@ -126,7 +131,8 @@ s32_core core (
     .rst(rst), .video_rst(rst), .board(board),
     .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(1'b0),
     .alien3_hud_blend(1'b0),
-    .sdr_p0_req(p0_req), .sdr_p0_addr(p0_addr), .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
+    .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
+    .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(), .sdr_p1_addr(), .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b1),
     .sdr_p2_req(p2_req), .sdr_p2_addr(), .sdr_p2_dout({8{16'h1111}}), .sdr_p2_ack(p2_ack),
     .sdr_p3_req(), .sdr_p3_addr(), .sdr_p3_dout(16'h0), .sdr_p3_ack(1'b0),

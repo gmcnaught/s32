@@ -2,6 +2,51 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-11: integrated CPU, memory and renderer throughput package
+
+Both production profiles keep the PCB V60 clock and every external data/I/O
+bus cadence unchanged.  `V60 Fetch: Fast / PCB (Reset)` now defaults to the
+existing ROM-only wide instruction path; PCB fetch remains selectable.  Work
+RAM code, data, I/O, interrupts and protection transactions always use the
+ordinary hardware-timed bus.
+
+The shared V60 overlaps the execute edge with sequential retirement only for
+explicitly allowlisted register-result and no-writeback operations.  Memory,
+RMW, iterative, privileged, exception and control-transfer paths retain their
+general states.  The MOVW/DBR fixture improved from 2,101 to 1,845 clocks
+(-12.2 %) with the same 12 physical reads; an unrolled register stream improved
+from 2,370 to 2,114 clocks (-10.8 %) with identical ordered bus payloads.
+
+V60 cache misses now request one aligned four-word p0 transaction instead of
+four independent SDRAM transactions.  The transport improved from 52 to 16
+`clk_ram` cycles (3.25x) and from four ACT commands to one, while exact
+protection reads remain single-word non-bursts.  The production synchronous
+cache is 64 lines instead of 32: a measured alternating conflict fixture drops
+from eight misses to zero after warm-up.  The previous accepted report shows
+this cache class uses MLABs rather than M10Ks; the estimated increase is about
+40 memory ALMs, but the new inference and timing remain Quartus-unverified.
+
+The tilemap retains tagged bitmap VRAM words for all lanes and caches exact
+NBG0/NBG1 reciprocal results by their complete effective zoom-denominator key.
+A 320-pixel 4bpp bitmap line improves from 969 to 490 renderer clocks and a
+repeated NBG line from 555 to 493 with identical pixel/hash results.  The sprite
+engine uses a guarded same-cache 1:1 continuation that sustains one pixel per
+clock; cache boundaries, scaling, clipping and END handling retain the general
+fallback, which is regression-run against the same 24-case pixel suite.
+
+The demand-only sound-ROM cache is now four two-way sets with per-set LRU and
+single-consumption stretched-ACK handling.  A two-stream conflict fixture drops
+from 160 to eight SDRAM requests and from 1,119 to 359 system clocks, while the
+LDIR-like demand count remains exactly 33.  Sparse framebuffer flushes skip only
+64-bit words whose four-lane valid mask is zero: the normal fixture drops from
+128 to two DDR writes, and shadow RMW from 128 reads plus 128 writes to two plus
+two.  Dense flush, erase and scanout transaction counts are unchanged.
+
+Focused Icarus/ModelSim equivalence, fallback, contention, backpressure and
+profile-boot tests pass, as do 126 Python tests and all three release/MRA gates.
+No Quartus build, RBF, STA or MiSTer hardware verification covers this package
+yet; the previously built RBF predates these RTL changes.
+
 ## 2026-08-11: direct retained-loop DBcc/TB restore
 
 The shared V60 now restores a complete retained fetch window directly from the
@@ -17,13 +62,13 @@ fixture now reports 36,225 cycles for its overlap-A case.
 ## 2026-08-10: V60 throughput improvements
 
 Both production profiles compile the existing 8-byte ROM-cache instruction
-port and expose `V60 Fetch: PCB / Fast (Reset)`. The selection is latched only
-while reset is asserted. `PCB` keeps instruction prefetch on the shared,
-ce-gated 16-bit V60 adapter; `Fast` uses the dedicated cache port for the two
-main-ROM windows. Code executing from work/shared RAM automatically stays on
-the ordinary V60 bus. Data, I/O,
+port and expose `V60 Fetch: Fast / PCB (Reset)`. The selection is latched only
+while reset is asserted and Fast is the default. `PCB` keeps instruction
+prefetch on the shared, ce-gated 16-bit V60 adapter; `Fast` uses the dedicated
+cache port for the two main-ROM windows. Code executing from work/shared RAM
+automatically stays on the ordinary V60 bus. Data, I/O,
 interrupt, video, audio and protection traffic retain their PCB clocks and bus
-ordering in both modes. This is an explicit optional performance aid, not a
+ordering in both modes. This is an explicit selectable performance aid, not a
 claim that an original V60 had an 8-byte external instruction bus.
 
 The shared V60 now launches common displacement/register-indirect source reads,

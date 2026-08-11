@@ -23,7 +23,7 @@ module tb_core_map_decode;
         .clk_sys(clk), .clk_ram(clk), .rst(core_rst), .video_rst(core_rst), .board(bd),
         .ce_cpu(1'b0), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(1'b0),
         .alien3_hud_blend(1'b0),
-        .sdr_p0_dout(16'h0), .sdr_p0_ack(1'b0),
+        .sdr_p0_dout(64'h0), .sdr_p0_ack(1'b0),
         .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b0),
         .sdr_p2_dout(128'h0), .sdr_p2_ack(1'b0),
         .sdr_p3_dout(16'h0), .sdr_p3_ack(1'b0),
@@ -192,9 +192,10 @@ module tb_core_map_decode;
         force core.prot_rom_grant = 1'b1;
         force core.prot_rom_addr = 24'h00263a;
         #1;
-        if (core.sdr_p0_addr !== (24'h00263a >> 1)) begin
-            $display("FAIL Sonic protection ROM word address=%06x expected=00131d",
-                core.sdr_p0_addr);
+        if (core.sdr_p0_addr !== (24'h00263a >> 1) ||
+            core.sdr_p0_burst !== 1'b0) begin
+            $display("FAIL Sonic protection ROM transaction address=%06x burst=%b expected=00131d/0",
+                core.sdr_p0_addr, core.sdr_p0_burst);
             errors = errors + 1;
         end
         release core.prot_rom_addr;

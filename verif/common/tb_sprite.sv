@@ -16,11 +16,13 @@
 //  14. latched sprite-control global X/Y flip mirrors the framebuffer scan
 //  15. self-referential JUMP is bounded to 8192 commands (no frame freeze)
 //      saturating command counters without changing the renderer path
-//  16. cached pixels retain the two-clock R_PIXEL/R_EMIT throughput contract
+//  16. cached 1:1 pixels use the exact one-clock continuation path
 //============================================================================
 `timescale 1ns/1ps
 
-module tb_sprite;
+module tb_sprite #(
+    parameter bit DUT_FAST_1X = 1'b1
+);
 
 reg clk = 0;
 always #5 clk = ~clk;
@@ -90,7 +92,7 @@ reg is_multi32 = 0;
 reg [1:0] srom_bank_mask = 2'b11;
 wire rendering;
 
-s32_sprite #(.POST_VBLANK_CYCLES(4)) dut (
+s32_sprite #(.POST_VBLANK_CYCLES(4), .FAST_1X(DUT_FAST_1X)) dut (
     .clk(clk), .rst(rst), .is_multi32(is_multi32),
     .present(1'b0),
     .verify_srom(1'b0),
@@ -207,19 +209,68 @@ initial begin
     entry(0, W0_PLAIN, W1_1x1, 16'h0001, 16'h0008, 16'd10, 16'd100, 16'h0000, COLOR);
     entry(1, 16'hC000, 0,0,0,0,0,0,0);
     frame;
-    // The timing-oriented R_PIXEL_DATA regression made this exact fixture take
-    // 793 clocks by charging an extra state to all eight cached pixels.  Keep
-    // a little harness-edge tolerance while requiring the restored two-stage
-    // production path (785 clocks in this model).
-    if (last_frame_cycles > 789) begin
+    // The fully general R_PIXEL/R_EMIT fallback takes 785 clocks for this
+    // fixture.  Seven same-cache continuations reduce the production path to
+    // 778 without changing the eight pixel values checked below.
+    $display("SPRITE %s cycles=%0d",
+             DUT_FAST_1X ? "1X FAST" : "FALLBACK", last_frame_cycles);
+    if (DUT_FAST_1X && last_frame_cycles > 781) begin
         errors = errors + 1;
-        $display("  FAIL cached-pixel throughput cycles=%0d want<=789",
+        $display("  FAIL cached-pixel throughput cycles=%0d want<=781",
+                 last_frame_cycles);
+    end
+    if (!DUT_FAST_1X && last_frame_cycles != 785) begin
+        errors = errors + 1;
+        $display("  FAIL fallback cadence cycles=%0d want=785",
                  last_frame_cycles);
     end
     check(100, 16'h8101); check(101, 16'h8102); check(102, 16'h8103);
     check(103, 16'h8104); check(104, 16'h8105); check(105, 16'h8106);
     check(106, 16'h8107); check(107, 16'h8108);
     check(99, 16'hFFFF);  check(108, 16'hFFFF);
+
+    // The fast 1:1 continuation must stop at the 16-byte cache boundary,
+    // fetch the next tagged line through the general path, then resume with
+    // no duplicated or skipped source pixel.  This same case runs under the
+    // forced-fallback top below, giving both cadences identical expectations.
+    rom128[0] = {4{32'h78563412}};
+    rom128[1] = 128'd0;
+    rom128[1][31:0] = 32'h78563412;
+    entry(0, W0_PLAIN, 16'h010a, 16'h0001, 16'h0028,
+          16'd10, 16'd100, 16'h0000, COLOR);
+    entry(1, 16'hC000, 0,0,0,0,0,0,0);
+    frame;
+    $display("SPRITE 40PX %s cycles=%0d",
+             DUT_FAST_1X ? "FAST" : "FALLBACK", last_frame_cycles);
+    if (DUT_FAST_1X && last_frame_cycles > 817) begin
+        errors = errors + 1;
+        $display("  FAIL 40px fast cadence=%0d want<=817",
+                 last_frame_cycles);
+    end
+    if (!DUT_FAST_1X && last_frame_cycles != 853) begin
+        errors = errors + 1;
+        $display("  FAIL 40px fallback cadence=%0d want=853",
+                 last_frame_cycles);
+    end
+    check(130, 16'h8107); check(131, 16'h8108);
+    check(132, 16'h8101); check(133, 16'h8102);
+    check(138, 16'h8107); check(139, 16'h8108);
+
+    // 8bpp uses one source byte per pixel but the same guarded continuation.
+    // Exercise all 16 lanes in one cache line under both fast/fallback tops.
+    rom128[0] = 128'h100f0e0d0c0b0a090807060504030201;
+    entry(0, W0_PLAIN | 16'h0200, 16'h0104, 16'h0001, 16'h0010,
+          16'd10, 16'd100, 16'h0000, COLOR);
+    entry(1, 16'hC000, 0,0,0,0,0,0,0);
+    frame;
+    check(100, 16'h8101); check(101, 16'h8102);
+    check(114, 16'h810f); check(115, 16'h8110);
+
+    // Restore the per-word fixtures consumed by the remaining pen/END cases.
+    rom128[0] = 128'h0;
+    rom128[0][31:0] = 32'h78563412;
+    rom128[0][63:32] = 32'h3F0F0F1F;
+    rom128[0][95:64] = 32'h40302010;
 
     // ---- 2: pen 0 skipped everywhere, pen F drawn ONLY mid-word ----
     // word addr 2: pens 1,0,2,0,3,0,4,0 -> zeros never drawn
@@ -520,8 +571,11 @@ initial begin
                  dut.list_count, rendering);
     end
 
-    if (errors == 0) $display("SPRITE PASS");
-    else             $display("SPRITE FAIL (%0d errors)", errors);
+    if (errors == 0) begin
+        if (DUT_FAST_1X) $display("SPRITE PASS");
+        else             $display("SPRITE FALLBACK PASS");
+    end
+    else $display("SPRITE FAIL (%0d errors)", errors);
     $finish;
 end
 

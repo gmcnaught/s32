@@ -17,8 +17,10 @@ the clearing ack/pend — the V60 icache-fill chain) was only ever simulated in
 the half-offset phase.
 
 The testbench:
-* faithfully reproduces the V60 icache 4-word line fill from `rtl/s32_core.sv`
-  (single-cycle `p0_req` pulses, word N+1 chained off word N's ack);
+* deliberately retains the historical four-exact-word V60 fill pattern as an
+  adversarial edge-latch regression (single-cycle `p0_req` pulses, word N+1
+  chained off word N's ack); production's one-request aligned line burst is
+  covered by `verif/common/tb_sdram_p0_throughput.sv`;
 * runs concurrent p5 (V25) bursts to perturb arbitration parity;
 * selects the clock coupling: **edge-aligned** (default, = hardware) or
   **half-offset** (`+define+HALF_OFFSET`, = the ModelSim TBs);
