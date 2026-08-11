@@ -884,35 +884,6 @@ always @* begin
     endcase
 end
 
-// Third read port (docs/v60-pipelining-plan.md Stage B): dedicated to the
-// F2-format "AM operand" fast-path peek in S_IF2 below.  Its index is a pure
-// function of already-fetched fb[] bytes (never of rf_raddr_a/b's owner
-// state), so it never contends with the a/b ports' existing uses within the
-// same cycle.  Same explicit-case-mux pattern as a/b for the same Icarus/
-// synthesis reasons noted above.
-wire [4:0] rf_raddr_c = fb[5'd2][4:0];
-reg [31:0] rf_rdata_c;
-always @* begin
-    case (rf_raddr_c)
-        5'd0:  rf_rdata_c = r[0];   5'd1:  rf_rdata_c = r[1];
-        5'd2:  rf_rdata_c = r[2];   5'd3:  rf_rdata_c = r[3];
-        5'd4:  rf_rdata_c = r[4];   5'd5:  rf_rdata_c = r[5];
-        5'd6:  rf_rdata_c = r[6];   5'd7:  rf_rdata_c = r[7];
-        5'd8:  rf_rdata_c = r[8];   5'd9:  rf_rdata_c = r[9];
-        5'd10: rf_rdata_c = r[10];  5'd11: rf_rdata_c = r[11];
-        5'd12: rf_rdata_c = r[12];  5'd13: rf_rdata_c = r[13];
-        5'd14: rf_rdata_c = r[14];  5'd15: rf_rdata_c = r[15];
-        5'd16: rf_rdata_c = r[16];  5'd17: rf_rdata_c = r[17];
-        5'd18: rf_rdata_c = r[18];  5'd19: rf_rdata_c = r[19];
-        5'd20: rf_rdata_c = r[20];  5'd21: rf_rdata_c = r[21];
-        5'd22: rf_rdata_c = r[22];  5'd23: rf_rdata_c = r[23];
-        5'd24: rf_rdata_c = r[24];  5'd25: rf_rdata_c = r[25];
-        5'd26: rf_rdata_c = r[26];  5'd27: rf_rdata_c = r[27];
-        5'd28: rf_rdata_c = r[28];  5'd29: rf_rdata_c = r[29];
-        5'd30: rf_rdata_c = r[30];  default: rf_rdata_c = r[31];
-    endcase
-end
-
 // EA_OVERLAP=1 (docs/v60-pipelining-plan.md Stage B): when the F2-format
 // instruction's "AM operand" (op1 for D=1, op2 for D=0) resolves to register
 // direct, non-deferred addressing, S_IF2 already has every byte it needs to
@@ -920,7 +891,7 @@ end
 // fb[2] is valid the moment S_IF2 begins, before ea_ofs is even assigned for
 // this instruction.  This is read-only on architectural state exactly like
 // Stage A's predecode (it only inspects fb[] and, for the value case, reads
-// a register through the dedicated port c above -- never op1/op2/ea_* of an
+// a register through read port b -- never op1/op2/ea_* of an
 // in-flight instruction), so unlike a genuine cross-instruction overlap it
 // carries no RAW hazard at all: the register being read belongs to the SAME
 // instruction that is about to consume it, not a different in-flight one.
@@ -950,7 +921,7 @@ wire [4:0]  eaf_reg         = fb[5'd2][4:0];
 // instflags[6]==0, distinct from the register-direct arm above which is
 // ea_modm==1).  Still same-instruction, same-cycle, zero cross-instruction
 // hazard: the register read is of THIS instruction's own base register via
-// port c, one cycle earlier than S_EA_MODE would read it.  Scoped to the
+// port b, one cycle earlier than S_EA_MODE would read it.  Scoped to the
 // address case only (F2 D=0's op2, always ea_want_addr=1) -- the value case
 // would need an extra S_EA_VAL bus read that cannot be folded away, so it is
 // deliberately left on the sequential path.
@@ -975,7 +946,10 @@ always @* begin
     rf_raddr_b = 5'd0;
     case (st)
         S_DECODE:  rf_raddr_a = fb[1][4:0];
-        S_IF2:     rf_raddr_a = instflags[4:0];
+        S_IF2: begin
+            rf_raddr_a = instflags[4:0];
+            rf_raddr_b = fb[5'd2][4:0];
+        end
         S_EA_MODE: begin
             rf_raddr_a = modreg;
             rf_raddr_b = modval2[4:0];
@@ -1696,7 +1670,7 @@ else if (ce) begin
                         flag1 <= 1'b1;
                     end
                     else begin
-                        op1   <= dimext(rf_rdata_c, f12_dim1(cur_op));
+                        op1   <= dimext(rf_rdata_b, f12_dim1(cur_op));
                         flag1 <= 1'b0;
                     end
                     len1 <= 5'd1;
@@ -1709,20 +1683,20 @@ else if (ce) begin
                 // the authentic board CE.
                 else if (eaf_disp_direct && !instflags[6]) begin
                     if (f12_op1_is_addr(cur_op)) begin
-                        op1   <= rf_rdata_c + eaf_disp;
+                        op1   <= rf_rdata_b + eaf_disp;
                         flag1 <= 1'b0;
                         len1  <= eaf_disp_len;
                         st    <= S_EXEC;
                     end
                     else begin
-                        ea_addr   <= rf_rdata_c + eaf_disp;
+                        ea_addr   <= rf_rdata_b + eaf_disp;
                         ea_len    <= eaf_disp_len;
                         ea_flag   <= 1'b0;
                         ea_isval  <= 1'b0;
                         dbus_req  <= 1'b1;
                         dbus_we   <= 1'b0;
                         dbus_size <= f12_dim1(cur_op);
-                        dbus_addr <= rf_rdata_c + eaf_disp;
+                        dbus_addr <= rf_rdata_b + eaf_disp;
                         st        <= S_EA_VAL;
                     end
                 end
@@ -1733,20 +1707,20 @@ else if (ce) begin
                 else if (EA_OVERLAP && !instflags[6] &&
                          fb[5'd2][7:5] == 3'd3) begin
                     if (f12_op1_is_addr(cur_op)) begin
-                        op1   <= rf_rdata_c;
+                        op1   <= rf_rdata_b;
                         flag1 <= 1'b0;
                         len1  <= 5'd1;
                         st    <= S_EXEC;
                     end
                     else begin
-                        ea_addr   <= rf_rdata_c;
+                        ea_addr   <= rf_rdata_b;
                         ea_len    <= 5'd1;
                         ea_flag   <= 1'b0;
                         ea_isval  <= 1'b0;
                         dbus_req  <= 1'b1;
                         dbus_we   <= 1'b0;
                         dbus_size <= f12_dim1(cur_op);
-                        dbus_addr <= rf_rdata_c;
+                        dbus_addr <= rf_rdata_b;
                         st        <= S_EA_VAL;
                     end
                 end
@@ -1793,17 +1767,17 @@ else if (ce) begin
                 if (EA_OVERLAP && instflags[6] &&
                     fb[5'd2][7:5] == 3'd4 &&
                     (cur_op == 8'h09 || cur_op == 8'h1b || cur_op == 8'h2d)) begin
-                    op2       <= rf_rdata_c;
+                    op2       <= rf_rdata_b;
                     flag2     <= 1'b0;
                     len2      <= 5'd1;
                     total_len <= 5'd3;
                     queue_reg_write(eaf_reg,
-                                    rf_rdata_c + dim_step(f12_dim2(cur_op)),
+                                    rf_rdata_b + dim_step(f12_dim2(cur_op)),
                                     32'hffff_ffff);
                     dbus_req   <= 1'b1;
                     dbus_we    <= 1'b1;
                     dbus_size  <= f12_dim2(cur_op);
-                    dbus_addr  <= rf_rdata_c;
+                    dbus_addr  <= rf_rdata_b;
                     dbus_wdata <= rf_rdata_a;
                     st         <= S_WB_MEM;
                 end
@@ -1823,7 +1797,7 @@ else if (ce) begin
                 // Displacement arm (rf_rdata_a + d1t, ea_flag stays 0) with
                 // no extra bus access.
                 else if (eaf_disp_direct && !instflags[6]) begin
-                    op2   <= rf_rdata_c + eaf_disp;
+                    op2   <= rf_rdata_b + eaf_disp;
                     flag2 <= 1'b0;
                     len2  <= eaf_disp_len;
                     // Destination-reading ALU/RMW instructions can issue the
@@ -1834,7 +1808,7 @@ else if (ce) begin
                         dbus_req  <= 1'b1;
                         dbus_we   <= 1'b0;
                         dbus_size <= f12_dim2(cur_op);
-                        dbus_addr <= rf_rdata_c + eaf_disp;
+                        dbus_addr <= rf_rdata_b + eaf_disp;
                         st        <= S_OP2_LD;
                     end
                     else st <= S_EXEC;
@@ -1843,14 +1817,14 @@ else if (ce) begin
                 // companion to the path above.
                 else if (EA_OVERLAP && !instflags[6] &&
                          fb[5'd2][7:5] == 3'd3) begin
-                    op2   <= rf_rdata_c;
+                    op2   <= rf_rdata_b;
                     flag2 <= 1'b0;
                     len2  <= 5'd1;
                     if (f12_reads_dest(cur_op)) begin
                         dbus_req  <= 1'b1;
                         dbus_we   <= 1'b0;
                         dbus_size <= f12_dim2(cur_op);
-                        dbus_addr <= rf_rdata_c;
+                        dbus_addr <= rf_rdata_b;
                         st        <= S_OP2_LD;
                     end
                     else st <= S_EXEC;
