@@ -2848,6 +2848,10 @@ BEGIN
 		VARIABLE vlumpix_v : type_pix;
 		VARIABLE r1_v, r2_v : natural RANGE 0 TO OHRESH-1;
 		VARIABLE fracnn_v : std_logic;
+		-- Keep the CYCLE-8 classification in the native 12-bit domain.  The
+		-- old integer conversion could widen the compare cone before fitting;
+		-- both operands are uint12 values, so no wider arithmetic is required.
+		VARIABLE ivsize_u_v : unsigned(11 DOWNTO 0);
 		VARIABLE o_l0_v, o_l1_v, o_l2_v, o_l3_v : type_pix;
 	BEGIN
 		IF rising_edge(o_clk) THEN
@@ -2907,13 +2911,14 @@ BEGIN
 				o_vpix_inner(1 TO 5)<=o_vpix_inner(0 TO 4);
 
 				-- CYCLE 8
-				IF to_integer(o_vacpt)>o_ivsize THEN
+				ivsize_u_v := to_unsigned(o_ivsize, ivsize_u_v'length);
+				IF o_vacpt>ivsize_u_v THEN
 					IF fracnn_v = '0' THEN
 						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_inner(5), o_vpix_inner(5), o_vpix_inner(5));
 					ELSE
 						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_outer(1), o_vpix_outer(1), o_vpix_outer(1));
 					END IF;
-				ELSIF to_integer(o_vacpt)=o_ivsize THEN
+				ELSIF o_vacpt=ivsize_u_v THEN
 					IF fracnn_v = '0' THEN
 						o_vpixq_pre<=(o_vpix_outer(0), o_vpix_inner(5), o_vpix_outer(1), o_vpix_outer(1));
 					ELSE

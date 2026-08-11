@@ -67,7 +67,8 @@ wire [4:0] clip_index_hi = {3'b100, cpu_addr[1:0]};
 s32_big_dpram #(
     .ADDR_WIDTH(16),
     .NUM_WORDS(65536),
-    .MIXED_RDW_MODE("DONT_CARE")
+    .MIXED_RDW_MODE("DONT_CARE"),
+    .PORT_B_READ_ONLY(1'b1)
 ) video_ram (
     .clock_a(clk), .address_a(cpu_addr),
     .data_a(cpu_wdata), .byteena_a(cpu_be),

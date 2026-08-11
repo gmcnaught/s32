@@ -377,6 +377,11 @@ always @(posedge clk) begin
             else begin beat <= beat + 1'd1; daddr <= daddr + 1'd1; end
         end
         D_WR: if (!DDRAM_BUSY) begin
+            // The current word is no longer consumed once DWE is cleared or
+            // a zero-mask word is skipped.  Keep the data register update
+            // independent of the beat/mask decision so that the active
+            // DDRAM write-data path does not inherit that control cone.
+            ddin <= run_ram_q;
             if (beat == beats) begin dwe <= 0; dst <= D_IDLE; end
             else if (run_next_mask == 4'b0000) begin
                 // Transparent/clipped holes can leave complete 64-bit words
@@ -391,7 +396,6 @@ always @(posedge clk) begin
             else begin
                 beat  <= beat + 1'd1;
                 daddr <= daddr + 1'd1;
-                ddin  <= run_ram_q;
                 dbe   <= run_next_be;
                 dwe   <= 1'b1;
             end

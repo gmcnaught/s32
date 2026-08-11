@@ -28,7 +28,12 @@ module s32_big_dpram #(
     // Asynchronous-clock collisions have no deterministic old/new ordering
     // in Cyclone V hardware.  Such clients select DONT_CARE to avoid an
     // invalid mixed-port feed-through request; same-clock clients keep OLD.
-    parameter         MIXED_RDW_MODE = "OLD_DATA"
+    parameter         MIXED_RDW_MODE = "OLD_DATA",
+    // Port B is a read-only renderer port for video_ram and sprite_ram.  Do
+    // not build the unused BIDIR_DUAL_PORT write-control pipeline for those
+    // clients; the internal portb_we_reg otherwise becomes a long timing
+    // launch point from the M10K to every renderer fetch register.
+    parameter bit     PORT_B_READ_ONLY = 1'b0
 ) (
     input                       clock_a,
     input      [ADDR_WIDTH-1:0] address_a,
@@ -85,7 +90,7 @@ defparam
     ram.clock_enable_input_b = "BYPASS",
     ram.clock_enable_output_a = "BYPASS",
     ram.clock_enable_output_b = "BYPASS",
-    ram.indata_reg_b = "CLOCK1",
+    ram.indata_reg_b = PORT_B_READ_ONLY ? "UNUSED" : "CLOCK1",
     ram.intended_device_family = "Cyclone V",
     ram.lpm_type = "altsyncram",
     ram.operation_mode = "BIDIR_DUAL_PORT",
@@ -102,7 +107,8 @@ defparam
     ram.read_during_write_mode_port_b = "NEW_DATA_NO_NBE_READ",
     ram.width_byteena_a = 2,
     ram.width_byteena_b = 2,
-    ram.wrcontrol_wraddress_reg_b = "CLOCK1";
+    ram.byteena_reg_b = PORT_B_READ_ONLY ? "UNUSED" : "CLOCK1",
+    ram.wrcontrol_wraddress_reg_b = PORT_B_READ_ONLY ? "UNUSED" : "CLOCK1";
 `else
 reg [15:0] mem [0:NUM_WORDS-1];
 reg [15:0] q_a_r;

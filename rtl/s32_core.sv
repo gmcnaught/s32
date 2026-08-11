@@ -452,7 +452,8 @@ s32_vram vram (
 wire [15:0] sprram_q, sprlist_q;
 wire [15:0] slist_addr;
 s32_big_dpram #(
-    .ADDR_WIDTH(16), .NUM_WORDS(65536), .MIXED_RDW_MODE("DONT_CARE")
+    .ADDR_WIDTH(16), .NUM_WORDS(65536), .MIXED_RDW_MODE("DONT_CARE"),
+    .PORT_B_READ_ONLY(1'b1)
 ) sprite_ram (
     .clock_a(clk_sys), .address_a(A[16:1]),
     .data_a(m_wdata), .byteena_a(m_be),
