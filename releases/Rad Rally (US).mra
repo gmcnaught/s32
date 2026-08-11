@@ -4,7 +4,7 @@
   <parent>radr</parent>
   <year>1991</year>
   <manufacturer>Sega</manufacturer>
-  <rbf>Arcade-SegaSystem32</rbf>
+  <rbf>segas32</rbf>
   <buttons names="Gear Change,-,-,-,-,-,Start,Coin,Test,Service" default="A,Start,Select,R,L" count="1"/>
   <rom index="4" zip="radr.zip|radru.zip" md5="none">
     <part name="epr-14240.ic21" crc="8473e7ab"/>
@@ -56,7 +56,7 @@
       <part name="mpr-13518.ic17" crc="9ea4b15d" map="10000000"/>
     </interleave>
   </rom>
-  <rom index="2">
+  <rom index="2" zip="radr.zip|radru.zip" md5="none">
     <part name="eeprom-radr.ic76" crc="602032c6"/>
   </rom>
   <nvram index="3" size="128"/>

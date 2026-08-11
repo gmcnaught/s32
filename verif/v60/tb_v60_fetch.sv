@@ -11,6 +11,11 @@
 module tb_v60_fetch;
 
 localparam integer ITERATIONS = 256;
+`ifdef V60_NO_LOOP_RESTORE
+localparam integer CYCLE_BUDGET = 2800;
+`else
+localparam integer CYCLE_BUDGET = 2200;
+`endif
 
 reg clk = 0, rst = 1;
 always #10 clk = ~clk;
@@ -88,11 +93,11 @@ initial begin
     $display("FETCH PERF: iterations=%0d cycles=%0d reads=%0d r0=%0d halted=%0d",
         ITERATIONS, cycles, read_txns, cpu.r[0], cpu.halted);
     if (cpu.halted && cpu.r[0] == 0 && cpu.r[1] == 32'h1234_5678 &&
-        cycles <= 2800 && read_txns <= 16)
+        cycles <= CYCLE_BUDGET && read_txns <= 16)
         $display("FETCH PERF PASS");
     else begin
-        if (cycles > 2800)
-            $display("  cycle budget exceeded: %0d > 2800", cycles);
+        if (cycles > CYCLE_BUDGET)
+            $display("  cycle budget exceeded: %0d > %0d", cycles, CYCLE_BUDGET);
         if (read_txns > 16)
             $display("  read budget exceeded: %0d > 16", read_txns);
         $display("FETCH PERF FAIL");

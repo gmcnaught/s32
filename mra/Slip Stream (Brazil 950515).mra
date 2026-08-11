@@ -3,7 +3,7 @@
   <setname>slipstrm</setname>
   <year>1995</year>
   <manufacturer>Capcom</manufacturer>
-  <rbf>Arcade-SegaSystem32</rbf>
+  <rbf>segas32</rbf>
   <buttons names="Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service" default="A,B,X,Start,Select,R,L" count="3"/>
   <rom index="4" zip="slipstrm.zip" md5="none">
     <part name="s32b_prg01.ic6" crc="7d066307"/>

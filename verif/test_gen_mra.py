@@ -197,21 +197,26 @@ class RegenerationFidelityTests(unittest.TestCase):
             self.skipTest(f"MAME reference source not present: {self.MAME_SRC}")
         import subprocess, tempfile
         repo = Path(__file__).parents[1]
-        tracked = sorted((repo / "mra").glob("*.mra"))
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(
                 [sys.executable, str(repo / "tools" / "gen_mra.py"),
                  str(self.MAME_SRC), tmp],
-                check=True, capture_output=True)
+                 check=True, capture_output=True)
             generated = sorted(Path(tmp).glob("*.mra"))
-            self.assertEqual([p.name for p in generated],
-                             [p.name for p in tracked])
-            for want, got in zip(tracked, generated):
-                # Compare text, not bytes: the tracked files carry CRLF from
-                # git's autocrlf checkout while the generator emits LF.
-                self.assertEqual(want.read_text(encoding="utf-8").splitlines(),
-                                 got.read_text(encoding="utf-8").splitlines(),
-                                 want.name)
+            for mra_dir in (repo / "mra", repo / "releases"):
+                tracked = sorted(mra_dir.glob("*.mra"))
+                self.assertEqual([p.name for p in generated],
+                                 [p.name for p in tracked],
+                                 str(mra_dir))
+                for want, got in zip(tracked, generated):
+                    # Compare text, not bytes: the tracked files carry CRLF
+                    # from git's autocrlf checkout while the generator emits
+                    # LF.
+                    self.assertEqual(
+                        want.read_text(encoding="utf-8").splitlines(),
+                        got.read_text(encoding="utf-8").splitlines(),
+                        want.name,
+                    )
 
 
 class Multi32ExclusionTests(unittest.TestCase):

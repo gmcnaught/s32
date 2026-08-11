@@ -43,7 +43,12 @@
 //============================================================================
 `timescale 1ns/1ps
 
-module tb_core_romboot;
+module tb_core_romboot (
+`ifdef S32_EXTERNAL_CLOCKS
+    input wire clk_sys,
+    input wire clk_ram
+`endif
+);
 
 import s32_pkg::*;
 
@@ -51,10 +56,15 @@ initial $display({
     "[audio] comparison unavailable: romboot uses the T80 and JT12 simulation stubs; ",
     "validate production sound with the mixed-language sound regressions"});
 
-reg clk_sys = 0, clk_ram = 0, rst = 1;
+`ifndef S32_EXTERNAL_CLOCKS
+reg clk_sys = 0, clk_ram = 0;
+`endif
+reg rst = 1;
 reg clk_v25 = 0;
+`ifndef S32_EXTERNAL_CLOCKS
 always #10.35 clk_sys = ~clk_sys;
 always #5.175 clk_ram = ~clk_ram;
+`endif
 always @(posedge clk_sys) clk_v25 <= ~clk_v25;
 
 // clock enables
@@ -552,8 +562,9 @@ assign adc_a[0] = (adc0_override >= 0) ? adc0_override[7:0] :
                   (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
 assign adc_a[1] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
                   (board.analog_profile == ANALOG_DRIVING) ?
-                  (((accel_at >= 0 && cur_frame >= accel_at &&
-                     cur_frame < accel_at + accel_len) || input_mask_value[10]) ?
+                  (((((accel_at >= 0 && cur_frame >= accel_at &&
+                     cur_frame < accel_at + accel_len) || input_mask_value[10]) &&
+                    !input_mask_value[12])) ?
                    accel_value[7:0] : 8'h00) : 8'h80;
 assign adc_a[2] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
                   (board.analog_profile == ANALOG_DRIVING) ? 8'h00 : 8'h80;
@@ -600,6 +611,7 @@ reg [15:0] eep_ld_data = 16'hffff;
 // eeprom.hex already contains the little-endian 16-bit words that ioctl_dout
 // presents to s32_rom_loader in WIDE mode.
 integer eep_load_i;
+`ifndef S32_EXTERNAL_CLOCKS
 initial begin
     wait (images_loaded);
     if (eep_present) begin
@@ -614,6 +626,24 @@ initial begin
         $display("[eep] loaded %0s/eeprom.hex", imgdir);
     end
 end
+`else
+integer eep_load_state = 0;
+always @(posedge clk_sys) begin
+    if (eep_load_state == 0 && images_loaded)
+        eep_load_state = eep_present ? 1 : 67;
+    else if (eep_load_state >= 1 && eep_load_state <= 64) begin
+        eep_ld_addr = eep_load_state - 1;
+        eep_ld_data = eep_img[eep_load_state - 1];
+        eep_ld_wr = 1'b1;
+        eep_load_state = eep_load_state + 1;
+    end
+    else if (eep_load_state == 65) begin
+        eep_ld_wr = 1'b0;
+        eep_load_state = 66;
+        $display("[eep] loaded %0s/eeprom.hex", imgdir);
+    end
+end
+`endif
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
@@ -665,6 +695,183 @@ initial begin
     for (v60_start_i = 0; v60_start_i < 31; v60_start_i = v60_start_i + 1)
         core.v60.r[v60_start_i] = 32'h0000_0000;
 end
+`ifdef S32_EXTERNAL_CLOCKS
+// Savable visual lane. All progression is explicit clocked state; no timing
+// coroutine remains in the model, so Verilator can serialize it safely.
+integer visual_reset_cycles = 0;
+integer visual_frame_cycles = 0;
+integer visual_p1_ev;
+initial begin
+    if (!$value$plusargs("FRAMES=%d", frames)) frames = 3;
+    quiet = $test$plusargs("QUIET");
+    playmagic = $test$plusargs("PLAYMAGIC");
+    playfight = $test$plusargs("PLAYFIGHT");
+    arabentry = $test$plusargs("ARABENTRY");
+end
+always @(posedge clk_sys) begin
+    if (rst) begin
+        visual_reset_cycles = visual_reset_cycles + 1;
+        if (visual_reset_cycles >= 2048) begin
+            rst = 1'b0;
+            visual_frame_cycles = 0;
+            cur_frame = 0;
+        end
+    end
+    else begin
+        if (visual_frame_cycles == 0) begin
+            in_p1a_r = 8'hff;
+            in_portc_r = 8'hff;
+            in_svc12_r = 8'hff;
+            trk0_dv = 1'b0;
+            trk0_dx = 9'sd0;
+            trk0_dy = 9'sd0;
+            if (input_path != "") begin
+                input_mask_value = 0;
+                input_fd = $fopen(input_path, "r");
+                if (input_fd != 0) begin
+                    input_scan = $fscanf(input_fd, "%h", input_mask_value);
+                    $fclose(input_fd);
+                    if (input_scan == 1) begin
+                        in_p1a_r = in_p1a_r & ~input_mask_value[7:0];
+                        if (input_mask_value[8]) in_svc12_r[p1_coin_bit] = 1'b0;
+                        if (input_mask_value[9]) in_svc12_r[4] = 1'b0;
+                    end
+                end
+            end
+            for (visual_p1_ev = 0; visual_p1_ev < 4; visual_p1_ev = visual_p1_ev + 1)
+                if (!input_mask_value[13] &&
+                    p1_at[visual_p1_ev] >= 0 && p1_len[visual_p1_ev] > 0 &&
+                    cur_frame >= p1_at[visual_p1_ev] &&
+                    cur_frame < p1_at[visual_p1_ev] + p1_len[visual_p1_ev])
+                    in_p1a_r = in_p1a_r & ~p1_mask[visual_p1_ev][7:0];
+
+            gear_pressed = ~in_p1a_r[0];
+            if (board.gear_toggle) begin
+                if (gear_pressed && !gear_pressed_d)
+                    gear_latched = ~gear_latched;
+                gear_pressed_d = gear_pressed;
+                in_p1a_r[0] = ~gear_latched;
+            end
+            else begin
+                gear_latched = 1'b0;
+                gear_pressed_d = 1'b0;
+            end
+            if (coin_at >= 0 && coin_len > 0 && cur_frame >= coin_at &&
+                cur_frame < coin_at + coin_len)
+                in_svc12_r[p1_coin_bit] = 1'b0;
+            if (coin2_at >= 0 && coin2_len > 0 && cur_frame >= coin2_at &&
+                cur_frame < coin2_at + coin2_len)
+                in_svc12_r[p1_coin_bit] = 1'b0;
+            if (start_at >= 0 && start_len > 0 && cur_frame >= start_at &&
+                cur_frame < start_at + start_len)
+                in_svc12_r[4] = 1'b0;
+            if (start2_at >= 0 && start2_len > 0 && cur_frame >= start2_at &&
+                cur_frame < start2_at + start2_len)
+                in_svc12_r[4] = 1'b0;
+
+            // Keep the external-clock visual lane on the same deterministic
+            // Arabian Fight replay as the timing-based harness.  This lane is
+            // also the savable/checkpointable frontend, so divergence runs
+            // must not silently use a different input sequence.
+            if (playmagic || playfight || arabentry) begin
+                if (cur_frame >= 470 && cur_frame < 600 &&
+                    (cur_frame % 40) < 6) begin
+                    in_p1a_r[0] = 1'b0;
+                    in_svc12_r[4] = 1'b0;
+                end
+                if (!arabentry && cur_frame >= 680)
+                    in_p1a_r[6] = 1'b0;
+            end
+            if (arabentry) begin
+                if (cur_frame >= 1200 && cur_frame < 1450 &&
+                    (cur_frame % 20) < 5)
+                    in_p1a_r[1] = 1'b0;
+                if (cur_frame >= 1670 && cur_frame < 1675)
+                    in_p1a_r[1] = 1'b0;
+            end
+            if (playmagic && cur_frame >= 700 &&
+                ((cur_frame - 700) % 65) < 45)
+                in_p1a_r[2] = 1'b0;
+            if (playfight && cur_frame >= 700 && (cur_frame % 25) < 5)
+                in_p1a_r[0] = 1'b0;
+        end
+
+        if (visual_frame_cycles == 803999) begin
+            visual_frame_cycles = 0;
+            if (quiet && (cur_frame % 100) == 0) begin
+                $display("[progress] frame %0d", cur_frame);
+                $fflush();
+            end
+            rdreq_cnt = 0; kick_cnt = 0; spr_cmd_cnt = 0;
+            srom_req_cnt = 0; spr_opq_cnt = 0;
+            p1a_rd_cnt = 0; coin_rd_cnt = 0; start_rd_cnt = 0;
+            tm_req_cnt = 0; tm_lb_cnt = 0; tm_opaque_cnt = 0;
+            // Scene-tagged Arabian Fight entry barrier for the external-clock
+            // lane.  The two NBG1 scroll markers are stable across MAME and
+            // RTL frame-rate differences; compare the player object position
+            // between them rather than trusting an absolute frame number.
+            if (arabentry && !arab_entry_started &&
+                core.tm_zoomx[1] == 16'h0400 &&
+                core.tm_scrollx[1] >= 16'h0271 &&
+                core.tm_scrollx[1] < 16'h0300) begin
+                integer arab_jump_x2;
+                integer arab_raw_x2;
+                arab_jump_x2 = $signed({{20{core.sprite_ram.mem[16'h0002][11]}},
+                                        core.sprite_ram.mem[16'h0002][11:0]});
+                arab_raw_x2 = $signed({{20{core.sprite_ram.mem[16'h0065][11]}},
+                                       core.sprite_ram.mem[16'h0065][11:0]});
+                arab_entry_x0 = arab_jump_x2 + arab_raw_x2;
+                arab_entry_f0 = cur_frame;
+                arab_entry_started = 1'b1;
+                $display("[arab-entry] start f=%0d n1sx=%04x x=%0d jump=%0d raw=%0d",
+                    cur_frame, core.tm_scrollx[1], arab_entry_x0,
+                    arab_jump_x2, arab_raw_x2);
+            end
+            if (arabentry && arab_entry_started && !arab_entry_done &&
+                core.tm_zoomx[1] == 16'h0400 &&
+                core.tm_scrollx[1] >= 16'h0659) begin
+                integer arab_jump_x3;
+                integer arab_raw_x3;
+                arab_jump_x3 = $signed({{20{core.sprite_ram.mem[16'h0002][11]}},
+                                        core.sprite_ram.mem[16'h0002][11:0]});
+                arab_raw_x3 = $signed({{20{core.sprite_ram.mem[16'h0065][11]}},
+                                       core.sprite_ram.mem[16'h0065][11:0]});
+                arab_entry_x1 = arab_jump_x3 + arab_raw_x3;
+                arab_entry_f1 = cur_frame;
+                arab_entry_dx = arab_entry_x1 - arab_entry_x0;
+                arab_entry_done = 1'b1;
+                $display("[arab-entry] end f=%0d n1sx=%04x x=%0d dx=%0d jump=%0d raw=%0d",
+                    cur_frame, core.tm_scrollx[1], arab_entry_x1,
+                    arab_entry_dx, arab_jump_x3, arab_raw_x3);
+                if (arab_entry_dx < 20) begin
+                    arab_entry_failed = 1'b1;
+                    $display("ARABIAN FIGHT ENTRY FAIL: neutral-input player advanced only %0d pixels between scene markers (need >=20)",
+                        arab_entry_dx);
+                end
+                else
+                    $display("ARABIAN FIGHT ENTRY PASS: neutral-input player advanced %0d pixels between scene markers",
+                        arab_entry_dx);
+            end
+            // cur_frame is owned by the native VBlank block below.  The
+            // external-clock scheduler only refreshes cabinet stimulus and
+            // provides a bounded stop check; incrementing here as well makes
+            // frame labels/input timing drift and can skip live-capture
+            // cadence values.
+            if (cur_frame >= frames) begin
+                if (arabentry && !arab_entry_done)
+                    $fatal(1, "ARABIAN FIGHT ENTRY window was not completed");
+                if (arabentry && arab_entry_failed)
+                    $fatal(1, "ARABIAN FIGHT ENTRY regression failed: neutral-input dx=%0d",
+                        arab_entry_dx);
+                $display("ROMBOOT DONE");
+                $finish;
+            end
+        end
+        else
+            visual_frame_cycles = visual_frame_cycles + 1;
+    end
+end
+`endif
 
 // ---------------------------------------------------------------------------
 // progress instrumentation
@@ -719,10 +926,25 @@ always @(posedge clk_sys) begin
     end
 end
 
-// exception / irq counters (state-entry edges).  Use the numeric S_EXC_PUSH1
-// value (75) rather than the hierarchical enum-item ref 7'd75,
-// which trips a Verilator EnumItemRef elaboration fault (works in ModelSim too).
-localparam [6:0] S_EXC_PUSH1_V = 7'd75;   // == s32_v60 st_t S_EXC_PUSH1
+// exception / irq counters (state-entry edges).  Use numeric state values
+// rather than hierarchical enum-item refs, which trip a Verilator
+// EnumItemRef elaboration fault.  The optional FP states occupy five enum
+// slots, so keep both production variants synchronized with s32_v60.sv.
+// Keep the harness probes tied to the current V60 enum layout.  The state
+// type is intentionally private to the CPU, so these mirrors are conditional
+// only where the optional FP states move the exception tail.
+localparam [6:0] S_DECODE_V  = 7'd3;  // == s32_v60 st_t S_DECODE
+localparam [6:0] S_EA_VAL_V  = 7'd8;  // == s32_v60 st_t S_EA_VAL
+localparam [6:0] S_EXEC_V    = 7'd9;  // == s32_v60 st_t S_EXEC
+localparam [6:0] S_WB_MEM_V  = 7'd13; // == s32_v60 st_t S_WB_MEM
+localparam [6:0] S_NEXT_V    = 7'd15; // == s32_v60 st_t S_NEXT
+`ifdef S32_V60_NO_FP
+localparam [6:0] S_EXC_PUSH1_V = 7'd69;   // == s32_v60 st_t S_EXC_PUSH1
+localparam [6:0] S_EXC_VEC_V   = 7'd73;   // == s32_v60 st_t S_EXC_VEC
+`else
+localparam [6:0] S_EXC_PUSH1_V = 7'd74;   // == s32_v60 st_t S_EXC_PUSH1
+localparam [6:0] S_EXC_VEC_V   = 7'd78;   // == s32_v60 st_t S_EXC_VEC
+`endif
 reg exc_d, irq_d;
 always @(posedge clk_sys) begin
     exc_d <= (core.v60.st == S_EXC_PUSH1_V);
@@ -924,8 +1146,10 @@ end
 // +LOFF=<hex>: force tm_layer_off to isolate which layer draws the arabfgt
 // select "swirl". bits {5:BITMAP,4:NBG3,3:NBG2,2:NBG1,1:NBG0,0:TEXT} (1=off).
 integer loff_force;
+`ifndef S32_EXTERNAL_CLOCKS
 always @(posedge clk_sys) if ($value$plusargs("LOFF=%h", loff_force))
     force core.tilemap.r1ff8e = {10'b0, loff_force[5:0]};
+`endif
 
 // +REGTRACE: log every CPU write to $1FF00 (word 0xff80) and $1FF02 (0xff81)
 // with frame + value, to see if/when the game disables the bitmap (r1ff02[5]).
@@ -1093,7 +1317,7 @@ initial begin
     if (!$value$plusargs("TRAT=%d", tr_at)) tr_at = 0;
 end
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (cur_frame >= tr_at && core.v60.st == 7'd3 && core.v60.pc >= tr_lo &&
+    if (cur_frame >= tr_at && core.v60.st == S_DECODE_V && core.v60.pc >= tr_lo &&
         core.v60.pc < tr_hi && tr_n < 400) begin
         tr_n = tr_n + 1;
         $display("[tr] pc=%08x op=%02x r0=%08x r1=%08x r3=%08x r4=%08x r5=%08x r6=%08x z=%b",
@@ -1118,7 +1342,7 @@ wire obj_dbgpc_range = ((core.v60.pc >= 32'h00130600 && core.v60.pc < 32'h001306
                         (core.v60.pc >= 32'h00132900 && core.v60.pc < 32'h001329b0));
 always @(posedge clk_sys) if (ce_cpu) begin
     if (obj_tr_at >= 0 && cur_frame >= obj_tr_at && obj_pc_range &&
-        core.v60.st == 7'd3 && obj_i_n < obj_tr_max) begin
+        core.v60.st == S_DECODE_V && obj_i_n < obj_tr_max) begin
         obj_i_n = obj_i_n + 1;
         $display("[obji] f=%0d pc=%08x b=%02x%02x%02x%02x%02x%02x%02x%02x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r6=%08x r7=%08x r8=%08x r9=%08x r10=%08x r11=%08x sp=%08x z=%b s=%b cy=%b",
             cur_frame, core.v60.pc,
@@ -1169,7 +1393,7 @@ end
 // log LDPR executions: which privileged register gets which value?
 integer ldpr_n = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.st == 7'd10 && core.v60.cur_op == 8'h12 && ldpr_n < 16) begin
+    if (core.v60.st == S_EXEC_V && core.v60.cur_op == 8'h12 && ldpr_n < 16) begin
         ldpr_n = ldpr_n + 1;
         $display("[ldpr] pc=%08x op1=%08x op2=%08x", core.v60.pc, core.v60.op1, core.v60.op2);
     end
@@ -1187,13 +1411,15 @@ end
 // IRQ/exception entry detail: vector, base register, stack, fetched handler
 integer exc_log_n = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.st == 7'd79 && core.v60.bus_ack &&
+    if (core.v60.st == S_EXC_VEC_V && core.v60.bus_req && core.v60.bus_ack &&
         exc_log_n < 12) begin
         exc_log_n = exc_log_n + 1;
-        $display("[exc] vec=%02x sbr=%08x sp=%08x retpc=%08x handler=[%08x]=%08x cur_op=%02x",
+        $display("[exc] vec=%02x sbr=%08x sp=%08x retpc=%08x handler=[%08x]=%08x cur_op=%02x bus=%b/%b addr=%08x rdata=%08x cdata=%08x m=%b/%b/%04x",
             core.v60.exc_vector, core.v60.sbr, core.v60.r[31], core.v60.exc_retpc,
             (core.v60.sbr & ~32'hfff) + {22'b0, core.v60.exc_vector, 2'b00},
-            core.v60.bus_rdata, core.v60.cur_op);
+            core.v60.bus_rdata, core.v60.cur_op, core.v60.bus_req,
+            core.v60.bus_ack, core.v60.bus_addr, core.v60.bus_rdata,
+            core.c_rdata, core.m_req, core.m_ack, core.m_rdata);
     end
 end
 
@@ -1563,6 +1789,47 @@ end
 // n accesses.  This is intentionally harness-only: it exposes whether the
 // game merely reads the fixed bootstrap table, or later submits mailbox
 // commands which require the real V25 to modify DPRAM asynchronously.
+integer rom_log_max = 0, rom_log_n = 0;
+integer vec_log_max = 0, vec_log_n = 0;
+reg p0_req_d = 1'b0, p0_ack_d = 1'b0;
+initial if (!$value$plusargs("ROMLOG=%d", rom_log_max)) rom_log_max = 0;
+initial if (!$value$plusargs("VECLOG=%d", vec_log_max)) vec_log_max = 0;
+always @(posedge clk_sys) begin
+    p0_req_d <= p0_req;
+    p0_ack_d <= p0_ack;
+    if (rom_log_max > 0 && p0_req && !p0_req_d && rom_log_n < rom_log_max) begin
+        rom_log_n = rom_log_n + 1;
+        $display("[rom-p0-req] n=%0d a=%06x", rom_log_n, p0_addr);
+    end
+    if (rom_log_max > 0 && p0_ack && !p0_ack_d && rom_log_n < rom_log_max) begin
+        rom_log_n = rom_log_n + 1;
+        $display("[rom-p0-ack] n=%0d a=%06x d=%04x", rom_log_n, p0_addr, p0_dout);
+    end
+    if (rom_log_max > 0 && core.m_req && core.m_ack && !core.m_we &&
+        core.A[23:20] == 4'hf && rom_log_n < rom_log_max) begin
+        rom_log_n = rom_log_n + 1;
+        $display("[rom-cpu-rd] n=%0d pc=%08x a=%06x d=%04x", rom_log_n,
+            core.v60.pc, core.A, core.m_rdata);
+    end
+    if (vec_log_max > 0 && p0_req && !p0_req_d &&
+        p0_addr[20:1] == 20'h7f880 && vec_log_n < vec_log_max) begin
+        vec_log_n = vec_log_n + 1;
+        $display("[vec-p0-req] n=%0d a=%06x", vec_log_n, p0_addr);
+    end
+    if (vec_log_max > 0 && p0_ack && !p0_ack_d &&
+        p0_addr[20:1] == 20'h7f880 && vec_log_n < vec_log_max) begin
+        vec_log_n = vec_log_n + 1;
+        $display("[vec-p0-ack] n=%0d a=%06x d=%04x", vec_log_n, p0_addr, p0_dout);
+    end
+    if (vec_log_max > 0 && core.m_req && core.m_ack && !core.m_we &&
+        (core.A[19:0] == 20'hff100 || core.A[19:0] == 20'hff102 ||
+         core.A[19:0] == 20'hff104) &&
+        vec_log_n < vec_log_max) begin
+        vec_log_n = vec_log_n + 1;
+        $display("[vec-cpu-rd] n=%0d pc=%08x a=%06x d=%04x", vec_log_n,
+            core.v60.pc, core.A, core.m_rdata);
+    end
+end
 integer prot_log_max, prot_log_skip, prot_txn_n = 0, prot_log_n = 0;
 initial begin
     if (!$value$plusargs("PROTLOG=%d", prot_log_max)) prot_log_max = 0;
@@ -1605,7 +1872,7 @@ end
 // fetch-buffer inspection at a trouble PC
 integer fbdbg_n = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
-    if (core.v60.pc == 32'h100551 && core.v60.st == 7'd3 && fbdbg_n < 4) begin
+    if (core.v60.pc == 32'h100551 && core.v60.st == S_DECODE_V && fbdbg_n < 4) begin
         fbdbg_n = fbdbg_n + 1;
         $display("[fbdbg] pc=%08x fb_base=%08x fb_valid=%0d fb=%02x %02x %02x %02x %02x %02x %02x %02x",
             core.v60.pc, core.v60.fb_base, core.v60.fb_valid,
@@ -1622,14 +1889,14 @@ always @(posedge clk_sys) if (ce_cpu) begin
             core.v60.ea_dim, core.v60.ea_want_addr);
     end
     if (core.v60.pc == 32'h100551 && fbdbg_n > 0 && fbdbg_n < 3) begin
-        if (core.v60.st == 7'd9)
-            $display("[eadbg] EA_DONE tgt2=%b want=%b flag=%b ea_addr=%08x ea_out=%08x ea_len=%0d ret=%0d",
+        if (core.v60.st == S_EA_VAL_V)
+            $display("[eadbg] EA_VAL tgt2=%b want=%b flag=%b ea_addr=%08x ea_out=%08x ea_len=%0d ret=%0d",
                 core.v60.ea_target2, core.v60.ea_want_addr, core.v60.ea_flag,
                 core.v60.ea_addr, core.v60.ea_out, core.v60.ea_len, core.v60.ea_ret);
-        if (core.v60.st == 7'd10)
+        if (core.v60.st == S_EXEC_V)
             $display("[eadbg] EXEC op=%02x op1=%08x op2=%08x flag1=%b flag2=%b",
                 core.v60.cur_op, core.v60.op1, core.v60.op2, core.v60.flag1, core.v60.flag2);
-        if (core.v60.st == 7'd14)
+        if (core.v60.st == S_WB_MEM_V)
             $display("[eadbg] WB_MEM addr(op2)=%08x data(alu_r)=%08x", core.v60.op2, core.v60.alu_r);
     end
 end
@@ -1765,6 +2032,7 @@ integer arab_entry_dx = 0;
 integer arab_entry_f0 = -1, arab_entry_f1 = -1;
 reg arab_entry_started = 0;
 reg arab_entry_done = 0, arab_entry_failed = 0;
+`ifndef S32_EXTERNAL_CLOCKS
 initial begin
     if (!$value$plusargs("FRAMES=%d", frames)) frames = 3;
     if (!$value$plusargs("ARABPERFAT=%d", arab_perf_at)) arab_perf_at = -1;
@@ -1795,7 +2063,8 @@ initial begin
             end
         end
         for (p1_ev = 0; p1_ev < 4; p1_ev = p1_ev + 1) begin
-            if (p1_at[p1_ev] >= 0 && p1_len[p1_ev] > 0 &&
+            if (!input_mask_value[13] &&
+                p1_at[p1_ev] >= 0 && p1_len[p1_ev] > 0 &&
                 f >= p1_at[p1_ev] && f < p1_at[p1_ev] + p1_len[p1_ev]) begin
                 in_p1a_r = in_p1a_r & ~p1_mask[p1_ev][7:0];
                 if (f == p1_at[p1_ev])
@@ -2089,6 +2358,7 @@ initial begin
     $display("ROMBOOT DONE");
     $finish;
 end
+`endif
 
 // ---------------------------------------------------------------------------
 // +PCHIST=<frame> [+PCHISTLEN=<n>]: over a window, measure the vblank PERIOD
@@ -2132,15 +2402,15 @@ always @(posedge clk_sys) begin
         st_hist[core.v60.st] = st_hist[core.v60.st] + 1;
         pc_samples = pc_samples + 1;
         // count instructions = FSM entering S_DECODE (one per fetched opcode)
-        if (core.v60.st == 3 /*S_DECODE*/ && st_prev != 3) instr_count = instr_count + 1;
+        if (core.v60.st == S_DECODE_V && st_prev != S_DECODE_V) instr_count = instr_count + 1;
         // WORK-only tally: same cycles/instrs but excluding the idle frame-sync spin
         if (core.v60.pc != 32'h0013_3505 && core.v60.pc != 32'h0013_350b) begin
             work_cyc = work_cyc + 1;
-            if (core.v60.st == 3 && st_prev != 3) work_instr = work_instr + 1;
+            if (core.v60.st == S_DECODE_V && st_prev != S_DECODE_V) work_instr = work_instr + 1;
             // Stage A take-rate: how often the S_NEXT fast path actually fires.
-            // st==15 is S_NEXT.  seq_shift_ok = the realign moved into S_NEXT;
+            // S_NEXT is the fast-path state.  seq_shift_ok = the realign moved into S_NEXT;
             // seq_dispatch_now = S_FILL skipped entirely.
-            if (core.v60.st == 15) begin
+            if (core.v60.st == S_NEXT_V) begin
                 seq_next_cyc = seq_next_cyc + 1;
                 if (core.v60.seq_shift_ok)     seq_shift_cnt = seq_shift_cnt + 1;
                 if (core.v60.seq_dispatch_now) seq_disp_cnt  = seq_disp_cnt  + 1;

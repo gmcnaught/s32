@@ -351,7 +351,10 @@ always @(posedge clk) begin
     else if (!cs) begin
         // A self-timed WRAL/ERAL remains busy after CS drops.  Do not allow
         // a new frame to resynchronize in the middle of the 64-word sweep.
-        es <= bulk_active ? E_DONE : E_IDLE;
+        // Use explicit enum branches for Quartus-17 and Icarus portability;
+        // the conditional expression has identical hardware semantics.
+        if (bulk_active) es <= E_DONE;
+        else             es <= E_IDLE;
         bitcnt <= 0; dout <= 1'b1;
     end
     else if (sk & ~sk_d) begin        // rising SK

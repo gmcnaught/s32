@@ -3,7 +3,7 @@
   <setname>jpark</setname>
   <year>1993</year>
   <manufacturer>Sega</manufacturer>
-  <rbf>Arcade-SegaSystem32</rbf>
+  <rbf>segas32</rbf>
   <buttons names="Shoot,-,-,-,-,-,Start,Coin,Test,Service" default="A,Start,Select,R,L" count="1"/>
   <rom index="4" zip="jpark.zip" md5="none">
     <part name="epr-16402a.ic8" crc="c70db239"/>

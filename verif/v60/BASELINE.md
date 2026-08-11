@@ -1,4 +1,4 @@
-# V60 pre-prefetch-change baseline (Phase 0)
+# V60 pre-prefetch-change baseline (Phase 0) and current throughput checkpoints
 
 Captured 2026-07-23 before the fetch/prefetch redesign (docs/v60-prefetch-plan.md).
 Re-run `bash verif/v60/run_v60_verilator.sh` and compare after each phase.
@@ -27,3 +27,14 @@ Re-run `bash verif/v60/run_v60_verilator.sh` and compare after each phase.
 - CPI ~10-12 (P2), ~9-11 (P3); S_FILLW < 10%
 - select work ~18-22%, attract idle ~55-65% (within DESIGN.md +/-20% policy band)
 - tb_v60_fetch budget tightened to ~<=2200 cyc at P4
+
+## 2026-08-11 retained-loop checkpoint
+
+The current shared V60 adds a guarded direct restore for a taken DBcc/TB whose
+target exactly matches a complete retained fetch window. The PFU must be idle,
+and unknown target lengths fall back to the ordinary refill path.
+
+- `tb_v60_fetch`: **cycles=2101, reads=12** (gate: <=2200 / <=16)
+- `tb_v60_sonic_burst_timing`: overlap-A **36,225 clk_sys cycles** for 2,000
+  elements; weighted duration **50.85%**
+- A/B with `V60_NO_LOOP_RESTORE`: `tb_v60_fetch` returns to **2609 cycles**

@@ -900,6 +900,14 @@ end
 wire        eaf_reg_direct  = EA_OVERLAP && (fb[5'd2][7:5] == 3'd3); // modtop==3
 wire [4:0]  eaf_reg         = fb[5'd2][4:0];
 
+// Keep an A/B switch for the retained-loop optimization. It is test-only;
+// production profiles leave the exact-window restore enabled.
+`ifdef V60_NO_LOOP_RESTORE
+    localparam LOOP_RESTORE = 1'b0;
+`else
+    localparam LOOP_RESTORE = 1'b1;
+`endif
+
 // EA_OVERLAP fast path, part 2: simple base+displacement addressing
 // (modtop==0/1/2, "Displacement" -- S_EA_MODE's !ea_modm arm, i.e.
 // instflags[6]==0, distinct from the register-direct arm above which is
@@ -1255,6 +1263,9 @@ else if (ce) begin
         // ---- DBcc/TB (0xC6/0xC7): sub-op byte = {cc[2:0], reg[4:0]} ----
         8'hc6, 8'hc7: begin
             logic [3:0] cc4;
+            logic [31:0] branch_pc;
+            logic        branch_taken;
+            logic [4:0]  prev_need;
             pf_loop_hint <= 1'b0;
             case ({opcode[0], fb[1][7:5]})
                 4'b0000: cc4 = 4'h0; 4'b0001: cc4 = 4'h2; 4'b0010: cc4 = 4'h4;
@@ -1269,18 +1280,55 @@ else if (ce) begin
             begin
                 logic [15:0] bd16;
                 bd16 = fb16(2);
+                branch_pc = pc + {{16{bd16[15]}}, bd16};
                 if ({opcode[0], fb[1][7:5]} == 4'b1101) begin
-                    if (rf_rdata_a == 0) pc <= pc + {{16{bd16[15]}}, bd16};
+                    branch_taken = (rf_rdata_a == 0);
+                    if (branch_taken) pc <= branch_pc;
                     else pc <= pc + 4;
                 end
                 else begin
                     queue_reg_write(fb[1][4:0], rf_rdata_a - 1, 32'hffff_ffff);
-                    if (cond_true(cc4) && (rf_rdata_a - 1) != 0)
-                         pc <= pc + {{16{bd16[15]}}, bd16};
+                    branch_taken = cond_true(cc4) && (rf_rdata_a - 1) != 0;
+                    if (branch_taken) pc <= branch_pc;
                     else pc <= pc + 4;
                 end
+                // Only bypass S_FILL when the retained window contains the
+                // complete target instruction.  Keep the same conservative
+                // lengths as the registered successor predecoder; unknown
+                // target forms retain the 20-byte safety requirement.
+                prev_need = FB_THRESH;
+                casez (fb_prev[0])
+                    8'h00, 8'hc8, 8'hc9, 8'hca, 8'hcd: prev_need = 5'd1;
+                    8'b0110_????: prev_need = 5'd2;
+                    8'b0111_????, 8'h48: prev_need = 5'd3;
+                    8'hc6, 8'hc7: prev_need = 5'd4;
+                    8'h2d: if (fb_prev_valid >= 5'd3 &&
+                               fb_prev[1][7:5] == 3'b001 &&
+                               fb_prev[2] == 8'hf4) prev_need = 5'd7;
+                    default: ;
+                endcase
+                // A completed retained window is already the exact fetch state
+                // needed by the common backward DBcc/TB loop.  Restore it in
+                // this decode edge instead of spending S_FILL's branch-rebase
+                // and aligned-dispatch edges.  Requiring an idle PFU makes the
+                // ownership rule explicit: no old fetch acknowledgement can
+                // race the restored bytes.  PCB bus requests are unaffected.
+                if (LOOP_RESTORE && branch_taken && !pf_busy &&
+                    fb_prev_valid >= prev_need &&
+                    branch_pc == fb_prev_base) begin
+                    for (int i = 0; i < 24; i++) fb[i] <= fb_prev[i];
+                    fb_base       <= fb_prev_base;
+                    fb_valid      <= fb_prev_valid;
+                    fb_wr         <= fb_prev_valid;
+                    fb_realigning <= 1'b0;
+                    pf_epoch      <= pf_epoch + 4'd1;
+                    pf_suppress   <= 1'b1;
+                    st             <= S_DECODE;
+                end
+                else begin
+                    st <= S_FILL; st_after_fill <= S_DECODE;
+                end
             end
-            st <= S_FILL; st_after_fill <= S_DECODE;
         end
 
         // ---- F12 two-operand groups ----
@@ -3542,8 +3590,12 @@ else if (ce) begin
         write_psw(newpsw);
         // BRKV has a leading fault-PC word; ordinary trap-class frames begin
         // with code+size, while IRQ/NMI frames begin with old PSW.
-        st <= exc_has_extra ? S_EXC_EXTRA
-                            : exc_has_code ? S_EXC_CODE : S_EXC_PUSH2;
+        // Keep the enum assignment in separate branches for Quartus-17 and
+        // Icarus compatibility; the conditional expression otherwise needs a
+        // tool-specific enum cast and has identical hardware semantics.
+        if (exc_has_extra) st <= S_EXC_EXTRA;
+        else if (exc_has_code) st <= S_EXC_CODE;
+        else st <= S_EXC_PUSH2;
     end
     S_EXC_EXTRA: begin
         if (!dbus_req) begin

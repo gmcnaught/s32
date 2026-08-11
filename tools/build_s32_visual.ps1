@@ -2,8 +2,8 @@
 #
 # This is intentionally separate from Quartus. It uses the safe Verilator
 # scheduler, a no-space model directory, a content signature, and the existing
-# real-ROM file list. The model uses the explicit no-save profile because this
-# timing testbench is not a checkpoint-serializable deterministic-clock model.
+# real-ROM file list. A repository-owned timing loop serializes the complete
+# model and Verilated context so long visual runs can checkpoint and resume.
 
 [CmdletBinding()]
 param(
@@ -56,10 +56,10 @@ $defines = @(
     "+define+SIMULATION",
     "+define+S32_REAL_FB_SIM",
     "+define+S32_PCB_TIMING",
+    "+define+S32_EXTERNAL_CLOCKS",
     "+define+S32_SYSTEM32_ONLY",
     "+define+S32_PROFILE_STANDARD",
-    "+define+S32_GAME_ONLY_STD",
-    "+define+S32_VISUAL_NO_SAVE"
+    "+define+S32_GAME_ONLY_STD"
 )
 $warnings = @(
     "-Wno-fatal", "-Wno-WIDTHTRUNC", "-Wno-WIDTHEXPAND", "-Wno-UNOPTFLAT",
@@ -70,13 +70,16 @@ $exe = Join-Path $ModelDirectory "s32_visual.exe"
 $signaturePath = Join-Path $ModelDirectory "s32_visual.signature"
 $signatureParts = [Collections.Generic.List[string]]::new()
 $signatureParts.Add(((& $Safe --version 2>&1 | Out-String).Trim()))
-$signatureParts.Add("threads=1;verilate-jobs=4;build-jobs=4;no-save=1;profile=segas32")
+$visualMain = Join-Path $Root "verif\visual\s32_visual_main.cpp"
+if (-not (Test-Path -LiteralPath $visualMain)) { throw "Missing visual frontend: $visualMain" }
+$signatureParts.Add("threads=1;verilate-jobs=4;build-jobs=4;savable=1;profile=segas32")
 $signatureParts.Add(($defines -join ";"))
 $signatureParts.Add(($warnings -join ";"))
 foreach ($source in $sources) {
     $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
     $signatureParts.Add($source + "=" + $sourceHash)
 }
+$signatureParts.Add($visualMain + "=" + (Get-FileHash -LiteralPath $visualMain -Algorithm SHA256).Hash)
 $signatureBytes = [Text.Encoding]::UTF8.GetBytes(($signatureParts -join "`n"))
 $signatureHashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash($signatureBytes)
 $signature = (($signatureHashBytes | ForEach-Object { $_.ToString("x2") }) -join "")
@@ -86,10 +89,11 @@ $cached = (Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath $signatureP
 if ($Force -or -not $cached) {
     New-Item -ItemType Directory -Force -Path $ModelDirectory | Out-Null
     $arguments = @(
-        "--binary", "--timing", "--threads", "1", "--verilate-jobs", "4", "--build-jobs", "4",
+        "--cc", "--exe", "--build", "--no-timing", "--savable", "--threads", "1",
+        "--verilate-jobs", "4", "--build-jobs", "4",
         "--top-module", "tb_core_romboot", "--Mdir", $ModelDirectory, "-o", "s32_visual",
         "-CFLAGS", "-D_GLIBCXX_USE_CXX11_ABI=0 -O3 -march=native -mtune=native -fomit-frame-pointer"
-    ) + $warnings + $defines + @("-f", $fileList)
+    ) + $warnings + $defines + @("-f", $fileList, $visualMain)
     function Convert-ToMsysPath {
         param([Parameter(Mandatory = $true)][string]$Path)
         $normalized = $Path.Replace("\", "/")
@@ -109,6 +113,7 @@ if ($Force -or -not $cached) {
         $value = [string]$_
         if ($value -eq $ModelDirectory) { $value = Convert-ToMsysPath $ModelDirectory }
         elseif ($value -eq $fileList) { $value = Convert-ToMsysPath $fileList }
+        elseif ($value -eq $visualMain) { $value = Convert-ToMsysPath $visualMain }
         Quote-BashArgument $value
     }
     $bashRoot = Quote-BashArgument (Convert-ToMsysPath $Root)

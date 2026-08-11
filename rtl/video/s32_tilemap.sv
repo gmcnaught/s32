@@ -278,13 +278,18 @@ always @(posedge clk) begin
             end
             else if (lay == 4) begin
                 x <= 0;
-                tst <= layer_off[0] ? T_LSTART : T_TXT_NAME;
+                // Keep enum assignments in explicit branches for Quartus-17
+                // and Icarus; the conditional expression needs a simulator-
+                // specific enum cast but has identical hardware semantics.
+                if (layer_off[0]) tst <= T_LSTART;
+                else              tst <= T_TXT_NAME;
                 if (layer_off[0]) lay <= 5;
             end
             else begin
                 // bitmap
                 x <= 0;
-                tst <= layer_off[5] ? T_DONE : T_BMP;
+                if (layer_off[5]) tst <= T_DONE;
+                else              tst <= T_BMP;
             end
         end
 
@@ -474,7 +479,10 @@ always @(posedge clk) begin
             end
             else begin
                 x <= x + 1'd1;
-                if (x[1:0] == 2'b11) tst <= (x[2:0]==3'b111) ? T_TXT_NAME : T_TXT_PIX;
+                if (x[1:0] == 2'b11) begin
+                    if (x[2:0] == 3'b111) tst <= T_TXT_NAME;
+                    else                  tst <= T_TXT_PIX;
+                end
             end
         end
 
