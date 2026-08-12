@@ -133,6 +133,9 @@ set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY_STD=1"
 # delta on the next Analysis & Synthesis rather than assuming a figure.
 set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 set_global_assignment -name VERILOG_MACRO "S32_JT12_MLAB_SHIFTS=1"
+# Quartus 17 does not predefine SYNTHESIS; keep simulation-only assertions out
+# of the production HDL parse (the verification harnesses do not define it).
+set_global_assignment -name VERILOG_MACRO "SYNTHESIS=1"
 
 # All supported standard protection responders remain available; descriptor
 # selection keeps them inactive for games that do not use them.
