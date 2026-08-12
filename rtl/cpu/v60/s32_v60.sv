@@ -28,6 +28,7 @@
 //============================================================================
 
 module s32_v60 #(
+    parameter integer CONTEXTS = 1,
     parameter [31:0] START_PC = 32'hFFFFFFF0,   // V60/V70 reset PC (MAME m_start_pc; audit V60-21)
     parameter        IS_V70   = 1'b0,
     // FAST_IFETCH=1: the prefetch uses the dedicated wide instruction port (if_*)
@@ -106,6 +107,12 @@ module s32_v60 #(
     output reg        irq_ack,       // pulses when vector consumed
     input             nmi_n
 );
+
+// Persistent storage remains flat for exact CONTEXTS=1 hierarchy and cycle
+// compatibility.  tools/v60_state_inventory.py machine-enumerates every state
+// object into verif/v60/state_inventory.json and v60_state_accessors.svh; the
+// regression fails closed if a sequentially assigned object is unclassified.
+// That generated inventory also emits the exhaustive CONTEXTS=2 bank store.
 
 // ---------------------------------------------------------------------------
 // architectural state
@@ -1020,6 +1027,21 @@ endfunction
 
 reg [3:0] fill_lo;
 reg nmi_r, nmi_seen;
+
+// CONTEXTS=2 time-multiplexes this one decode/ALU/microsequencer.  The live
+// objects above are the execution latch; the generated store is exhaustive and
+// exchanged on the opposite clock edge, after all posedge nonblocking updates
+// have settled.  CONTEXTS=1 has no added clocked process and retains the legacy
+// flat hierarchy and cycle behavior.
+reg v60_active_ctx = 1'b0;
+`include "verif/v60/v60_state_banks.svh"
+
+generate
+if (CONTEXTS == 2) begin : g_dual_context
+    always @(negedge clk)
+        v60_context_exchange();
+end
+endgenerate
 
 always @(posedge clk) begin
 if (rst) begin

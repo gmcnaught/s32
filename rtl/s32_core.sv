@@ -50,10 +50,11 @@ module s32_core #(
     // The SegaS32 Quartus revision sets this macro so Cyclone V only pays for
     // hardware present on a single-screen System 32 board.  A future Multi 32
     // revision leaves the macro unset (or explicitly overrides the parameter).
-    parameter SYSTEM32_ONLY = 1'b1
+    parameter SYSTEM32_ONLY = 1'b1,
 `else
-    parameter SYSTEM32_ONLY = 1'b0
+    parameter SYSTEM32_ONLY = 1'b0,
 `endif
+    parameter EXTERNAL_DUAL_BRIDGE = 1'b0
 ) (
     input             clk_sys,      // 48.317307 MHz
     input             clk_ram,      // 96.634615 MHz
@@ -65,6 +66,18 @@ module s32_core #(
     input             video_rst,
 
     input  board_desc_t board,
+
+    // Optional main-board endpoint for a bridge owned above this board
+    // instance. Default builds retain the internal compatibility wrapper.
+    output            dual_ext_enable,
+    output            dual_ext_init_ff,
+    output            dual_ext_cs_ram,
+    output            dual_ext_cs_id,
+    output            dual_ext_we,
+    output      [1:0] dual_ext_be,
+    output     [11:1] dual_ext_addr,
+    output     [15:0] dual_ext_wdata,
+    input      [15:0] dual_ext_rdata,
 
     // clock enables (from fractional CE generators in emu top)
     input             ce_cpu,       // 16.108 / 20 MHz physical V60/V70 bus
@@ -1157,6 +1170,15 @@ s32_intc intc (
 wire        br_trap;
 wire [15:0] br_trap_q;
 wire [15:0] dsp_q, dual_q;
+assign dual_ext_enable = cfg_dual_pcb;
+assign dual_ext_init_ff = cfg_dual_comm_ff;
+assign dual_ext_cs_ram = EXTERNAL_DUAL_BRIDGE && m_req && sel_dual && !A[15];
+assign dual_ext_cs_id = EXTERNAL_DUAL_BRIDGE && m_req && sel_dual && A[15] &&
+                        A[14:2] == 13'd0;
+assign dual_ext_we = m_we;
+assign dual_ext_be = m_be;
+assign dual_ext_addr = A[11:1];
+assign dual_ext_wdata = m_wdata;
 wire        prot_rom_req;
 wire [23:0] prot_rom_addr;
 wire        prot_rom_ack;
@@ -1240,7 +1262,10 @@ generate
 endgenerate
 
 generate
-    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_dualpcb
+    if (EXTERNAL_DUAL_BRIDGE) begin : g_external_dualpcb
+        assign dual_q = dual_ext_rdata;
+    end
+    else if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_dualpcb
         // Dedicated profiles target boards with no dual-PCB bridge. The
         // array itself now infers M10K correctly (2026-08-05 fix,
         // rtl/prot/s32_prot.sv) so this is no longer a large resource win,

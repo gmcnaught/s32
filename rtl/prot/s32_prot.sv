@@ -393,123 +393,130 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
-//  s32_dualpcb: single-board mode bridge responder (§8.6)
-//  4KB comms RAM at 0x810000 + identity word at 0x818000.
+//  s32_dualpcb_bridge: the physical two-initiator dual-PCB bridge (§8.6).
+//
+// Both initiators share one 2Kx16 byte-enabled store. Reads retain the legacy
+// two-clock response latency. Simultaneous writes to different words or byte
+// lanes both commit. If both write the same byte lane, the main-board value
+// wins deterministically and collision is asserted for that cycle. This
+// priority is an explicit FPGA arbitration contract; software must not depend
+// on the result of a same-lane collision on the asynchronous PCB bridge.
 // ---------------------------------------------------------------------------
-module s32_dualpcb (
+module s32_dualpcb_bridge (
     input             clk,
     input             rst,
     input             enable,
     input             init_ff,
 
-    input             cs_ram,       // 0x810000-0x810FFF
-    input             cs_id,        // 0x818000-0x818003
-    input             we,
-    input      [1:0]  be,
-    input      [11:1] addr,
-    input      [15:0] wdata,
-    output reg [15:0] rdata
-);
+    input             main_cs_ram,
+    input             main_cs_id,
+    input             main_we,
+    input      [1:0]  main_be,
+    input      [11:1] main_addr,
+    input      [15:0] main_wdata,
+    output reg [15:0] main_rdata,
 
-// Keep the communication store reset-free so Quartus can infer M10K RAM.
-// The old implementation reset every 2,048 x 16-bit word on every reset
-// clock, which forced the array toward registers and cost roughly 32K bits of
-// fabric.  A written bitmap lazily overlays the board-specific reset value;
-// the externally visible contents and synchronous read/write timing are the
-// same, while untouched words do not need to be physically cleared.
-//
-// Inference note: an earlier version blended the array read with the cs_id
-// side-path and the reset values into a single shared `rdata` register
-// driven from three branches (the array's own read only executed inside the
-// `cs_ram && enable` branch).  Quartus 17 never classified `comm` as a RAM
-// candidate under that shape -- no "uninferred due to" diagnostic at all, it
-// silently fell to ~32,784 registers, ~44% of the whole design.
-//
-// `comm_rdata` is `comm[]`'s *only* read reference anywhere in this module
-// -- a dedicated, always-executing, unconditional read, touching nothing
-// else, so Quartus has exactly one clean single-read-port candidate to
-// infer as M10K.  A version that additionally read `comm[addr]` a second
-// time (directly, inside `rdata`'s mux) measurably shrank the design
-// (~11K ALMs, `docs/compat.md`-class investigation) but left this array's
-// own footprint completely unchanged -- Quartus was still not even
-// attempting to classify it as a RAM candidate (no "uninferred due to"
-// diagnostic, same as the original shape). A second read site anywhere,
-// even in a different always block, appears to be what disqualifies it.
-//
-// Consequence: `comm_written[addr]`, `cs_ram`, and `cs_id` (all address-
-// dependent decisions that must pair with the SAME cycle's `comm_rdata`)
-// are captured into `_d` registers in lockstep, in this same block, off the
-// same pre-edge `addr`.  `rdata`'s mux then consumes only registers, never
-// `comm[]` or `comm_written[]` directly, in the second block below.  This
-// adds one clock of read latency versus the original (2 cycles from
-// address+cs_ram to valid `rdata` instead of 1) -- a real, deliberate
-// change, not a side effect.  Verified safe: `cs_ram`/`addr` come from a
-// single-cycle bus pulse (`m_req`) with no wait-state contract today, and
-// no shipped game has ever driven `enable`/`cfg_dual_pcb` (`dual=0` for
-// every entry in tools/gen_mra.py:GAMES), so this changes zero observed
-// behaviour on any current build -- only the not-yet-implemented dual-PCB
-// bridge for a future game gets the extra cycle, and that consumer does not
-// exist yet.
-//
-// Write side: the original 3-way `case` (first-write-with-default-overlay)
-// plus a separate byte-enable branch (already-written) is two different
-// write shapes selected by a runtime condition -- not a write port Quartus
-// can map to an M10K's fixed byte-enable write port. Collapsed below into a
-// single per-byte write-enable pair: on a lazily-reset word, both byte
-// enables are forced on (baking the board default into the untouched lane,
-// same as the original case arms) so every future read of that lane -- now
-// bypassing `comm_default` since `comm_written[addr]` is set -- returns a
-// defined value instead of X.
+    input             sub_cs_ram,
+    input             sub_cs_id,
+    input             sub_we,
+    input      [1:0]  sub_be,
+    input      [11:1] sub_addr,
+    input      [15:0] sub_wdata,
+    output reg [15:0] sub_rdata,
+    output            collision
+);
 reg [15:0] comm [0:2047];
 reg [2047:0] comm_written;
 reg [15:0] comm_default;
-reg [15:0] comm_rdata;
-reg        comm_written_d, cs_ram_d, cs_id_d;
-wire       comm_wr    = cs_ram && enable && we && (be != 2'b00);
-wire       comm_first  = comm_wr && !comm_written[addr];
-wire       comm_wr_lo  = comm_wr && (be[0] || comm_first);
-wire       comm_wr_hi  = comm_wr && (be[1] || comm_first);
-wire [7:0] comm_wdata_lo = be[0] ? wdata[7:0]  : comm_default[7:0];
-wire [7:0] comm_wdata_hi = be[1] ? wdata[15:8] : comm_default[15:8];
+reg [15:0] main_mem_q, sub_mem_q;
+reg main_written_d, sub_written_d;
+reg main_ram_d, main_id_d, sub_ram_d, sub_id_d;
 
-// `comm[]` gets its own minimal block: exactly one conditional write, one
-// unconditional read, nothing else -- not even the reset that gates the
-// surrounding book-keeping registers, matching the module's original
-// "keep the communication store reset-free" intent.
+wire main_wr = enable && main_cs_ram && main_we && (main_be != 0);
+wire sub_wr  = enable && sub_cs_ram  && sub_we  && (sub_be  != 0);
+wire same_addr = main_addr == sub_addr;
+assign collision = main_wr && sub_wr && same_addr && |(main_be & sub_be);
+
+wire main_first = main_wr && !comm_written[main_addr];
+wire sub_first  = sub_wr && !comm_written[sub_addr];
+wire joined_wr  = main_wr && sub_wr && same_addr;
+
+// Quartus 17 true-dual-port inference shape: each clocked block owns one RAM
+// port, has one unconditional registered read and at most one byte-enabled
+// write. A same-address pair is deliberately collapsed onto the main port;
+// this avoids relying on device-specific mixed-port collision behaviour while
+// retaining two physical writes when the addresses differ.
 always @(posedge clk) begin
-    if (comm_wr_lo) comm[addr][7:0]  <= comm_wdata_lo;
-    if (comm_wr_hi) comm[addr][15:8] <= comm_wdata_hi;
-    comm_rdata <= comm[addr];
+    main_mem_q <= comm[main_addr];
+    if (main_wr) begin
+        if (main_be[0] || (joined_wr && sub_be[0]) || main_first)
+            comm[main_addr][7:0] <= main_be[0] ? main_wdata[7:0] :
+                                      (joined_wr && sub_be[0]) ? sub_wdata[7:0] :
+                                      comm_default[7:0];
+        if (main_be[1] || (joined_wr && sub_be[1]) || main_first)
+            comm[main_addr][15:8] <= main_be[1] ? main_wdata[15:8] :
+                                       (joined_wr && sub_be[1]) ? sub_wdata[15:8] :
+                                       comm_default[15:8];
+    end
 end
 
-// comm_written's only two drivers (its reset and its per-word set) live
-// here, entirely separate from comm[] -- splitting them across two always
-// blocks is an illegal multi-driver net, not merely an inference concern.
+always @(posedge clk) begin
+    sub_mem_q <= comm[sub_addr];
+    if (sub_wr && !joined_wr) begin
+        if (sub_be[0] || sub_first)
+            comm[sub_addr][7:0] <= sub_be[0] ? sub_wdata[7:0] : comm_default[7:0];
+        if (sub_be[1] || sub_first)
+            comm[sub_addr][15:8] <= sub_be[1] ? sub_wdata[15:8] : comm_default[15:8];
+    end
+end
+
 always @(posedge clk) begin
     if (rst) comm_written <= 2048'b0;
-    else if (comm_wr) comm_written[addr] <= 1'b1;
+    else begin
+        if (sub_wr)  comm_written[sub_addr]  <= 1'b1;
+        if (main_wr) comm_written[main_addr] <= 1'b1;
+    end
 end
 
 always @(posedge clk) begin
     if (rst) begin
-        // F1 Exhaust Note explicitly memsets the bridge RAM to 0xffff.
-        // The descriptor selects that board-specific power-up contract while
-        // reset is still held during the final loader commit.
-        comm_default   <= init_ff ? 16'hffff : 16'h0000;
-        comm_written_d <= 1'b0;
-        cs_ram_d       <= 1'b0;
-        cs_id_d        <= 1'b0;
-        rdata <= init_ff ? 16'hffff : 16'h0000;
+        comm_default <= init_ff ? 16'hffff : 16'h0000;
+        main_written_d <= 0; sub_written_d <= 0;
+        main_ram_d <= 0; main_id_d <= 0; sub_ram_d <= 0; sub_id_d <= 0;
+        main_rdata <= init_ff ? 16'hffff : 16'h0000;
+        sub_rdata  <= init_ff ? 16'hffff : 16'h0000;
     end
     else begin
-        comm_written_d <= comm_written[addr];
-        cs_ram_d       <= cs_ram && enable;
-        cs_id_d        <= cs_id && enable;
-        if (cs_ram_d) rdata <= comm_written_d ? comm_rdata : comm_default;
-        else if (cs_id_d) rdata <= 16'h0000;   // main-board identity (dual_pcb_mainsub)
+        main_written_d <= comm_written[main_addr];
+        sub_written_d  <= comm_written[sub_addr];
+        main_ram_d <= main_cs_ram && enable; main_id_d <= main_cs_id && enable;
+        sub_ram_d  <= sub_cs_ram  && enable; sub_id_d  <= sub_cs_id  && enable;
+        if (main_ram_d) main_rdata <= main_written_d ? main_mem_q : comm_default;
+        else if (main_id_d) main_rdata <= 16'h0000;
+        if (sub_ram_d) sub_rdata <= sub_written_d ? sub_mem_q : comm_default;
+        else if (sub_id_d) sub_rdata <= 16'h0001;
     end
 end
 
+endmodule
+
+// Legacy one-board wrapper. Its interface, main-board identity and two-clock
+// read timing are unchanged; the dormant sub port is tied off.
+module s32_dualpcb (
+    input clk, input rst, input enable, input init_ff,
+    input cs_ram, input cs_id, input we, input [1:0] be,
+    input [11:1] addr, input [15:0] wdata, output [15:0] rdata
+);
+wire [15:0] unused_sub_rdata;
+wire unused_collision;
+s32_dualpcb_bridge bridge (
+    .clk(clk), .rst(rst), .enable(enable), .init_ff(init_ff),
+    .main_cs_ram(cs_ram), .main_cs_id(cs_id), .main_we(we), .main_be(be),
+    .main_addr(addr), .main_wdata(wdata), .main_rdata(rdata),
+    .sub_cs_ram(1'b0), .sub_cs_id(1'b0), .sub_we(1'b0), .sub_be(2'b00),
+    .sub_addr(11'b0), .sub_wdata(16'b0), .sub_rdata(unused_sub_rdata),
+    .collision(unused_collision)
+);
 endmodule
 
 // ---------------------------------------------------------------------------

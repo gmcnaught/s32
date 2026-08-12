@@ -2,6 +2,36 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-12: dual-PCB implementation boundary and DSP laboratory
+
+The standard-profile source now contains a tested two-initiator System 32
+communication bridge, an optional external bridge endpoint on `s32_core`, a
+transparent `s32_dual_system` integration boundary, and a two-client p0 SDRAM
+transaction arbiter. The legacy one-board bridge wrapper retains its existing
+two-clock response contract. The new bridge provides main/sub identities 0/1,
+Air Rescue zero and F1 Exhaust Note `ffff` lazy initialization, byte-lane
+merging, and an explicit collision indication; main wins an overlapping
+same-lane write only as a deterministic FPGA arbitration rule, not a claim
+about unmeasured PCB collision behavior.
+
+These modules are not yet selected by `Arcade-SegaSystem32.sv`: `dual_pcb` is
+a runtime descriptor, while a second FPGA context is an elaboration-time
+resource. A complete second `s32_core` cannot fit the current Standard profile
+(the accepted report is already near the device RAM-block ceiling). A pinned
+MAME 0.289 census proves the Air Rescue peer touches every major private
+digital subsystem during early startup, so an incomplete mailbox-only peer is
+rejected. The active architecture is therefore a state-banked/time-multiplexed
+V60/bus engine plus private external-memory-backed board state, not a duplicated
+renderer or a pruned behavioral peer.
+
+A standalone GPL-3.0 uPD77P25 laboratory under `rtl/cpu/upd7725/` can load
+synthetic or legally supplied 2Kx24 program and 1Kx16 data images and exposes
+the architectural DSP/host status boundary. It remains outside `files.qip`
+and does not replace the production Air Rescue HLE. Native daughterboard
+integration remains conditional on resolving the firmware's DMA/DR handshake,
+P0/P1 latch selection, and external interrupt source; current MAME also leaves
+that physical wiring unresolved.
+
 ## 2026-08-11: integrated CPU, memory and renderer throughput package
 
 Both production profiles keep the PCB V60 clock and every external data/I/O

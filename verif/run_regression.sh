@@ -19,6 +19,9 @@ echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv
 vvp /tmp/s32_v60_smoke | grep -q "SMOKE PASS" && echo "V60 SMOKE: PASS" || { echo "V60 SMOKE: FAIL"; exit 1; }
+iverilog -g2012 -o /tmp/s32_v60_dualctx \
+  rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_dualctx.sv verif/v60/tb_v60_dualctx.sv
+vvp /tmp/s32_v60_dualctx | grep -q "V60 DUALCTX PASS" && echo "V60 DUALCTX: PASS" || { echo "V60 DUALCTX: FAIL"; exit 1; }
 echo "[3/35] V60 directed suite"
 iverilog -g2012 -o /tmp/s32_v60_dir \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_directed.sv

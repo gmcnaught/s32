@@ -378,6 +378,10 @@ Set-Content -LiteralPath $LogPath -Value @(
     "Work: $RunRoot"
 )
 
+# Fail before HDL compilation if V60 persistent state has drifted from its
+# generated accessor/manifest contract.
+[void](Invoke-NativeCapture $PythonExe @("-B", "tools/v60_state_inventory.py") "V60 state inventory")
+
 $VideoSources = @(
     Get-ChildItem -LiteralPath (Join-Path $Root "rtl/video") -Filter "*.sv" |
         Sort-Object Name |
@@ -410,6 +414,9 @@ try {
 
     Write-Tier 2 "V60 smoke test"
     Run-HdlTest "t02_v60_smoke" "tb_v60_smoke" ($V60Sources + "verif/v60/tb_v60_smoke.sv") "SMOKE PASS"
+
+    Write-Tier 2 "V60 shared-engine dual-context isolation/late-ACK test"
+    Run-HdlTest "t02b_v60_dualctx" "tb_v60_dualctx" ($V60Sources + @("rtl/cpu/v60/s32_v60_dualctx.sv", "verif/v60/tb_v60_dualctx.sv")) "V60 DUALCTX PASS"
 
     Write-Tier 3 "V60 directed suite"
     Run-HdlTest "t03_v60_directed" "tb_v60_directed" ($V60Sources + "verif/v60/tb_v60_directed.sv") "DIRECTED PASS"
@@ -547,8 +554,17 @@ try {
         "rtl/video/s32_video.sv", "verif/common/tb_video_mode.sv"
     ) "VIDEO MODE LATCH PASS"
 
-    Write-Tier 24 "byte-wide true-dual-port BRAM timing / hold / collision semantics"
+    Write-Tier 24 "byte-wide true-dual-port BRAM and dual-PCB bridge timing / collision semantics"
     Run-HdlTest "t24_byte_dpram" "tb_byte_dpram" @("rtl/video/s32_big_dpram.sv", "verif/common/tb_byte_dpram.sv") "BYTE DPRAM PASS"
+    Run-HdlTest "t24_dualpcb_legacy" "tb_dualpcb" @(
+        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_dualpcb.sv"
+    ) "DUALPCB PASS"
+    Run-HdlTest "t24_dualpcb_2port" "tb_dualpcb_2port" @(
+        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_dualpcb_2port.sv"
+    ) "DUALPCB 2PORT PASS"
+    Run-HdlTest "t24_dual_system_single" "tb_dual_system_single" ($FullCoreSources + @(
+        "rtl/s32_dual_system.sv", "verif/common/tb_dual_system_single.sv"
+    )) "DUAL SYSTEM SINGLE PASS" @("SIMULATION")
 
     Write-Tier 25 "V25 mailbox BRAM + production MLAB FIFO profile"
     Run-HdlTest "t25_v25_dpram" "tb_v25_dpram" @("rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_v25_dpram.sv") "V25 DPRAM PASS"
@@ -565,6 +581,9 @@ try {
     Run-HdlTest "t26_sdram_p0_throughput" "tb_sdram_p0_throughput" @(
         "rtl/mem/sdram.sv", "verif/common/tb_sdram_p0_throughput.sv"
     ) "SDRAM P0 THROUGHPUT PASS"
+    Run-HdlTest "t26_sdram_mux2" "tb_sdram_mux2" @(
+        "rtl/mem/s32_sdram_mux2.sv", "verif/common/tb_sdram_mux2.sv"
+    ) "SDRAM MUX2 PASS"
 
     Write-Tier 27 "integrated sprite renderer / backpressured DDR framebuffer stress"
     Run-HdlTest "t27_sprite_fb" "tb_sprite_fb" @("rtl/video/s32_sprite.sv", "rtl/mem/s32_fb_if.sv", "verif/common/tb_sprite_fb.sv") "SPRITE FB PASS"
