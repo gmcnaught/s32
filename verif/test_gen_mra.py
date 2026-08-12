@@ -23,12 +23,52 @@ class BoardDescriptorTests(unittest.TestCase):
         self.assertEqual(GAMES["jpark"][:2], bytes.fromhex("0804"))
         self.assertEqual(GAMES["radr"][:3], bytes.fromhex("089080"))
 
+    def test_every_supported_four_player_parent_selects_the_ppi(self) -> None:
+        # b0[5] is the descriptor's i8255-present flag.  Keep this list
+        # explicit: Arabian Fight and Golden Axe II use the same 4-player
+        # board as the ordinary PPI parents even though they also select V25.
+        expected = {"arabfgt", "brival", "darkedge", "ga2", "spidman"}
+        actual = {name for name, descriptor in GAMES.items()
+                  if descriptor[0] & 0x20}
+        self.assertEqual(actual, expected)
+
     def test_alien3_and_jpark_select_the_same_gun_aim_profile(self) -> None:
         alien3 = GAMES["alien3"]
         jpark = GAMES["jpark"]
         self.assertEqual(alien3[0], jpark[0])       # same MSM6253 ADC board
         self.assertEqual(alien3[1] & 0xF7, jpark[1])
         self.assertEqual(alien3[1] & 0x34, 0x04)  # same gun/analog profile
+
+    def test_jpark_retains_only_the_pinned_init_patch(self) -> None:
+        self.assertEqual(GAMES["jpark"][:3], bytes.fromhex("080400"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            # A minimal parsed set is enough to exercise the generator's
+            # parent-specific patch placement without requiring copyrighted
+            # ROM data.
+            sets = {
+                "jpark": {
+                    "parent": "",
+                    "title": "Jurassic Park fixture",
+                    "year": "1993",
+                    "manu": "Sega",
+                    "regions": [{
+                        "region": "maincpu", "size": 0x200000,
+                        "loads": [{"macro": "ROM_LOAD", "file": "main.bin",
+                                   "offset": 0, "size": 1, "crc": "00000000"}],
+                    }],
+                },
+            }
+            self.assertTrue(gen("jpark", sets["jpark"], Path(tmp)))
+            root = ElementTree.parse(Path(tmp) / "Jurassic Park fixture.mra").getroot()
+            descriptor = next(rom for rom in root.findall("rom")
+                              if rom.attrib.get("index") == "0")
+            self.assertEqual(bytes.fromhex(descriptor.find("part").text)[:4],
+                             bytes.fromhex("08040083"))
+            patch = root.find(".//patch")
+            self.assertIsNotNone(patch)
+            self.assertEqual(patch.attrib["offset"], "0xC15A8")
+            self.assertEqual("".join((patch.text or "").split()), "70CDCDD8")
 
 
 class ButtonMetadataTests(unittest.TestCase):

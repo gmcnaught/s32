@@ -59,6 +59,10 @@ module tb_i8255;
         read_reg(2'd2, 8'h04, "PC BSR set");
         write_reg(2'd3, 8'h04);  // reset PC2
         read_reg(2'd2, 8'h00, "PC BSR reset");
+        write_reg(2'd3, 8'h0f);  // set PC7
+        read_reg(2'd2, 8'h80, "PC BSR set PC7");
+        write_reg(2'd3, 8'h0e);  // reset PC7
+        read_reg(2'd2, 8'h00, "PC BSR reset PC7");
 
         if (errors == 0) $display("I8255 MAME PASS");
         else $fatal(1, "I8255 MAME FAIL (%0d errors)", errors);

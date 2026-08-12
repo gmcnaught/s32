@@ -155,6 +155,16 @@ vvp /tmp/s32_gun_aim | grep -q "GUN AIM PASS" && echo "GUN AIM: PASS" || { echo 
 iverilog -g2012 -o /tmp/s32_i8255 \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_i8255.sv
 vvp /tmp/s32_i8255 | grep -q "I8255 MAME PASS" && echo "I8255 MAME: PASS" || { echo "I8255 MAME: FAIL"; exit 1; }
+iverilog -g2012 -s tb_i8255_conformance -o /tmp/s32_i8255_conformance \
+  rtl/s32_pkg.sv rtl/io/s32_io.sv verif/donors/jt8255.v \
+  verif/common/tb_i8255_conformance.sv
+vvp /tmp/s32_i8255_conformance | grep -q "I8255 CONFORMANCE PASS" && echo "I8255 CONFORMANCE: PASS" || { echo "I8255 CONFORMANCE: FAIL"; exit 1; }
+iverilog -g2012 -s tb_bus -o /tmp/s32_epr14084_bus \
+  rtl/comm/epr14084/epr14084_bus.sv verif/epr14084/tb_bus.sv
+vvp /tmp/s32_epr14084_bus | grep -q "PASS epr14084 bus" && echo "EPR-14084 BUS: PASS" || { echo "EPR-14084 BUS: FAIL"; exit 1; }
+iverilog -g2012 -DSIMULATION -s tb_epr14084_shadow -o /tmp/s32_epr14084_shadow \
+  rtl/comm/epr14084/s32_epr14084_shadow.sv verif/common/tb_epr14084_shadow.sv
+vvp /tmp/s32_epr14084_shadow | grep -q "EPR14084 SHADOW PASS" && echo "EPR-14084 SHADOW: PASS" || { echo "EPR-14084 SHADOW: FAIL"; exit 1; }
 iverilog -g2012 -s tb_brival_protection -o /tmp/s32_brival_protection \
   rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_brival_protection.sv
 vvp /tmp/s32_brival_protection | grep -q "BRIVAL PROTECTION PASS" && echo "BRIVAL PROTECTION: PASS" || { echo "BRIVAL PROTECTION: FAIL"; exit 1; }

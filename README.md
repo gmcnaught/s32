@@ -116,6 +116,14 @@ RBF here.
   [`README.system32.md`](rtl/cpu/v25/s80x86/README.system32.md).
 - **Jose Tejada Gomez / Jotego** — [JT12](https://github.com/jotego/jt12),
   used for the YM3438-compatible FM implementation.
+- **Jose Tejada Gomez / Jotego** — the pinned [JT8255](https://github.com/jotego/jt8255/tree/3bb5f7ea461fc7d72b847ec55ce997e5d5bc1754)
+  MIT implementation is retained only as a dual-model PPI conformance
+  reference; the donor pin, interface verdict, and retained notice are in
+  [`verif/donors/README.md`](verif/donors/README.md).
+- **Jotego and MiSTer-devel reference authors** — [JTCORES](https://github.com/jotego/jtcores/tree/1268a90e365c2520b412f224ae30d20c61aa0031)
+  and [Arcade-IremM92_MiSTer](https://github.com/MiSTer-devel/Arcade-IremM92_MiSTer/tree/68a4683e237eafca02e3df56dd84bacc255fba55)
+  were audited as GPL reference/integration sources only; no incompatible
+  System 32 RTL was copied.
 - **Daniel Wallner, MikeJ, Mike Johnson, TobiFlex, Sean Riddle, and Sorgelig**
   — contributors to the vendored [T80 Z80 core](rtl/audio/T80/); source
   headers retain the original BSD-style notices.
@@ -144,6 +152,7 @@ that retain their own notices and licenses:
 
 - s80x86: GNU GPL version 3 or later; [`COPYING`](rtl/cpu/v25/s80x86/COPYING).
 - JT12: GNU GPL version 3; [`LICENSE`](rtl/audio/jt12/LICENSE).
+- JT8255 conformance reference: MIT; [`LICENSE.jt8255`](verif/donors/LICENSE.jt8255).
 - T80: BSD-style terms in the source headers under [`rtl/audio/T80/`](rtl/audio/T80/).
 - CRT Adjust: GNU GPL version 3 or later, as stated in [`crt_adjust.sv`](rtl/crt_adjust.sv).
 - MiSTer framework and Intel/Altera generated IP under [`sys/`](sys/): retain

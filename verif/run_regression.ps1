@@ -523,6 +523,13 @@ try {
     Run-HdlTest "t18_eeprom" "tb_eeprom_nvram" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_eeprom_nvram.sv") "EEPROM NVRAM PASS"
     Run-HdlTest "t18_gun_aim" "tb_gun_aim" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_gun_aim.sv") "GUN AIM PASS"
     Run-HdlTest "t18_i8255" "tb_i8255" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_i8255.sv") "I8255 MAME PASS"
+    Run-HdlTest "t18_i8255_conformance" "tb_i8255_conformance" @(
+        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv",
+        "verif/donors/jt8255.v", "verif/common/tb_i8255_conformance.sv"
+    ) "I8255 CONFORMANCE PASS" @("SIMULATION")
+    Run-HdlTest "t18_epr14084_bus" "tb_bus" @(
+        "rtl/comm/epr14084/epr14084_bus.sv", "verif/epr14084/tb_bus.sv"
+    ) "PASS epr14084 bus" @("SIMULATION")
 
     Write-Tier 19 "V60 20-byte F1 / high fetch-buffer offset regression"
     Run-HdlTest "t19_v60_long_ea" "tb_v60_long_ea" ($V60Sources + "verif/v60/tb_v60_long_ea.sv") "LONG EA PASS"

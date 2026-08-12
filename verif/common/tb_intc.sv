@@ -27,6 +27,10 @@ wire irq_n;
 wire [7:0] irq_vector;
 wire z80_doorbell;
 
+integer errors = 0;
+integer i;
+integer timer1_clocks;
+
 s32_intc dut (
     .clk(clk), .rst(rst), .is_multi32(is_multi32),
     .cs(cs), .we(we), .addr(addr), .be(be), .wdata(wdata), .rdata(rdata),
@@ -48,9 +52,23 @@ begin
 end
 endtask
 
-integer errors = 0;
-integer i;
-integer timer1_clocks;
+task automatic ctl_read(input [3:1] a, input [1:0] lanes);
+begin
+    @(negedge clk);
+    addr = a; be = lanes; cs = 1'b1; we = 1'b0;
+    @(posedge clk); #1;
+    // MAME's int_control_r is currently an unmapped/readback stub: all
+    // interrupt-controller and timer offsets return 0xff.  Keep the
+    // production behavior explicit until PCB evidence proves otherwise.
+    if (rdata !== 8'hff) begin
+        $display("FAIL intc read addr=%0d lanes=%b data=%02x expected=ff",
+                 a, lanes, rdata);
+        errors = errors + 1;
+    end
+    @(negedge clk);
+    cs = 1'b0; we = 1'b0; be = 2'b00;
+end
+endtask
 
 initial begin
     repeat (3) @(posedge clk);
@@ -73,6 +91,15 @@ initial begin
         $display("FAIL intc reset outputs pending=%02x irq_n=%b rdata=%02x doorbell=%b",
                  dut.pending, irq_n, rdata, z80_doorbell);
         errors = errors + 1;
+    end
+
+    // Exercise every byte-pair and lane of the readback aperture, including
+    // the timer registers. The expected all-FF result is the pinned MAME
+    // contract, not an accidental stale value from the previous transaction.
+    for (i = 0; i < 8; i = i + 1) begin
+        ctl_read(i[3:1], 2'b01);
+        ctl_read(i[3:1], 2'b10);
+        ctl_read(i[3:1], 2'b11);
     end
 
     // Acknowledge the reset-pending sources (byte 7, AND-mask 0) so the

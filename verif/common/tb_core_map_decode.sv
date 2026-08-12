@@ -85,6 +85,43 @@ module tb_core_map_decode;
         expect_decode(24'hcabc60, 0,0,0,1,1,0);
         expect_decode(24'hc00068, 0,0,0,1,0,0);
 
+        // Exercise the real V60-side PPI bus seam at 0xc00060.  The
+        // descriptor gate is the same bit emitted for arabfgt, brival,
+        // darkedge, ga2, and spidman; the Python descriptor test keeps that
+        // parent set complete while this transaction proves the integrated
+        // request/read-mux path.
+        core_rst = 1'b0;
+        force core.m_req = 1'b0;
+        @(posedge clk); #1;  // initialize the core's un-reset read-ack latch
+        force core.m_req = 1'b1;
+        force core.m_be = 2'b01;
+        force core.m_we = 1'b1;
+        force core.m_wdata = 16'h0080;
+        probe = 24'hc00066; @(posedge clk); #1;  // mode 0, all outputs
+        force core.m_wdata = 16'h000f;
+        probe = 24'hc00066; @(posedge clk); #1;  // BSR set PC7
+        if (core.ppi.pc_out[7] !== 1'b1) begin
+            $display("FAIL PPI V60 bus BSR PC7 pc_out=%02x", core.ppi.pc_out);
+            errors = errors + 1;
+        end
+        // End the write transaction so the core's registered read/ack
+        // pipeline can arm a fresh PPI read.
+        force core.m_req = 1'b0;
+        @(posedge clk); #1;
+        force core.m_req = 1'b1;
+        force core.m_we = 1'b0;
+        probe = 24'hc00064;
+        @(posedge clk); @(posedge clk); #1;
+        if (core.m_rdata[7:0] !== 8'h80) begin
+            $display("FAIL PPI V60 bus read rdata=%02x", core.m_rdata[7:0]);
+            errors = errors + 1;
+        end
+        release core.m_req;
+        release core.m_be;
+        release core.m_we;
+        release core.m_wdata;
+        core_rst = 1'b1;
+
         // GA2's MB8421 right-side window is not mirrored across 0xAxxxxx.
         expect_decode(24'ha00000, 0,0,0,0,0,1);
         expect_decode(24'ha00ffe, 0,0,0,0,0,1);

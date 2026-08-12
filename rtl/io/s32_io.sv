@@ -1018,8 +1018,10 @@ always @(posedge clk) begin
                     pb_out <= 8'h00;
                     pc_out <= 8'h00;
                 end
-                else if (wdata[3:1] != 3'b111)
-                    // Bit set/reset (BSR) mode addresses one Port-C bit.
+                else
+                    // Bit set/reset (BSR) mode addresses any Port-C bit,
+                    // including PC7. The previous guard accidentally
+                    // discarded the valid bit-7 control word (0x0f/0x0e).
                     pc_out[wdata[3:1]] <= wdata[0];
             end
             default: ;
