@@ -25,8 +25,8 @@ def validate(check_rtl: bool = False) -> list[str]:
     scope = ledger.get("scope", {})
     if scope.get("family") != "Sega System 32":
         errors.append("scope.family must be Sega System 32")
-    if scope.get("production_profiles") != ["standard", "v25"]:
-        errors.append("production profiles must be exactly standard and v25")
+    if scope.get("production_profiles") != ["universal"]:
+        errors.append("production profiles must be exactly universal")
     if "Multi 32" not in scope.get("excluded_from_production", []):
         errors.append("Multi 32 must remain excluded from production")
     if scope.get("physical_pcb_available") is not False:
@@ -72,11 +72,10 @@ def validate(check_rtl: bool = False) -> list[str]:
                     errors.append(f"{claim_id}: missing implementation {relative}")
 
     if check_rtl:
-        # 2026-08-06: two dedicated profiles -- segas32v25 (real V25) and
-        # segas32 (HLE only, no V25 core compiled in at all).
+        # One universal profile contains both standard-board peripherals and
+        # the real V25 implementation; descriptors select the active path.
         for qsf, profile, needs_real_v25 in (
-            (ROOT / "segas32v25.qsf", "S32_PROFILE_STANDARD=1", True),
-            (ROOT / "segas32.qsf", "S32_PROFILE_STANDARD=1", False),
+            (ROOT / "segas32.qsf", "S32_PROFILE_STANDARD=1", True),
         ):
             text = qsf.read_text(encoding="utf-8")
             if profile not in text:
@@ -85,9 +84,9 @@ def validate(check_rtl: bool = False) -> list[str]:
                 errors.append(f"{qsf.name}: missing S32_PCB_TIMING=1")
             if "NUM_PARALLEL_PROCESSORS 8" not in text:
                 errors.append(f"{qsf.name}: must use eight Quartus workers")
-            has_real_v25 = 'VERILOG_MACRO "S32_REAL_V25=1"' in text
+            has_real_v25 = 'VERILOG_MACRO "S32_V25_HW=1"' in text
             if needs_real_v25 and not has_real_v25:
-                errors.append(f"{qsf.name}: missing S32_REAL_V25=1 (real-V25 profile requirement)")
+                errors.append(f"{qsf.name}: missing S32_V25_HW=1 (universal V25 requirement)")
             if not needs_real_v25 and has_real_v25:
                 errors.append(f"{qsf.name}: must not compile the real V25 core (no game here has V25 hardware)")
         core_text = (ROOT / "rtl" / "s32_core.sv").read_text(encoding="utf-8")

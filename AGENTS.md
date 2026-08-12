@@ -1,6 +1,6 @@
 # Sega System 32 profile contract
 
-This repository has exactly two production FPGA profiles. Every change to RTL,
+This repository has exactly one universal production FPGA profile. Every change to RTL,
 MRA generation, tests, build scripts, or release metadata must be routed using
 this contract; do not create a new per-game Quartus revision or silently add a
 game-only macro.
@@ -9,32 +9,31 @@ game-only macro.
 
 | Profile | Production macros | RBF | MRA parents | Hardware boundary |
 |---|---|---|---|---|
-| `segas32v25` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY=1`, `S32_REAL_V25=1` | `segas32v25.rbf` | `ga2`, `arabfgt` | Real NEC V25 core/cache/program memories compiled in; ADC, trackball, generic protection HLE, dual-PCB, Burning Rival all tied off (neither game uses any of them). |
-| `segas32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1` | `segas32.rbf` | `alien3`, `brival`, `darkedge`, `holo`, `jpark`, `radr`, `slipstrm`, `sonic`, `spidman` | No real V25 hardware at all (HLE responder `s32_v25` only). Trackball, descriptor-gated ADC/gun input, generic protection, Burning Rival, and Rad Rally communication HLE live under descriptor control (`GAME_ONLY_STD`). Air Rescue is excluded because its required second PCB is not implemented. |
+| `segas32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1`, `S32_UNIVERSAL=1`, `S32_V25_HW=1` | `segas32.rbf` | all supported standard parents plus `ga2`, `arabfgt` | Standard-board peripherals and the real NEC V25 core/cache/program memories are compiled together; descriptor fields select V25 versus HLE and optional I/O/protection paths. |
 
-Both profiles share `rtl/s32_core.sv`; `S32_GAME_ONLY_STD` implies
+The universal profile uses `rtl/s32_core.sv`; `S32_GAME_ONLY_STD` implies
 `GAME_ONLY`, but retains standard-profile descriptor-selected peripherals.
 `harddunk`, `orunners`, `scross`, and `titlef` families are Multi 32 and are
 not supported or emitted.
 
 ## Change-routing rules
 
-1. A common emulation or accuracy enhancement belongs in the shared RTL and
-   must be valid in both profiles. Run both profiles' lint/boot tests before
+1. A common emulation or accuracy enhancement belongs in the universal RTL and
+   must be valid for every descriptor. Run the universal lint/boot tests before
    considering it integrated.
-2. A resource or hardware change belongs in the relevant profile QSF and must
-   use only `S32_PROFILE_STANDARD`, `S32_GAME_ONLY`, or `S32_GAME_ONLY_STD` in
-   production RTL. Descriptor fields select differences between games inside
-   a profile. `S32_PROFILE_V25` is retired and must never be defined again.
+2. A resource or hardware change belongs in the universal QSF and must use
+   only `S32_PROFILE_STANDARD`, `S32_UNIVERSAL`, `S32_V25_HW`,
+   `S32_GAME_ONLY`, or `S32_GAME_ONLY_STD` in production RTL. Descriptor fields
+   select differences between games inside the profile. `S32_PROFILE_V25` is
+   retired and must never be defined again.
 3. Never reintroduce `S32_GA2_ONLY`, `S32_GOLDENAXE_ONLY`,
    `S32_ARABFIGHT_ONLY`, `S32_SONIC_ONLY`, or `S32_V25_GAME_ONLY` in a
    production source, QSF, MRA, or release script. Test-only feature macros
    must not alter production game routing.
 4. `tools/gen_mra.py`'s `RBF_BY_PARENT` is the only source of `<rbf>`
-   routing. Golden Axe and Arabian Fight must resolve to `segas32v25`; every
-   other emitted System 32 MRA must resolve to `segas32`.
-5. Use `tools/build-segas32v25.bat` or `tools/build-segas32.bat` for hardware
-   builds (thin wrappers around `tools/build.bat`). Preserve Quartus
+   routing. Every supported parent resolves to `segas32`.
+5. Use `tools/build-segas32.bat` for hardware builds (a thin wrapper around
+   `tools/build.bat`). Preserve Quartus
    databases, obey the eight-worker Fast Fit policy, and do not build merely
    to explore source. A build requires an explicit user request.
 

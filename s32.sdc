@@ -132,9 +132,9 @@ if {[s32_require [expr {[get_collection_size $sprite_deferred_sources] > 0 && \
 # clk_ram world -- the SDRAM p5 line fetch and the V60-side mailbox port -- are
 # handled in RTL by two-flop toggle synchronisers (s32_v25_cpu) and a true-dual-
 # port RAM, so STA must NOT time those paths.  Declaring clk_v25 asynchronous to
-# the rest false-paths them.  Present only in the S32_REAL_V25 build.  Detect
-# that instantiated block first: a real-V25 build still hard-fails if its PLL
-# clock is missing, while non-V25 profiles (including Jurassic Park) skip it.
+# the rest false-paths them.  The universal build instantiates the block and
+# descriptors decide whether a game uses it; detect the instance before adding
+# the clock group so source-only simulation remains unaffected.
 set v25_regs [get_registers -nowarn {*|s32_v25_cpu:v25|*}]
 if {[get_collection_size $v25_regs] > 0} {
     set v25_clk [get_clocks -nowarn {*|pll|pll_inst|altera_pll_i|*[3].*|divclk}]

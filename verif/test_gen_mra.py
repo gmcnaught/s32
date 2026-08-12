@@ -154,7 +154,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             roms = root.findall("rom")
             indexes = [int(rom.attrib["index"]) for rom in roms]
             self.assertEqual(indexes[-1], 0, path.name)
-            self.assertTrue(all(index in {0, 2, 4, 5, 6, 7, 8, 9, 13, 14}
+            self.assertTrue(all(index in {0, 2, 4, 5, 6, 7, 8, 9}
                                 for index in indexes), path.name)
             descriptor_rom = roms[-1]
             self.assertNotIn("zip", descriptor_rom.attrib, path.name)
@@ -166,15 +166,14 @@ class OptimizedLayoutTests(unittest.TestCase):
         names = {path.name for path in (Path(__file__).parents[1] / "mra").glob("*.mra")}
         self.assertFalse(any("Air Rescue" in name for name in names))
 
-    def test_rad_rally_firmware_planes_precede_descriptor_commit(self) -> None:
+    def test_rad_rally_uses_behavioral_link_without_diagnostic_firmware(self) -> None:
         for path in (Path(__file__).parents[1] / "mra").glob("Rad Rally*.mra"):
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
             indexes = [int(rom.attrib["index"]) for rom in roms]
-            self.assertEqual(indexes[-3:], [13, 14, 0], path.name)
-            for rom in roms[-3:-1]:
-                self.assertEqual(rom.find("part").attrib,
-                                 {"name": "epr-14084.17", "crc": "f14ed074"})
+            self.assertNotIn(13, indexes, path.name)
+            self.assertNotIn(14, indexes, path.name)
+            self.assertEqual(indexes[-1], 0, path.name)
 
 
 class RegenerationFidelityTests(unittest.TestCase):

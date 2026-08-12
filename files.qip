@@ -10,15 +10,10 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_core.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60_bus.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/comm/epr14084/epr14084_bus.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/comm/epr14084/epr14084_lab.sv
-set_global_assignment -name SYSTEMVERILOG_FILE rtl/comm/epr14084/s32_epr14084_shadow.sv
-# The real NEC V25 (rtl/cpu/v25/v25.qip: s80x86 + s32_v25_cpu +
-# s32_v25_rom_cache) belongs to the s32v25 revision only -- it is hardware for
-# Golden Axe: The Revenge of Death Adder and Arabian Fight alone.  Every other
-# System 32 title uses the HLE responder s32_v25 in rtl/prot/s32_prot.sv. That
-# source is added only by segas32.qsf; segas32v25 deliberately omits it because
-# GA2 and Arabian Fight use the real NEC V25 and no generic protection blocks.
+# The universal segas32 revision adds the real NEC V25 QIP from segas32.qsf
+# alongside the standard-board protection responders. Runtime descriptors
+# select the real V25 for Golden Axe II/Arabian Fight and the HLE fallback for
+# other supported parents.
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_big_dpram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_vram.sv
@@ -41,6 +36,7 @@ set_global_assignment -name QIP_FILE rtl/audio/jt12/jt12.qip
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_io.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_driving_controls.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/s32_sdram_write_mux2.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/s32_rom_loader.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/s32_fb_if.sv
 

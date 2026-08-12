@@ -19,7 +19,13 @@
 
 import s32_pkg::*;
 
-module s32_rom_loader #(parameter WIDE=0) (
+module s32_rom_loader #(
+    parameter WIDE=0,
+    // System 32 has RF5C68 wave RAM but no MultiPCM ROM. Clear that unused
+    // 64 KiB SDRAM aperture before releasing reset so inverted external wave
+    // storage has deterministic logical 0xff power-up contents.
+    parameter CLEAR_RF_WAVE=0
+) (
     input             clk,
     input             rst,
     input             mem_ready,
@@ -45,10 +51,6 @@ module s32_rom_loader #(parameter WIDE=0) (
     output reg        v25_wr,
     output reg [15:0] v25_waddr,
     output reg  [7:0] v25_wdata,
-
-    output reg comm_rom_wr, output reg [14:0] comm_rom_addr,
-    output reg [7:0] comm_rom_data,
-    output reg comm_fw_loaded,
 
     // EEPROM default image write port (64 x 16)
     output reg        eep_wr,
@@ -76,13 +78,14 @@ reg        busy;
 reg [26:0] dl_addr_last;   // last accepted index-0 stream address (see below)
 `endif
 reg        index0_seen;
-reg comm_even_seen, comm_odd_seen;
+reg        wave_clear_active;
+reg [14:0] wave_clear_word;
 integer    desc_i;
 
 // Hold the MiSTer host off until the SDRAM controller has completed its JEDEC
 // power-up sequence. Accepting descriptor or ROM bytes earlier desynchronises
 // the fixed stream because those writes cannot yet be serviced.
-assign ioctl_wait = busy | ~mem_ready;
+assign ioctl_wait = busy | wave_clear_active | ~mem_ready;
 
 // MAME describes the ROM as:
 //   descrambled[dst] = raw[bitswap(dst, 14,11,15,12,13,4,3,7,
@@ -129,23 +132,42 @@ always @(posedge clk) begin
     if (rst) begin
         sdr_wr_req <= 1'b0; sdr_wr_addr <= '0; sdr_wr_din <= '0; sdr_wr_be <= '0;
         v25_wr <= 1'b0; v25_waddr <= '0; v25_wdata <= '0;
-        comm_rom_wr<=0;comm_rom_addr<=0;comm_rom_data<=0;
-        comm_fw_loaded<=0;comm_even_seen<=0;comm_odd_seen<=0;
         eep_wr <= 1'b0; eep_waddr <= '0; eep_wdata <= '0;
         eep_loaded <= 1'b0; rom_loaded <= 1'b0;
         byte_lo <= 8'd0; busy <= 1'b0; index0_seen <= 1'b0;
+        wave_clear_active <= 1'b0; wave_clear_word <= 15'd0;
         desc_r <= '0;
         for (desc_i = 0; desc_i < 16; desc_i = desc_i + 1)
             desc_bytes[desc_i] <= 8'd0;
     end
     else begin
         v25_wr <= 1'b0;
-        comm_rom_wr <= 1'b0;
         eep_wr <= 1'b0;
 
         if (sdr_wr_ack) begin
             sdr_wr_req <= 1'b0;
             busy       <= 1'b0;
+            if (wave_clear_active) begin
+                if (wave_clear_word == 15'h7fff) begin
+                    wave_clear_active <= 1'b0;
+                    rom_loaded <= 1'b1;
+                    index0_seen <= 1'b0;
+                end
+                else
+                    wave_clear_word <= wave_clear_word + 1'b1;
+            end
+        end
+
+        // One full-word zero write per RF wave word. The RF interface stores
+        // bytes inverted, so cleared SDRAM reads as logical 0xff. Re-arm only
+        // after the controller's stretched ACK has returned low.
+        if (wave_clear_active && !sdr_wr_req && !sdr_wr_ack) begin
+            sdr_wr_req  <= 1'b1;
+            sdr_wr_addr <= SDR_MULTIPCM_BASE[24:1] +
+                           {9'b000000000, wave_clear_word};
+            sdr_wr_din  <= 16'h0000;
+            sdr_wr_be   <= 2'b11;
+            busy        <= 1'b1;
         end
 
         // audit R20 PF-3: accept a new ioctl word only when the SDRAM write
@@ -273,22 +295,6 @@ always @(posedge clk) begin
                     end
                 end
             end
-            // Verified EPR-14084 image loading uses two byte-plane indices in
-            // WIDE mode because this loader exposes one byte write per cycle:
-            // index 13 commits even bytes from dout[7:0], index 14 commits odd
-            // bytes from dout[15:8], both at the same word-address cursor.
-            // Narrow mode uses ordinary byte addresses entirely on index 13.
-            else if (ioctl_index == 8'd13) begin
-                comm_even_seen<=1;
-                if(WIDE) begin
-                    comm_rom_addr<=ioctl_addr[15:1];comm_rom_data<=ioctl_dout[7:0];comm_rom_wr<=1;
-                    // Index 14 carries the odd byte of the same verified ROM.
-                end else begin comm_rom_addr<=ioctl_addr[14:0];comm_rom_data<=ioctl_dout[7:0];comm_rom_wr<=1;end
-            end
-            else if (ioctl_index == 8'd14 && WIDE) begin
-                comm_odd_seen<=1;
-                comm_rom_addr<=ioctl_addr[15:1];comm_rom_data<=ioctl_dout[15:8];comm_rom_wr<=1;
-            end
             else if (ioctl_index == 8'd2 || ioctl_index == 8'd3) begin
                 // Factory image (2) or persisted NVRAM (3), 128 bytes.
                 if (WIDE) begin
@@ -316,12 +322,16 @@ always @(posedge clk) begin
             eep_loaded  <= 1'b0;
             index0_seen <= 1'b1;
         end
-        if (mem_ready && !ioctl_download && index0_seen && !busy && !sdr_wr_req) begin
-            rom_loaded  <= 1'b1;
-            index0_seen <= 1'b0;
-            comm_fw_loaded <= comm_even_seen && (!WIDE || comm_odd_seen);
-            comm_even_seen <= 1'b0;
-            comm_odd_seen <= 1'b0;
+        if (mem_ready && !ioctl_download && index0_seen &&
+            !wave_clear_active && !busy && !sdr_wr_req) begin
+            if (CLEAR_RF_WAVE) begin
+                wave_clear_active <= 1'b1;
+                wave_clear_word <= 15'd0;
+            end
+            else begin
+                rom_loaded  <= 1'b1;
+                index0_seen <= 1'b0;
+            end
 `ifdef SIMULATION
             // The byte-pairing above assumes every region is even-length (the
             // fixed MRA layout guarantees it).  An odd-length stream would

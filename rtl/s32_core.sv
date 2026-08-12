@@ -27,17 +27,22 @@ end
 assign ce = !pause && !phase;
 endmodule
 
-// Fixed-clock dedicated revisions can use the single-port synchronous V60
+// The universal production revision uses the single-port synchronous V60
 // cache. Keep this preprocessing choice local to this compilation unit.
-// Both production profiles (segas32v25 and the descriptor-driven segas32
-// family) use it: fixed CE spacing (no CPU Turbo in either
-// profile) is common to both, and the arbiter feeding this cache's SDRAM p0
+// Fixed CE spacing (no CPU Turbo in any supported game) is common to all
+// boards, and the arbiter feeding this cache's SDRAM p0
 // port grants a real protection-ROM-read request instead of the old
 // hardwired prot_rom_grant=0 (2026-08-06, see the s32_ga_rom_cache
 // instantiation below) -- the structural blocker that used to make this
 // cache unsafe under a game like Sonic (PROT_SONIC does drive
 // prot_rom_grant) is fixed, not just avoided by scope.
-`ifdef S32_REAL_V25
+// Keep the V25 implementation internally selectable while exposing only one
+// production profile.
+`ifdef S32_UNIVERSAL
+`define S32_V25_HW
+`endif
+
+`ifdef S32_V25_HW
 `define S32_AREA_ROM_CACHE
 `elsif S32_GAME_ONLY_STD
 `define S32_AREA_ROM_CACHE
@@ -57,7 +62,7 @@ module s32_core #(
 ) (
     input             clk_sys,      // 48.317307 MHz
     input             clk_ram,      // 96.634615 MHz
-`ifdef S32_REAL_V25
+`ifdef S32_V25_HW
     input             clk_v25,      // ~24.158653 MHz (clk_sys/2): s80x86 compute domain
 `endif
     input             rst,
@@ -65,19 +70,6 @@ module s32_core #(
     input             video_rst,
 
     input  board_desc_t board,
-
-    input             comm_rom_wr,
-    input      [14:0] comm_rom_addr,
-    input       [7:0] comm_rom_data,
-    input             comm_fw_loaded,
-    input             comm_native_zfg,
-    input             comm_native_io_ack,
-    input       [7:0] comm_native_io_rdata,
-    output            comm_native_io_req,
-    output            comm_native_io_write,
-    output      [7:0] comm_native_io_addr,
-    output      [7:0] comm_native_io_wdata,
-    output            comm_native_first_out60,
 
     // clock enables (from fractional CE generators in emu top)
     input             ce_cpu,       // 16.108 / 20 MHz physical V60/V70 bus
@@ -117,6 +109,13 @@ module s32_core #(
     output     [24:1] sdr_p4_addr,
     input      [15:0] sdr_p4_dout,
     input             sdr_p4_ack,
+    // RF5C68 wave-RAM runtime writes share SDRAM's loader/write port in the
+    // emu top. Reads use p4, whose MultiPCM region is unused by System 32.
+    output            sdr_wave_wr_req,
+    output     [24:1] sdr_wave_wr_addr,
+    output     [15:0] sdr_wave_wr_data,
+    output      [1:0] sdr_wave_wr_be,
+    input             sdr_wave_wr_ack,
     output            sdr_p5_req,
     output     [24:3] sdr_p5_addr,
     input      [63:0] sdr_p5_dout,
@@ -181,16 +180,13 @@ module s32_core #(
     output      [7:0] out_lamps
 );
 
-// 2026-08-06: this repository ships two dedicated-game profiles sharing
-// this same RTL (segas32v25.qsf: ga2/arabfgt, real V25; segas32.qsf:
-// Sonic and future non-V25 games, HLE only). Both trim analog/dual-PCB/
-// Burning Rival identically (GAME_ONLY), but only the non-V25 shape needs
-// the trackball and generic protection HLE live (GAME_ONLY_STD) --
-// segas32v25's games are both PROT_NONE and have no trackball board.
-// S32_GAME_ONLY_STD implies GAME_ONLY; a profile never needs to define both.
-`ifdef S32_REAL_V25
+// The universal production profile is a single-screen System 32 build with
+// all supported standard peripherals and the real V25 compiled in. Runtime
+// descriptor bits select the board-specific path; no game-specific QSF is
+// needed. S32_GAME_ONLY_STD implies GAME_ONLY.
+`ifdef S32_UNIVERSAL
 localparam GAME_ONLY     = 1'b1;
-localparam GAME_ONLY_STD = 1'b0;
+localparam GAME_ONLY_STD = 1'b1;
 `elsif S32_GAME_ONLY_STD
 localparam GAME_ONLY     = 1'b1;
 localparam GAME_ONLY_STD = 1'b1;
@@ -202,26 +198,9 @@ localparam GAME_ONLY     = 1'b0;
 localparam GAME_ONLY_STD = 1'b0;
 `endif
 
-// Dedicated real-V25 game hardware constants. The MRA descriptor is still
-// loaded and validated, but fixing these board straps at elaboration lets
-// Quartus remove unrelated runtime-select muxes. Other profiles remain
-// descriptor-led.
-`ifdef S32_REAL_V25
+// Runtime descriptor fields remain authoritative in the universal profile.
+`ifdef S32_PROFILE_STANDARD
 wire       cfg_multi32           = 1'b0;
-wire       cfg_has_v25           = 1'b1;
-wire       cfg_v25_table         = board.v25_table;
-wire       cfg_has_adc           = 1'b0;
-wire       cfg_has_track         = 1'b0;
-wire       cfg_has_ppi           = 1'b1;
-wire       cfg_comm_link_hle     = 1'b0;
-wire [6:0] cfg_prot_sel          = PROT_NONE;
-wire       cfg_sprite_bank_valid = 1'b1;
-wire [1:0] cfg_sprite_bank_mask  = 2'b11;
-wire       cfg_flip_y            = 1'b0;
-`elsif S32_PROFILE_STANDARD
-wire       cfg_multi32           = 1'b0;
-// Standard profiles never compile the real CPU/QIP. These descriptor bits
-// select only the lightweight s32_v25 mailbox HLE below.
 wire       cfg_has_v25           = board.has_v25;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
@@ -248,7 +227,7 @@ wire       cfg_flip_y            = board.flip_y;
 // A System32-only bitstream must not enter a Multi 32 runtime configuration if
 // it is accidentally paired with a Multi 32 MRA.  The universal source build
 // retains the descriptor-selected path when SYSTEM32_ONLY is false.  GAME_ONLY
-// profiles are dedicated single-screen System 32 builds by definition, so they
+// the production profile is a dedicated single-screen System 32 build by definition, so it
 // force the System 32 configuration even if a QSF sets a game macro without
 // S32_SYSTEM32_ONLY (previously that mismatch left is_multi32 following the
 // descriptor while the analog/trackball hardware it implies was compiled out).
@@ -666,7 +645,7 @@ wire [1:0] disp_buf;
 wire [1:0] spr_scan_buf;
 wire [1:0] spr_scan_buf_prev;
 s32_sprite #(
-`ifdef S32_REAL_V25
+`ifdef S32_V25_HW
     .VERIFY_SROM(1'b1)
 `else
     .VERIFY_SROM(1'b0)
@@ -772,7 +751,7 @@ assign fb_rd_x   = hcnt;
 // item; v1 shares screen A's fetched line so B's tilemaps/palette/mixer are
 // nonetheless fully independent (the valuable part of B7).
 wire [15:0] fb_rd_pix_b = fb_rd_pix;
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL_DISABLED
 `define S32_MIX_PIX_PIPE
 `elsif S32_GAME_ONLY_STD
 `define S32_MIX_PIX_PIPE
@@ -783,7 +762,7 @@ wire [15:0] fb_rd_pix_b = fb_rd_pix;
 `undef S32_MIX_PIX_PIPE
 // The fetched sprite line lives in the top-level framebuffer M10K while the
 // mixer is placed with the palette/video logic.  Stage both the sprite pixel
-// and its display-X marker once in this dedicated-game profile.  The mixer
+// and its display-X marker once in this universal profile. The mixer
 // still snapshots them together, one clock later within the same 12+ clock
 // pixel period, but the long M10K-to-priority-bank route is split at a
 // freely placeable register.
@@ -890,6 +869,12 @@ wire        snd_doorbell, snd_to_v60;
 wire [15:0] sh_rdata;
 wire [23:0] zrom_ba;
 wire [21:0] mpcm_ba;
+wire        mpcm_req_i;
+wire        wave_rd_req_i;
+wire [15:0] wave_rd_addr_i;
+wire        wave_wr_req_i;
+wire [15:0] wave_wr_addr_i;
+wire  [7:0] wave_wr_data_i;
 
 s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY)) sound (
     .clk(clk_sys), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
@@ -903,19 +888,32 @@ s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY)) sound (
     .irq_to_v60(snd_to_v60),
     .zrom_req(sdr_p3_req), .zrom_addr(zrom_ba),
     .zrom_data(sdr_p3_dout), .zrom_ack(sdr_p3_ack),
-    .mpcm_req(sdr_p4_req), .mpcm_addr(mpcm_ba),
+    .mpcm_req(mpcm_req_i), .mpcm_addr(mpcm_ba),
     // Select the addressed byte from the 16-bit SDRAM word.  The MultiPCM ROM
     // bus is byte-wide; the old code always took the even lane, corrupting
     // every odd sample/descriptor byte (audit R20 AU-2).  mpcm_ba is held
     // stable by the MultiPCM engine until its req/ack completes.
     .mpcm_data(mpcm_ba[0] ? sdr_p4_dout[15:8] : sdr_p4_dout[7:0]),
     .mpcm_ack(sdr_p4_ack),
+    .wave_rd_req(wave_rd_req_i), .wave_rd_addr(wave_rd_addr_i),
+    .wave_rd_data(sdr_p4_dout), .wave_rd_ack(sdr_p4_ack),
+    .wave_wr_req(wave_wr_req_i), .wave_wr_addr(wave_wr_addr_i),
+    .wave_wr_data(wave_wr_data_i), .wave_wr_ack(sdr_wave_wr_ack),
     .audio_l(audio_l), .audio_r(audio_r)
 );
 // B1: SDRAM address hookup for sound ports — add region bases so fetches
 // land in the soundcpu / multipcm regions instead of address 0.
 assign sdr_p3_addr = SDR_SOUNDCPU_BASE[24:1] + {1'b0, zrom_ba[23:1]};
-assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] + {3'b000, mpcm_ba[21:1]};
+assign sdr_p4_req = SYSTEM32_ONLY ? wave_rd_req_i : mpcm_req_i;
+assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] +
+                     (SYSTEM32_ONLY ? {9'b000000000, wave_rd_addr_i[15:1]} :
+                                      {3'b000, mpcm_ba[21:1]});
+assign sdr_wave_wr_req  = SYSTEM32_ONLY && wave_wr_req_i;
+assign sdr_wave_wr_addr = SDR_MULTIPCM_BASE[24:1] +
+                          {9'b000000000, wave_wr_addr_i[15:1]};
+assign sdr_wave_wr_data = wave_wr_addr_i[0] ? {~wave_wr_data_i, 8'h00}
+                                             : {8'h00, ~wave_wr_data_i};
+assign sdr_wave_wr_be   = wave_wr_addr_i[0] ? 2'b10 : 2'b01;
 
 // ---------------------------------------------------------------------------
 // IO-7: s32comm share RAM (0x800000-0x800fff).  The regular-PCB machine config
@@ -927,7 +925,7 @@ assign sdr_p4_addr = SDR_MULTIPCM_BASE[24:1] + {3'b000, mpcm_ba[21:1]};
 // below, and the rest of the 0x80xxxx page reads link-not-connected (0xFFFF).
 // ---------------------------------------------------------------------------
 wire       sel_comm_ram = sel_comm && (A[15:12] == 4'h0);
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL_DISABLED
 wire [7:0]  comm_q = 8'h00;
 wire        comm_cn = 1'b0;
 wire        comm_fg = 1'b0;
@@ -967,22 +965,6 @@ wire       comm_pub_start = cfg_comm_link_hle && comm_cn && !comm_link_status &&
                              vbl_start && (comm_link_timer <= 16'd1) &&
                              (comm_pub_seq == 2'd0);
 wire       comm_cpu_we    = m_req && m_we && sel_comm_ram && m_be[0];
-wire [15:0] comm_native_host_rdata;
-s32_epr14084_shadow #(.ENABLE_NATIVE_SHADOW(1'b1)) comm_native_shadow (
-    .clk(clk_sys), .rst(rst || !cfg_comm_link_hle || !comm_fw_loaded),
-    .ce(ce_z80), .rom_we(comm_rom_wr), .rom_addr(comm_rom_addr),
-    .rom_data(comm_rom_data),
-    .host_en(m_req && sel_comm_ram), .host_we(m_we),
-    .host_addr(A[10:1]), .host_be(m_be), .host_wdata(m_wdata),
-    .host_rdata(comm_native_host_rdata),
-    .cn(comm_cn), .fg(comm_fg), .zfg(comm_native_zfg),
-    .io_req(comm_native_io_req), .io_write(comm_native_io_write),
-    .io_addr(comm_native_io_addr), .io_wdata(comm_native_io_wdata),
-    .io_ack(comm_native_io_ack), .io_rdata(comm_native_io_rdata),
-    .int_n(1'b1), .dma_window(), .dlc_window(), .unknown_latch(),
-    .authoritative_host_rdata({8'hff, comm_q}), .ram_diverged(),
-    .first_out60(comm_native_first_out60), .first_out60_data()
-);
 wire       comm_cn_clr_we = m_req && m_we && sel_comm_cn && m_be[0] &&
                              cfg_comm_link_hle;   // both cn=0 and cn=1 clear byte 4 to 0x00
 wire       comm_ram_we    = comm_cpu_we || comm_cn_clr_we || (comm_pub_seq != 2'd0);
@@ -1094,7 +1076,7 @@ wire sel_track = sel_ioex && (A[5:3] <= 3'b010) && cfg_has_track;
 wire sel_ppi   = sel_ioex && (A[5:3] == 3'b100) && cfg_has_ppi;
 genvar t;                         // declare outside the generate-for (Quartus 17.0)
 generate
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL_DISABLED
 begin : g_no_v25_trackball
     assign trk_q[0] = 8'hff;
     assign trk_q[1] = 8'hff;
@@ -1183,12 +1165,11 @@ wire [15:0] prot_rom_data = sdr_p0_dout[15:0];
 wire [7:0]  v25_q;
 wire        br_rom_req;
 wire [23:0] br_rom_addr;
-// Generic protection HLE (PROT_SONIC's rev.C level loader, PROT_DBZVRVS,
-// PROT_JLEAGUE, PROT_DARKEDGE, PROT_F1LAP): live for segas32.qsf's scope
-// (GAME_ONLY_STD -- Sonic uses PROT_SONIC), unreachable for segas32v25's
-// ga2/arabfgt (both PROT_NONE, no generic protection board at all).
+// Generic protection HLE for the supported production parents: Sonic's rev-C
+// level loader and Dark Edge's VBlank work-RAM sequence. Dormant responders
+// for excluded titles are deliberately absent from the universal image.
 generate
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL_DISABLED
     begin : g_no_generic_prot
         assign pr_req       = 1'b0;
         assign pr_we        = 1'b0;
@@ -1217,8 +1198,8 @@ generate
 `endif
 endgenerate
 
-// Burning Rival string-copy responder: retained by the standard profile and
-// selected only by PROT_BRIVAL; tied off in the real-V25 profile.
+// Burning Rival string-copy responder: retained by the universal profile and
+// selected only by PROT_BRIVAL.
 generate
     if (GAME_ONLY && !GAME_ONLY_STD) begin : g_game_no_brival
         assign br_trap = 1'b0;
@@ -1244,7 +1225,7 @@ generate
     end
 endgenerate
 
-`ifdef S32_REAL_V25
+`ifdef S32_V25_HW
 wire [15:3] v25_rom_addr;
 wire        v25_p5_req;
 // V25 program-fetch address to SDRAM port 5.
@@ -1272,7 +1253,7 @@ s32_v25 v25 (
 
 // ---------------------------------------------------------------------------
 
-`ifdef S32_REAL_V25
+`ifdef S32_V25_HW
 // Register the V25 request/address before the clk_sys-to-SDRAM bridge.  The
 // cache and SDRAM side tolerate the one-cycle request latency.
 reg        sdr_p5_req_r;
@@ -1592,7 +1573,7 @@ always @(posedge clk_sys) begin
                 // MSM6253 serial output is wired to D7, not D0 (MAME
                 // msm6253 d7_r); audit R20 IO-3. sel_track is already
                 // cfg_has_track-gated at its own declaration (0 whenever a
-                // descriptor has no trackball, e.g. every segas32v25 game),
+                // descriptor has no trackball, e.g. every V25-selected game),
                 // so a single branch is correct for every profile -- the
                 // former `if (GAME_ONLY)` special case here dated from when
                 // GAME_ONLY meant "no trackball board at all" (the old

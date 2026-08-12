@@ -253,7 +253,7 @@ wire [15:3] cache_rom_addr;
 wire [63:0] cache_rom_data;
 wire        cache_rom_ack;
 
-`ifdef S32_REAL_V25
+`ifdef S32_V25_HW
 s32_v25_rom_line_buffer program_cache (
 `elsif S32_GAME_ONLY
 s32_v25_rom_line_buffer program_cache (

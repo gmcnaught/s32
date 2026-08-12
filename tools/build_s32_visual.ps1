@@ -59,7 +59,9 @@ $defines = @(
     "+define+S32_EXTERNAL_CLOCKS",
     "+define+S32_SYSTEM32_ONLY",
     "+define+S32_PROFILE_STANDARD",
-    "+define+S32_GAME_ONLY_STD"
+    "+define+S32_GAME_ONLY_STD",
+    "+define+S32_UNIVERSAL",
+    "+define+S32_V25_HW"
 )
 $warnings = @(
     "-Wno-fatal", "-Wno-WIDTHTRUNC", "-Wno-WIDTHEXPAND", "-Wno-UNOPTFLAT",

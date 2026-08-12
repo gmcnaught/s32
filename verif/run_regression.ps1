@@ -392,7 +392,6 @@ $FullCoreSources = @(
     "rtl/audio/s32_multipcm.sv",
     "rtl/audio/s32_audio_mix.sv",
     "rtl/audio/s32_soundsys.sv",
-    "rtl/comm/epr14084/s32_epr14084_shadow.sv",
     "rtl/io/s32_io.sv",
     "rtl/prot/s32_prot.sv",
     "verif/common/jt12_stub.v",
@@ -404,10 +403,9 @@ Push-Location $Root
 try {
     Write-RunLine "ModelSim native regression (no Cygwin/Icarus dependency)"
 
-    Write-Tier 1 "full-core lint compile (universal + System32-only profile)"
-    Run-HdlTest "t01_lint_universal" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE UNIVERSAL LINT PASS" @("SIMULATION")
-    Run-HdlTest "t01_lint_standard" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE STANDARD PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING")
-    Write-RunLine "CORE BUILD PROFILES: PASS"
+    Write-Tier 1 "full-core lint compile (universal profile)"
+    Run-HdlTest "t01_lint_universal" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE UNIVERSAL PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_UNIVERSAL", "S32_V25_HW", "S32_GAME_ONLY_STD", "S32_PCB_TIMING")
+    Write-RunLine "CORE UNIVERSAL PROFILE: PASS"
 
     Write-Tier 2 "V60 smoke test"
     Run-HdlTest "t01c_epr_shadow" "tb_epr14084_shadow" @("rtl/comm/epr14084/s32_epr14084_shadow.sv","verif/common/tb_epr14084_shadow.sv") "EPR14084 SHADOW PASS" @("SIMULATION")
@@ -422,11 +420,9 @@ try {
     Write-Tier 3 "Sonic MOVCFU/RSR/dispatcher continuation"
     Run-HdlTest "t03c_v60_sonic_dispatch" "tb_v60_sonic_dispatch" ($V60Sources + "verif/v60/tb_v60_sonic_dispatch.sv") "SONIC DISPATCH PASS"
 
-    Write-Tier 4 "full-core integration boot (universal + System32-only profile)"
-    Run-HdlTest "t04_boot_universal" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION") @("-novopt")
-    Run-HdlTest "t04_boot_standard" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_PCB_TIMING") @("-novopt")
-    Run-HdlTest "t04_boot_standard_fast_v60" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING", "S32_TEST_FAST_V60") @("-novopt")
-    Write-RunLine "CORE BUILD-PROFILE BOOTS: PASS"
+    Write-Tier 4 "full-core integration boot (universal profile)"
+    Run-HdlTest "t04_boot_universal" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_UNIVERSAL", "S32_V25_HW", "S32_GAME_ONLY_STD", "S32_PCB_TIMING") @("-novopt")
+    Write-RunLine "CORE UNIVERSAL BOOT: PASS"
 
     Write-Tier 5 "V60 differential co-sim vs independent reference ($Seeds seeds)"
     Run-Differential $Seeds
@@ -518,6 +514,10 @@ try {
     Write-Tier 17 "ROM loader reset / mapping / completion gating"
     Run-HdlTest "t17_rom_loader" "tb_rom_loader" @("rtl/s32_pkg.sv", "rtl/mem/s32_rom_loader.sv", "verif/common/tb_rom_loader.sv") "ROM LOADER PASS"
     Run-HdlTest "t17_rom_loader_wide" "tb_rom_loader_wide" @("rtl/s32_pkg.sv", "rtl/mem/s32_rom_loader.sv", "verif/common/tb_rom_loader_wide.sv") "WIDE ROM LOADER PASS"
+    Run-HdlTest "t17_rom_loader_wave_clear" "tb_rom_loader_wave_clear" @(
+        "rtl/s32_pkg.sv", "rtl/mem/s32_rom_loader.sv",
+        "verif/common/tb_rom_loader_wave_clear.sv"
+    ) "ROM LOADER WAVE CLEAR PASS"
 
     Write-Tier 18 "EEPROM persistence + radial analog-gun response + MAME 8255 direction/latch contract"
     Run-HdlTest "t18_eeprom" "tb_eeprom_nvram" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_eeprom_nvram.sv") "EEPROM NVRAM PASS"
@@ -529,6 +529,10 @@ try {
 
     Write-Tier 20 "RF5C68 dual-port wave RAM / loop-fetch / channel cadence"
     Run-HdlTest "t20_rf5c68" "tb_rf5c68" @("rtl/video/s32_big_dpram.sv", "rtl/audio/s32_rf5c68.sv", "verif/common/tb_rf5c68.sv") "RF5C68 PASS"
+    Run-HdlTest "t20_rf5c68_external" "tb_rf5c68_external" @(
+        "rtl/video/s32_big_dpram.sv", "rtl/audio/s32_rf5c68.sv",
+        "verif/common/tb_rf5c68_external.sv"
+    ) "RF5C68 EXTERNAL PASS"
 
     Write-Tier 21 "palette RAM alias / byte-enable / write-both / dual-port timing"
     Run-HdlTest "t21_palette" "tb_palette" @("rtl/video/s32_palette.sv", "verif/common/tb_palette.sv") "PALETTE PASS"
@@ -564,6 +568,9 @@ try {
     Write-Tier 26 "SDRAM CL2 capture / row-open ROM write throughput / burst ordering"
     Run-HdlTest "t26_sdram" "tb_sdram" @("rtl/mem/sdram.sv", "verif/common/tb_sdram.sv") "SDRAM CAPTURE PASS"
     Run-HdlTest "t26_sdram_write" "tb_sdram_write_throughput" @("rtl/mem/sdram.sv", "verif/common/tb_sdram_write_throughput.sv") "SDRAM WRITE THROUGHPUT PASS"
+    Run-HdlTest "t26_sdram_write_mux2" "tb_sdram_write_mux2" @(
+        "rtl/mem/s32_sdram_write_mux2.sv", "verif/common/tb_sdram_write_mux2.sv"
+    ) "SDRAM WRITE MUX2 PASS" @("SIMULATION")
     Run-HdlTest "t26_sdram_tile_deadline" "tb_sdram_tile_deadline" @(
         "rtl/mem/sdram.sv", "verif/common/tb_sdram_tile_deadline.sv"
     ) "SDRAM TILE DEADLINE PASS"
@@ -627,13 +634,8 @@ try {
         "rtl/s32_pkg.sv", "rtl/s32_core.sv",
         "verif/common/tb_v60_exec_cadence.sv"
     )
-    # The cadence module is shared RTL, but compile it through both shipping
-    # macro shapes so a profile-only edit cannot accidentally bypass the fix.
-    Run-HdlTest "t33_v60_exec_cadence_standard" "tb_v60_exec_cadence" $execCadenceSources "V60 EXEC CADENCE PASS" @(
-        "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING"
-    )
-    Run-HdlTest "t33_v60_exec_cadence_v25" "tb_v60_exec_cadence" $execCadenceSources "V60 EXEC CADENCE PASS" @(
-        "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY", "S32_REAL_V25", "S32_PCB_TIMING"
+    Run-HdlTest "t33_v60_exec_cadence_universal" "tb_v60_exec_cadence" $execCadenceSources "V60 EXEC CADENCE PASS" @(
+        "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_UNIVERSAL", "S32_V25_HW", "S32_GAME_ONLY_STD", "S32_PCB_TIMING"
     )
     Run-HdlTest "t33_v60_sonic_burst_timing" "tb_v60_sonic_burst_timing" @(
         "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",

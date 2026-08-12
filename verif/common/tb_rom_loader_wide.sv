@@ -25,10 +25,6 @@ reg sdr_wr_ack = 1'b0;
 wire v25_wr;
 wire [15:0] v25_waddr;
 wire [7:0] v25_wdata;
-wire comm_rom_wr;
-wire [14:0] comm_rom_addr;
-wire [7:0] comm_rom_data;
-wire comm_fw_loaded;
 wire eep_wr;
 wire [5:0] eep_waddr;
 wire [15:0] eep_wdata;
@@ -43,8 +39,6 @@ s32_rom_loader #(.WIDE(1)) dut (
     .sdr_wr_req(sdr_wr_req), .sdr_wr_addr(sdr_wr_addr),
     .sdr_wr_din(sdr_wr_din), .sdr_wr_be(sdr_wr_be), .sdr_wr_ack(sdr_wr_ack),
     .v25_wr(v25_wr), .v25_waddr(v25_waddr), .v25_wdata(v25_wdata),
-    .comm_rom_wr(comm_rom_wr), .comm_rom_addr(comm_rom_addr),
-    .comm_rom_data(comm_rom_data), .comm_fw_loaded(comm_fw_loaded),
     .eep_wr(eep_wr), .eep_waddr(eep_waddr), .eep_wdata(eep_wdata),
     .eep_loaded(eep_loaded), .rom_loaded(rom_loaded)
 );
@@ -84,22 +78,6 @@ initial begin
     @(negedge clk); rst = 1'b0; mem_ready = 1'b1;
     repeat (2) @(posedge clk);
 
-    // Rad Rally's legal EPR image is delivered as even/odd planes. Neither
-    // plane alone may authorize the native diagnostic shadow, and authority
-    // is committed only with the final index-0 descriptor.
-    send_word(8'd13, 27'd0, 16'hBBAA);
-    check(comm_rom_wr && comm_rom_addr === 15'd0 && comm_rom_data === 8'hAA,
-          "wide comm even plane");
-    @(negedge clk); ioctl_download = 1'b0;
-    repeat (2) @(posedge clk);
-    check(!comm_fw_loaded, "even comm plane alone is incomplete");
-    send_word(8'd14, 27'd0, 16'hDDCC);
-    check(comm_rom_wr && comm_rom_addr === 15'd0 && comm_rom_data === 8'hDD,
-          "wide comm odd plane");
-    @(negedge clk); ioctl_download = 1'b0;
-    repeat (2) @(posedge clk);
-    check(!comm_fw_loaded, "comm firmware waits for descriptor commit");
-
     // Descriptor: b0=has_v25|has_adc, b1=gun_aim|dual_comm_ff,
     // b2=GA2 protection, b3=sprite-bank metadata.
     for (i = 0; i < 32; i = i + 1) begin
@@ -130,19 +108,10 @@ initial begin
     @(negedge clk); ioctl_download = 1'b0;
     @(posedge clk); #1;
     check(rom_loaded, "wide download releases boot gate");
-    check(comm_fw_loaded, "both comm planes commit with descriptor");
 
     send_word(8'd2, 27'd0, 16'h1234);
     check(eep_wr && eep_waddr === 6'd0 && eep_wdata === 16'h1234 &&
           eep_loaded, "wide EEPROM word");
-
-    // A subsequent non-Rad-Rally descriptor must replace, not inherit, the
-    // prior firmware authorization.
-    for (i = 0; i < 32; i = i + 1)
-        send_word(8'd0, i*2, 16'h0000);
-    @(negedge clk); ioctl_download = 1'b0;
-    @(posedge clk); #1;
-    check(!comm_fw_loaded, "next descriptor clears stale comm firmware gate");
 
     if (errors == 0) $display("WIDE ROM LOADER PASS");
     else $display("WIDE ROM LOADER FAIL (%0d errors)", errors);

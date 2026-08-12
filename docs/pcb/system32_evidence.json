@@ -4,7 +4,7 @@
     "family": "Sega System 32",
     "board": "837-7428 / 171-5964E",
     "revision": "standard single-screen board; game/revision must be selected by descriptor",
-    "production_profiles": ["standard", "v25"],
+    "production_profiles": ["universal"],
     "excluded_from_production": ["Multi 32"],
     "physical_pcb_available": false,
     "accuracy_claim": "source-backed PCB-informed emulation; not a universal cycle-accurate claim"
@@ -72,7 +72,7 @@
       "confidence": "medium",
       "status": "implemented",
       "sources": ["research_32_md"],
-      "implementation": ["rtl/s32_core.sv", "segas32v25.qsf", "segas32.qsf"]
+      "implementation": ["rtl/s32_core.sv", "segas32.qsf"]
     },
     {
       "id": "custom-asic-wait-states",

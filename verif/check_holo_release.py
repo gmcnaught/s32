@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Static contract for the current Holosseum hardware release profile.
 
-2026-08-07: split back into two dedicated profiles -- segas32v25.qsf (ga2,
-arabfgt: real V25) and segas32.qsf (Sonic, Holo, and Spider-Man: HLE only).
-Holo has no V25 protection hardware, so it belongs to segas32's scope.
+The universal segas32 profile contains the shared standard-board hardware and
+the descriptor-selected V25 implementation. Holo does not select V25.
 """
 
 from pathlib import Path
@@ -14,8 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
 assert 'VERILOG_MACRO "S32_SYSTEM32_ONLY=1"' in qsf, "release is not System 32-only"
 assert 'VERILOG_MACRO "S32_PROFILE_STANDARD=1"' in qsf
-assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in qsf, \
-    "segas32.qsf must not compile the real V25 core -- none of its games have V25 hardware"
+assert 'VERILOG_MACRO "S32_UNIVERSAL=1"' in qsf
+assert 'VERILOG_MACRO "S32_V25_HW=1"' in qsf
+assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in qsf
 
 matches = []
 for path in (ROOT / "mra").glob("*.mra"):

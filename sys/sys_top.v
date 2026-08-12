@@ -1193,6 +1193,21 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 	);
 	`endif
 
+	// The scaler's DE comes directly from an Ascal output M10K.  Register the
+	// complete video bundle once before HDMI OSD so data and sync stay aligned,
+	// while the OSD's counter/control paths get a full clk_hdmi cycle instead
+	// of routing across the die from the RAM output.  This is a latency-only
+	// boundary: every OSD input is delayed together, so output geometry and
+	// HDMI signal relationships are unchanged.
+	reg [23:0] hdmi_data_osd_in;
+	reg        hdmi_de_osd_in, hdmi_vs_osd_in, hdmi_hs_osd_in;
+	always @(posedge clk_hdmi) begin
+		hdmi_data_osd_in <= hdmi_data_mask;
+		hdmi_de_osd_in   <= hdmi_de_mask;
+		hdmi_vs_osd_in   <= hdmi_vs_mask;
+		hdmi_hs_osd_in   <= hdmi_hs_mask;
+	end
+
 	wire [23:0] hdmi_data_osd;
 	wire        hdmi_de_osd, hdmi_vs_osd, hdmi_hs_osd;
 
@@ -1205,10 +1220,10 @@ cyclonev_hps_interface_peripheral_i2c hdmi_i2c
 		.io_din(io_din),
 
 		.clk_video(clk_hdmi),
-		.din(hdmi_data_mask),
-		.hs_in(hdmi_hs_mask),
-		.vs_in(hdmi_vs_mask),
-		.de_in(hdmi_de_mask),
+		.din(hdmi_data_osd_in),
+		.hs_in(hdmi_hs_osd_in),
+		.vs_in(hdmi_vs_osd_in),
+		.de_in(hdmi_de_osd_in),
 
 		.dout(hdmi_data_osd),
 		.hs_out(hdmi_hs_osd),

@@ -59,7 +59,7 @@ fi
     -Wno-SYNCASYNCNET -Wno-MULTIDRIVEN -Wno-BLKANDNBLK -Wno-CASEOVERLAP \
     -Wno-LATCH -Wno-COMBDLY \
     +define+SIMULATION +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_STANDARD \
-    +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
+    +define+S32_UNIVERSAL +define+S32_V25_HW +define+S80X86_PSEUDO_286_INT=0 \
     "-DMICROCODE_ROM_PATH=\"$mc\"" \
     --top-module tb_core_v25sdram --Mdir "$build_dir/obj_dir" -o Vtb_core_v25sdram \
     rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \

@@ -1,5 +1,5 @@
 //============================================================================
-//  Real-V25 INTEGRATION test (S32_REAL_V25).
+//  Real-V25 INTEGRATION test (S32_UNIVERSAL/S32_V25_HW).
 //
 //  Proves the *real* NEC V25 core (s32_v25_cpu + s80x86), instantiated inside
 //  s32_core, fetches its encrypted program through s32_core's SDRAM port 5
@@ -13,7 +13,7 @@
 //  produce the string rather than racing it, then stores the checked bytes to
 //  work RAM.  PASS requires the real-firmware wake bytes to arrive via the core.
 //
-//  Build (Verilator, WSL): +define+S32_REAL_V25 + the s80x86 manifest +
+//  Build (Verilator, WSL): +define+S32_UNIVERSAL +define+S32_V25_HW + the s80x86 manifest +
 //  MICROCODE_ROM_PATH.  See verif/v25/run_v25_integration.sh.
 //============================================================================
 `timescale 1ns/1ps

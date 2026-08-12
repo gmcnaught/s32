@@ -373,7 +373,11 @@ always @(posedge clk) begin
         end
         D_ER: if (!DDRAM_BUSY) begin
             dwe <= 1'b1;
-            if (beat == beats) begin dwe <= 0; er_ack <= 1'b1; dst <= D_IDLE; end
+            // Erase always spans the fixed 128-word line loaded in D_IDLE.
+            // Keep the terminal test local to beat; comparing against the
+            // variable beats register was the measured critical cone into
+            // the D_ER state bit.
+            if (&beat) begin dwe <= 0; er_ack <= 1'b1; dst <= D_IDLE; end
             else begin beat <= beat + 1'd1; daddr <= daddr + 1'd1; end
         end
         D_WR: if (!DDRAM_BUSY) begin

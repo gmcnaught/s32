@@ -31,58 +31,45 @@ class GlobalProfileContractTests(unittest.TestCase):
             self.assertNotIn(setname, removed, path.name)
             self.assertNotIn(parent, removed, path.name)
 
-    def test_exactly_two_quartus_profiles_exist(self) -> None:
-        """2026-08-06: split back into two dedicated profiles -- segas32v25
-        (ga2/arabfgt, real V25) and segas32 (standard non-V25 games,
-        including Sonic and Slip Stream, HLE only). See PROFILE_CONTRACT.md for the routing rules this
-        protects."""
-        for name in ("segas32v25.qpf", "segas32v25.qsf", "segas32.qpf", "segas32.qsf"):
+    def test_exactly_one_universal_quartus_profile_exists(self) -> None:
+        """Every supported parent is routed through the universal revision."""
+        for name in ("segas32.qpf", "segas32.qsf"):
             self.assertTrue((ROOT / name).is_file(), name)
+        for name in ("segas32v25.qpf", "segas32v25.qsf"):
+            self.assertFalse((ROOT / name).exists(), name)
         for obsolete in ("s32", "s32v25", "Arcade-SegaSystem32", "s32GoldenAxe", "s32ArabianFight"):
             self.assertFalse((ROOT / f"{obsolete}.qpf").exists(), obsolete)
             self.assertFalse((ROOT / f"{obsolete}.qsf").exists(), obsolete)
 
-    def test_profile_qsfs_carry_the_right_v25_shape(self) -> None:
-        v25 = (ROOT / "segas32v25.qsf").read_text(encoding="utf-8")
-        self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', v25)
-        self.assertIn('VERILOG_MACRO "S32_REAL_V25=1"', v25)
-        self.assertIn('VERILOG_MACRO "S32_GAME_ONLY=1"', v25)
-        self.assertNotIn('VERILOG_MACRO "S32_PROFILE_V25=1"', v25)
-        self.assertNotIn('VERILOG_MACRO "S32_GAME_ONLY_STD=1"', v25)
+    def test_universal_qsf_carries_both_hardware_shapes(self) -> None:
+        qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
+        for macro in ("S32_PROFILE_STANDARD=1", "S32_GAME_ONLY_STD=1",
+                      "S32_UNIVERSAL=1", "S32_V25_HW=1",
+                      "S32_V25_MLAB_EEPROM=1", "S32_V25_MLAB_FIFO=1"):
+            self.assertIn(f'VERILOG_MACRO "{macro}"', qsf)
+        self.assertNotIn('VERILOG_MACRO "S32_REAL_V25=1"', qsf)
+        self.assertNotIn('VERILOG_MACRO "S32_PROFILE_V25=1"', qsf)
+        self.assertIn("QIP_FILE rtl/cpu/v25/v25.qip", qsf)
+        self.assertIn('VERILOG_MACRO "MISTER_DISABLE_SHADOWMASK=1"', qsf)
+        for legacy in ("S32_GA2_ONLY", "S32_GOLDENAXE_ONLY", "S32_ARABFIGHT_ONLY",
+                       "S32_V25_GAME_ONLY", "S32_SONIC_ONLY"):
+            self.assertNotIn(f'VERILOG_MACRO "{legacy}=1"', qsf)
 
-        std = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
-        self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', std)
-        self.assertIn('VERILOG_MACRO "S32_GAME_ONLY_STD=1"', std)
-        self.assertNotIn('VERILOG_MACRO "S32_REAL_V25=1"', std)
-        self.assertNotIn('VERILOG_MACRO "S32_PROFILE_V25=1"', std)
-        self.assertNotIn('VERILOG_MACRO "S32_GAME_ONLY=1"', std)
-        self.assertIn('VERILOG_MACRO "S32_V25_MLAB_EEPROM=1"', v25)
-        self.assertNotIn('VERILOG_MACRO "S32_V25_MLAB_EEPROM=1"', std)
-
-        for standard in (v25, std):
-            self.assertIn('VERILOG_MACRO "MISTER_DISABLE_SHADOWMASK=1"', standard)
-            for legacy in ("S32_GA2_ONLY", "S32_GOLDENAXE_ONLY", "S32_ARABFIGHT_ONLY",
-                            "S32_V25_GAME_ONLY", "S32_SONIC_ONLY"):
-                self.assertNotIn(f'VERILOG_MACRO "{legacy}=1"', standard)
-
-    def test_standard_profile_is_hle_only_and_has_no_real_v25_qip(self) -> None:
-        """segas32 may retain the mailbox HLE, but never the real V25 CPU."""
+    def test_universal_profile_contains_real_v25_and_hle_fallback(self) -> None:
+        """The descriptor selects real V25 or HLE behavior at runtime."""
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
         self.assertIn("active_board.has_v25          = board_desc.has_v25;", top)
         self.assertIn("s32_v25 v25 (", core)
-        self.assertNotIn("QIP_FILE rtl/cpu/v25/v25.qip", qsf)
-        self.assertNotIn('VERILOG_MACRO "S32_REAL_V25=1"', qsf)
+        self.assertIn("QIP_FILE rtl/cpu/v25/v25.qip", qsf)
+        self.assertIn('VERILOG_MACRO "S32_UNIVERSAL=1"', qsf)
 
     def test_profile_only_sources_are_mutually_exclusive(self) -> None:
-        v25 = (ROOT / "segas32v25.qsf").read_text(encoding="utf-8")
         std = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
         shared = (ROOT / "files.qip").read_text(encoding="utf-8")
-        self.assertIn("QIP_FILE rtl/cpu/v25/v25.qip", v25)
-        self.assertNotIn("SYSTEMVERILOG_FILE rtl/prot/s32_prot.sv", v25)
         self.assertIn("SYSTEMVERILOG_FILE rtl/prot/s32_prot.sv", std)
-        self.assertNotIn("QIP_FILE rtl/cpu/v25/v25.qip", std)
+        self.assertIn("QIP_FILE rtl/cpu/v25/v25.qip", std)
         self.assertNotIn("SYSTEMVERILOG_FILE rtl/prot/s32_prot.sv", shared)
         self.assertNotIn("QIP_FILE rtl/cpu/v25/v25.qip", shared)
 
@@ -96,7 +83,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("s32_v60_bus vbus", core)
         self.assertIn(".clk(clk_sys), .ce(ce_cpu), .rst(rst)", core)
         self.assertIn("SYSTEMVERILOG_FILE rtl/s32_core.sv", files_qip)
-        for profile in (ROOT / "segas32.qsf", ROOT / "segas32v25.qsf"):
+        for profile in (ROOT / "segas32.qsf",):
             text = profile.read_text(encoding="utf-8")
             self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
             self.assertIn('VERILOG_MACRO "S32_SYSTEM32_ONLY=1"', text)
@@ -133,7 +120,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertNotIn("R_PIXEL_DATA, R_DONE", sprite)
         self.assertIn("pixel_pen8     <= pixrow", sprite)
         self.assertIn("rs <= R_EMIT", sprite)
-        for profile in (ROOT / "segas32.qsf", ROOT / "segas32v25.qsf"):
+        for profile in (ROOT / "segas32.qsf",):
             text = profile.read_text(encoding="utf-8")
             self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
 
@@ -145,7 +132,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn(".pause(1'b0)", top)
 
     def test_every_emitted_mra_routes_to_a_known_profile(self) -> None:
-        self.assertEqual(RBF_BY_PARENT, {"ga2": "segas32v25", "arabfgt": "segas32v25"})
+        self.assertEqual(RBF_BY_PARENT, {parent: "segas32" for parent in GAMES})
         seen = set()
         for path in MRA_DIR.glob("*.mra"):
             root = ElementTree.parse(path).getroot()
@@ -153,7 +140,7 @@ class GlobalProfileContractTests(unittest.TestCase):
             if parent not in GAMES:
                 continue
             seen.add(parent)
-            expected_rbf = RBF_BY_PARENT.get(parent, "segas32")
+            expected_rbf = RBF_BY_PARENT[parent]
             self.assertEqual(root.findtext("rbf"), expected_rbf, path.name)
         self.assertTrue(seen)
         self.assertTrue(seen <= set(GAMES))

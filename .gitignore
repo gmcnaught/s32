@@ -15,6 +15,12 @@ roms/
 /.playwright-mcp/
 /artifacts/
 *.tmp
+*.o
+*.exe
+/work-obj*.cf
+/nvram/
+/.mister/
+/*_object_writes.txt
 
 # Build outputs (Quartus / simulation), for later development phases
 output_files/

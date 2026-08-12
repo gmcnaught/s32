@@ -66,9 +66,9 @@ def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0,
 
 GAMES = {
     # parent: (descriptor, per-set list built from clones automatically)
-    # 2026-08-06: two dedicated profiles now exist -- segas32v25 (real V25:
-    # ga2/arabfgt) and segas32 (HLE only). Sonic and Slip Stream are standard
-    # profile games; Slip Stream also exercises the descriptor-gated ADC.
+    # One universal production profile contains both standard-board
+    # peripherals and the real V25 implementation. Runtime descriptor fields
+    # select the hardware used by each supported parent.
     # game: the resource blocker that dropped it (the V60 ROM cache's
     # prot_rom_grant tie-off assumed no game needed the generic protection
     # ROM-read arbitration Sonic's PROT_SONIC responder uses) is fixed --
@@ -181,9 +181,8 @@ BUTTON_COUNTS = {
     "spidman": 2,
     "slipstrm": 3,
 }
-# 2026-08-07: two dedicated profiles -- ga2/arabfgt (real V25 hardware) route
-# to segas32v25; all other emitted parents route to segas32 by default.
-RBF_BY_PARENT = {"ga2": "segas32v25", "arabfgt": "segas32v25"}
+# All supported parents use the one universal production image.
+RBF_BY_PARENT = {parent: "segas32" for parent in GAMES}
 
 UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
 
@@ -408,14 +407,6 @@ def gen(setname, data, outdir):
         lines.append(f'    <part name="{escape(ee["loads"][0]["file"])}" crc="{ee["loads"][0]["crc"]}"/>')
         lines.append('  </rom>')
     lines.append('  <nvram index="3" size="128"/>')
-
-    # Legal diagnostic firmware is delivered before the descriptor commit.
-    # Identity is pinned to MAME 0.289; RTL keeps the existing HLE authoritative.
-    if parent == "radr":
-        for fw_index in (13, 14):
-            lines.append(f'  <rom index="{fw_index}" zip="{rom_zips}" md5="none">')
-            lines.append('    <part name="epr-14084.17" crc="f14ed074"/>')
-            lines.append('  </rom>')
 
     hexd = bytes(d).hex().upper()
     lines.append('  <rom index="0">')

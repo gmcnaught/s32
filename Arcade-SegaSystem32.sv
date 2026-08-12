@@ -121,34 +121,15 @@ wire [15:0] joystick_r_analog_0;
 wire  [7:0] paddle_0, paddle_1;
 wire [24:0] ps2_mouse;
 wire        core_vs;
-// The two universal RBFs have fixed profile boundaries. The standard image
-// rejects V25/Multi 32 hardware; the V25 image accepts only the two protected
-// System 32 boards and keeps their table selector descriptor-driven.
+// The single universal RBF accepts every supported single-screen System 32
+// descriptor. Runtime fields select the real V25 path for GA2/Arabian Fight;
+// all other supported sets retain the standard-board peripherals and HLEs.
 always @(*) begin
     active_board = board_desc;
-`ifdef S32_REAL_V25
+`ifdef S32_PROFILE_STANDARD
     active_board.multi32          = 1'b0;
-    active_board.has_v25          = 1'b1;
-    active_board.v25_table        = board_desc.v25_table;
-    active_board.has_adc          = 1'b0;
-    active_board.has_track        = 1'b0;
-    active_board.has_ppi          = 1'b1;
-    active_board.has_dsp_hle      = 1'b0;
-    active_board.dual_pcb         = 1'b0;
-    active_board.prot_sel         = PROT_NONE;
-    active_board.sprite_bank_valid = 1'b1;
-    active_board.sprite_bank_mask = 2'b11;
-    active_board.flip_y           = 1'b0;
-    active_board.gun_aim          = 1'b0;
-    active_board.coin_swap        = 1'b0;
-    active_board.analog_profile   = ANALOG_CENTERED;
-    active_board.gear_toggle      = 1'b0;
-    active_board.comm_link_hle    = 1'b0;
-    active_board.digital_profile  = DIGITAL_GENERIC;
-`elsif S32_PROFILE_STANDARD
-    active_board.multi32          = 1'b0;
-    // The standard image has no real V25 CPU/QIP, but retains the lightweight
-    // descriptor-selected mailbox HLE for non-real-V25 board variants.
+    // The universal image contains the real V25 QIP; descriptor bits select
+    // it for GA2/Arabian Fight and retain HLE behavior for other variants.
     active_board.has_v25          = board_desc.has_v25;
     active_board.v25_table        = board_desc.v25_table;
 `endif
@@ -249,13 +230,13 @@ reg ce_cpu;
 wire ce_z80, ce_fm, ce_pcm;
 reg [15:0] acc_cpu;
 wire is_multi32 = active_board.multi32;
-// CPU Turbo is retired in the single merged profile: s32.sdc's V60 register-
+// CPU Turbo is retired in the universal profile: s32.sdc's V60 register-
 // to-register multicycle relaxation now applies unconditionally, and that
 // relaxation is only sound with fixed, single-cycle-safe CE spacing (no
 // back-to-back clk_sys edges) for every game, not just the two V25 titles --
 // see s32.sdc's s32_game_fixed_ce comment. Every board therefore runs at a
 // fixed per-board cadence: arabfgt/ga2 keep the exact measured constants
-// carried over from the dedicated V25 profile this replaces (real-hardware
+// carried over from the earlier V25-only experiment (real-hardware
 // timing, including Arabian Fight's clk_sys/2 cadence for its 12.49
 // clocks/instruction non-pipelined V60 attract-loop overrun); every other
 // board keeps its existing base rate with the multiplier locked at 1x.
@@ -332,18 +313,22 @@ wire        sw_req, sw_ack;
 wire [24:1] sw_addr;
 wire [15:0] sw_din;
 wire  [1:0] sw_be;
+wire        wave_sw_req, wave_sw_ack;
+wire [24:1] wave_sw_addr;
+wire [15:0] wave_sw_din;
+wire  [1:0] wave_sw_be;
+wire        mem_sw_req, mem_sw_ack;
+wire [24:1] mem_sw_addr;
+wire [15:0] mem_sw_din;
+wire  [1:0] mem_sw_be;
 wire        v25_wr;
 wire [15:0] v25_waddr;
 wire  [7:0] v25_wdata;
-wire comm_rom_wr;
-wire [14:0] comm_rom_addr;
-wire [7:0] comm_rom_data;
-wire comm_fw_loaded;
 wire        eep_wr;
 wire  [5:0] eep_waddr;
 wire [15:0] eep_wdata;
 
-s32_rom_loader #(.WIDE(1)) loader (
+s32_rom_loader #(.WIDE(1), .CLEAR_RF_WAVE(1)) loader (
     .clk(clk_sys), .rst(~pll_locked),
     .mem_ready(sdram_ready_sys),
     .ioctl_download(ioctl_download), .ioctl_index(ioctl_index[7:0]),
@@ -353,11 +338,18 @@ s32_rom_loader #(.WIDE(1)) loader (
     .sdr_wr_req(sw_req), .sdr_wr_addr(sw_addr), .sdr_wr_din(sw_din),
     .sdr_wr_be(sw_be), .sdr_wr_ack(sw_ack),
     .v25_wr(v25_wr), .v25_waddr(v25_waddr), .v25_wdata(v25_wdata),
-    .comm_rom_wr(comm_rom_wr), .comm_rom_addr(comm_rom_addr),
-    .comm_rom_data(comm_rom_data),
-    .comm_fw_loaded(comm_fw_loaded),
     .eep_wr(eep_wr), .eep_waddr(eep_waddr), .eep_wdata(eep_wdata),
     .eep_loaded(), .rom_loaded(rom_loaded)
+);
+
+s32_sdram_write_mux2 sdram_write_mux (
+    .clk(clk_sys), .rst(~pll_locked),
+    .c0_req(sw_req), .c0_addr(sw_addr), .c0_data(sw_din), .c0_be(sw_be),
+    .c0_ack(sw_ack),
+    .c1_req(wave_sw_req), .c1_addr(wave_sw_addr),
+    .c1_data(wave_sw_din), .c1_be(wave_sw_be), .c1_ack(wave_sw_ack),
+    .d_req(mem_sw_req), .d_addr(mem_sw_addr), .d_data(mem_sw_din),
+    .d_be(mem_sw_be), .d_ack(mem_sw_ack)
 );
 
 /////////////////////////////////   SDRAM   ///////////////////////////////////
@@ -382,7 +374,8 @@ sdram sdram (
     .SDRAM_DQML(SDRAM_DQML), .SDRAM_DQMH(SDRAM_DQMH),
     .SDRAM_nCS(SDRAM_nCS), .SDRAM_nCAS(SDRAM_nCAS),
     .SDRAM_nRAS(SDRAM_nRAS), .SDRAM_nWE(SDRAM_nWE), .SDRAM_CKE(SDRAM_CKE),
-    .wr_req(sw_req), .wr_addr(sw_addr), .wr_din(sw_din), .wr_be(sw_be), .wr_ack(sw_ack),
+    .wr_req(mem_sw_req), .wr_addr(mem_sw_addr), .wr_din(mem_sw_din),
+    .wr_be(mem_sw_be), .wr_ack(mem_sw_ack),
     .p0_req(p0_req), .p0_burst(p0_burst), .p0_addr(p0_addr),
     .p0_dout(p0_dout), .p0_ack(p0_ack),
     .p1_req(p1_req), .p1_addr(p1_addr), .p1_dout(p1_dout), .p1_ack(p1_ack),
@@ -429,32 +422,6 @@ wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[5],
 wire [7:0] sonic_p1a = {5'b11111, ~joystick_2[4], 1'b1, ~joystick_0[4]};
 wire [7:0] p2a_dig = p_dig(joystick_1);
 wire [7:0] sonic_p2a = {7'b1111111, ~joystick_1[4]};
-`ifdef S32_REAL_V25
-// The V25 release has exactly two supported boards (GA2 and Arabian Fight).
-// Neither has a gun, trackball, ADC or alternate standard-profile cabinet
-// wiring. Keep these ports explicitly driven for the shared core interface,
-// but compile out the corresponding input conditioners and their state.
-wire sonic_controls = 1'b0;
-wire [7:0] core_p1a = p1a_dig;
-wire [7:0] core_p2a = p2a_dig;
-wire [7:0] adc_ch [0:7];
-assign adc_ch[0] = 8'h80;
-assign adc_ch[1] = 8'h80;
-assign adc_ch[2] = 8'h80;
-assign adc_ch[3] = 8'h80;
-assign adc_ch[4] = 8'h80;
-assign adc_ch[5] = 8'h80;
-assign adc_ch[6] = 8'h80;
-assign adc_ch[7] = 8'h80;
-wire trk_dv_a [0:2];
-wire signed [8:0] trk_dx_a [0:2];
-wire signed [8:0] trk_dy_a [0:2];
-wire [7:0] trk_btn [0:2];
-assign trk_dv_a[0] = 1'b0; assign trk_dv_a[1] = 1'b0; assign trk_dv_a[2] = 1'b0;
-assign trk_dx_a[0] = 9'sd0; assign trk_dx_a[1] = 9'sd0; assign trk_dx_a[2] = 9'sd0;
-assign trk_dy_a[0] = 9'sd0; assign trk_dy_a[1] = 9'sd0; assign trk_dy_a[2] = 9'sd0;
-assign trk_btn[0] = 8'h00; assign trk_btn[1] = 8'h00; assign trk_btn[2] = 8'h00;
-`else
 wire sonic_controls = active_board.has_track;
 // Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
 // momentary switch or four-position encoding.  Keep this semantic independent
@@ -476,23 +443,10 @@ wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
 // Dark Edge leaves raw player-port bit 0 unused and places its first two
 // buttons on bits 1/2.  Adapt MiSTer's logical B1/B2 here; the remaining
 // three buttons are on the PPI below.  Select from the existing descriptor so
-// this remains a shared Standard-profile implementation, not a game build.
+// this remains a shared universal-profile implementation, not a game build.
 wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
                            ~joystick_0[5], ~joystick_0[4], 1'b1};
-`ifdef S32_REAL_V25
-// The real-V25 profile has no positional gun. The standard profile retains
-// one shared conditioner for descriptor-selected Jurassic Park and Alien3;
-// both games therefore use exactly the same sticks, inversion, curve,
-// deadzones, saturation, smoothing and four ADC-channel assignments.
-// active_board.gun_aim is loaded from runtime descriptor data, so Quartus
-// cannot prove it constant on its own and would otherwise always pay for
-// the full curve-LUT/divider FSM in s32_gun_aim below regardless of which
-// games a profile ships. Force a real compile-time constant so that module
-// is provably prunable.
-wire gun_aim_active = 1'b0;
-`else
 wire gun_aim_active = active_board.gun_aim;
-`endif
 wire alien3_controls = active_board.gun_aim && active_board.coin_swap;
 // Alien 3 has no cabinet Start inputs.  MAME's alien3 port map leaves
 // SERVICE12 bit 5 unused and repurposes generic Start 1 (bit 4) as Service 2;
@@ -662,8 +616,6 @@ assign trk_dx_a[1] = trk_velx[1];
 assign trk_dy_a[1] = trk_vely[1];
 assign trk_dx_a[2] = trk_velx[2];
 assign trk_dy_a[2] = trk_vely[2];
-`endif
-
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.
 // Test = the OSD "Service Mode" toggle OR the mappable Test button (j12);
@@ -727,13 +679,13 @@ wire ce_pix_core, core_hs, core_hb, core_vb, mode_416_active;
 wire signed [15:0] aud_l, aud_r;
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL
     .clk_v25(clk_v25),
 `endif
     .rst(reset), .video_rst(video_reset),
     .board(active_board),
     .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
-    // Production profiles have no debug/screenshot pause control. Keep the
+    // The production profile has no debug/screenshot pause control. Keep the
     // core port constant so standalone verification benches can still test
     // V25 pause semantics without carrying the menu logic into an RBF.
     .pause(1'b0), .fast_v60(fast_v60_fetch),
@@ -746,6 +698,9 @@ s32_core core (
     .sdr_p2_ack(p2_ack),
     .sdr_p3_req(p3_req), .sdr_p3_addr(p3_addr), .sdr_p3_dout(p3_dout), .sdr_p3_ack(p3_ack),
     .sdr_p4_req(p4_req), .sdr_p4_addr(p4_addr), .sdr_p4_dout(p4_dout), .sdr_p4_ack(p4_ack),
+    .sdr_wave_wr_req(wave_sw_req), .sdr_wave_wr_addr(wave_sw_addr),
+    .sdr_wave_wr_data(wave_sw_din), .sdr_wave_wr_be(wave_sw_be),
+    .sdr_wave_wr_ack(wave_sw_ack),
     .sdr_p5_req(p5_req), .sdr_p5_addr(p5_addr), .sdr_p5_dout(p5_dout), .sdr_p5_ack(p5_ack),
     .fb_wr_start(fbw_start), .fb_wr_buf(fbw_buf), .fb_wr_x(fbw_x), .fb_wr_y(fbw_y),
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
@@ -771,13 +726,7 @@ s32_core core (
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
     .mode_416_active(mode_416_active),
     .audio_l(aud_l), .audio_r(aud_r),
-    .out_lamps(),
-    .comm_rom_wr(comm_rom_wr), .comm_rom_addr(comm_rom_addr),
-    .comm_rom_data(comm_rom_data),
-    .comm_fw_loaded(comm_fw_loaded),
-    .comm_native_zfg(1'b0),.comm_native_io_ack(1'b0),.comm_native_io_rdata(8'hff),
-    .comm_native_io_req(),.comm_native_io_write(),.comm_native_io_addr(),
-    .comm_native_io_wdata(),.comm_native_first_out60()
+    .out_lamps()
 );
 
 assign AUDIO_L = aud_l;

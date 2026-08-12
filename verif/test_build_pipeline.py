@@ -78,7 +78,7 @@ def decode_json_output(output: str) -> dict[str, object]:
 class SyntheticQuartusProject:
     """Minimal report fixture accepted by tools/report-quartus.ps1."""
 
-    revision = "s32v25"
+    revision = "segas32"
     seed = 2
 
     def __init__(self) -> None:
@@ -339,8 +339,8 @@ class PreflightValidationTests(unittest.TestCase):
             result = run_powershell_file(
                 TOOLS / "build-preflight.ps1",
                 ("-ProjectRoot", str(root), "-QuartusRoot", str(quartus_root),
-                 "-Project", "s32v25", "-Revision", "s32v25",
-                 "-ReleaseName", "s32v25", "-FitSeeds", "2 crash",
+                 "-Project", "segas32", "-Revision", "segas32",
+                 "-ReleaseName", "segas32", "-FitSeeds", "2 crash",
                  "-MapRetries", "2", "-FitRetries", "2", "-ResumeFit", "0"),
             )
             self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -452,14 +452,11 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         self.assertIn("build-seed-state.ps1", lowered)
 
     def test_merged_qsf_enables_resource_saving_macros(self) -> None:
-        # S32_V25_MLAB_FIFO is real-V25-specific (segas32v25 only); the
-        # JT12 shift-register packing applies to every profile.
-        v25_qsf = (REPO_ROOT / "segas32v25.qsf").read_text(encoding="utf-8")
-        self.assertIn("S32_JT12_MLAB_SHIFTS=1", v25_qsf)
-        self.assertIn("S32_V25_MLAB_FIFO=1", v25_qsf)
-        std_qsf = (REPO_ROOT / "segas32.qsf").read_text(encoding="utf-8")
-        self.assertIn("S32_JT12_MLAB_SHIFTS=1", std_qsf)
-        self.assertNotIn("S32_V25_MLAB_FIFO=1", std_qsf)
+        qsf = (REPO_ROOT / "segas32.qsf").read_text(encoding="utf-8")
+        self.assertIn("S32_JT12_MLAB_SHIFTS=1", qsf)
+        self.assertIn("S32_V25_MLAB_FIFO=1", qsf)
+        self.assertIn("S32_UNIVERSAL=1", qsf)
+        self.assertIn("S32_V25_HW=1", qsf)
 
     def test_timing_qualification_precedes_assembly(self) -> None:
         seed_body = self.build.lower().split(":try_seed", maxsplit=1)[1]
@@ -553,7 +550,7 @@ class CIWorkflowSafetyTests(unittest.TestCase):
         self.assertIn("check_holo_release.py", lowered)
         self.assertIn("bash -n tools/build.sh", lowered)
         self.assertIn("build-segas32.bat", lowered)
-        self.assertIn("build-segas32v25.bat", lowered)
+        self.assertNotIn("build-segas32v25.bat", lowered)
         self.assertNotIn("docker run", lowered)
         self.assertNotIn("bash tools/build.sh", lowered)
         self.assertNotIn("upload-artifact", lowered)

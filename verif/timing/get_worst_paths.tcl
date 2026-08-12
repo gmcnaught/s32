@@ -5,7 +5,7 @@
 # which specific nodes are on a failing path (CLAUDE.md's own documented
 # technique for this repo). Usage:
 #
-#   D:\Q17\quartus\bin64\quartus_sta.exe -t verif/timing/get_worst_paths.tcl -- segas32v25
+#   D:\Q17\quartus\bin64\quartus_sta.exe -t verif/timing/get_worst_paths.tcl -- segas32
 #
 # Run from the project root (or edit PROJECT/REVISION below). Requires an
 # existing fit database (run the fit stage first).

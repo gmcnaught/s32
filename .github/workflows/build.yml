@@ -5,11 +5,10 @@ name: verify-source
 # D:\Q17 Quartus Lite 17.0.2.602 installation:
 #
 #   set QUARTUS_ROOT=D:\Q17
-#   tools\build-segas32.bat      (Sonic and future non-V25 games)
-#   tools\build-segas32v25.bat   (ga2, arabfgt: real V25)
+#   tools\build-segas32.bat      (all supported parents, including real V25)
 #
 # That path records an input manifest, qualifies fit and multicorner timing,
-# and stages hash-verified per-profile RBFs. Community containers and the legacy
+# and stages the hash-verified universal RBF. Community containers and the legacy
 # Linux qualifier cannot provide the same provenance and are fail-closed.
 on:
   push:

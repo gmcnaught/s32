@@ -654,7 +654,7 @@ end
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL
     .clk_v25(clk_v25),
 `endif
     .rst(rst), .video_rst(rst), .board(board),
@@ -1749,7 +1749,7 @@ always @(posedge clk_sys) begin
     if (core.m_req && !core.m_ack) begin
         hang_cnt = hang_cnt + 1;
         if (hang_cnt == 20000)
-`ifdef S32_REAL_V25
+`ifdef S32_UNIVERSAL
             $display("[HANG] pc=%08x A=%06x we=%b be=%b st=%0d p0req=%b",
                 core.v60.pc, {core.A[23:1],1'b0}, core.m_we, core.m_be,
                 core.v60.st, p0_req);

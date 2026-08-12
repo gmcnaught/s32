@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Real-V25 INTEGRATION test: the genuine V25 core inside the full s32_core,
 # fetching its encrypted program through SDRAM port 5 and round-tripping the
-# wake-up mailbox to the V60 over the real core bus (S32_REAL_V25).  Verilator,
+# wake-up mailbox to the V60 over the real core bus (S32_UNIVERSAL/S32_V25_HW).  Verilator,
 # because ModelSim ASE cannot compile the s80x86 sources.
 set -euo pipefail
 
@@ -58,7 +58,7 @@ fi
     -Wno-SYNCASYNCNET -Wno-MULTIDRIVEN -Wno-BLKANDNBLK -Wno-CASEOVERLAP \
     -Wno-LATCH -Wno-COMBDLY \
     +define+SIMULATION +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_STANDARD \
-    +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
+    +define+S32_UNIVERSAL +define+S32_V25_HW +define+S80X86_PSEUDO_286_INT=0 \
     "-DMICROCODE_ROM_PATH=\"$mc\"" \
     --top-module tb_core_v25int --Mdir "$build_dir/obj_dir" -o Vtb_core_v25int \
     rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \

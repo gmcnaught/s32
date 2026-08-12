@@ -17,11 +17,9 @@ set "CD_RESULT=%ERRORLEVEL%"
 if not "%CD_RESULT%"=="0" goto :err
 echo Working directory: "%CD%"
 
-REM 2026-08-06: two dedicated profiles now exist -- segas32v25 (ga2/arabfgt,
-REM real V25) and segas32 (Sonic and future non-V25 games, HLE only). Set
-REM S32_PROJECT/S32_REVISION/S32_RELEASE_NAME=segas32v25 to target the V25
-REM profile instead of accepting this default; see build-segas32.bat and
-REM build-segas32v25.bat for thin per-profile wrappers.
+REM The repository has one universal production profile. Runtime descriptors
+REM select the standard-board or real V25 hardware path; use the single
+REM build-segas32.bat wrapper for source/build workflows.
 if not defined S32_PROJECT set S32_PROJECT=segas32
 if not defined S32_REVISION set S32_REVISION=segas32
 if not defined S32_RELEASE_NAME set S32_RELEASE_NAME=segas32

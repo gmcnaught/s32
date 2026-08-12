@@ -47,6 +47,18 @@ module s32_soundsys #(
     input       [7:0] mpcm_data,
     input             mpcm_ack,
 
+    // System 32 RF5C68 mutable wave RAM backing. The universal profile maps
+    // this onto the otherwise-unused MultiPCM SDRAM aperture; Multi 32 keeps
+    // the original internal RF RAM and leaves these ports inactive.
+    output            wave_rd_req,
+    output     [15:0] wave_rd_addr,
+    input      [15:0] wave_rd_data,
+    input             wave_rd_ack,
+    output            wave_wr_req,
+    output     [15:0] wave_wr_addr,
+    output      [7:0] wave_wr_data,
+    input             wave_wr_ack,
+
     output signed [15:0] audio_l,
     output signed [15:0] audio_r
 );
@@ -62,6 +74,7 @@ reg  [7:0]  z_din;
 wire        z_mreq_n, z_iorq_n, z_rd_n, z_wr_n, z_m1_n;
 reg         z_int_n;
 wire        z_wait_n;
+wire        rf_cpu_wait;
 
 `ifdef SIMULATION
 `ifndef S32_REAL_Z80_SIM
@@ -150,7 +163,7 @@ wire hit0 = rvalid0[rom_set] && (rtag0[rom_set] == rom_byte_addr[23:1]);
 wire hit1 = rvalid1[rom_set] && (rtag1[rom_set] == rom_byte_addr[23:1]);
 wire rom_hit = hit0 || hit1;
 wire [15:0] rom_word = hit0 ? rdata0[rom_set] : rdata1[rom_set];
-assign z_wait_n = ~(rom_sel && (z_mem_rd) && !rom_hit);
+assign z_wait_n = ~((rom_sel && z_mem_rd && !rom_hit) || rf_cpu_wait);
 
 always @(posedge clk) begin
     if (rst) begin
@@ -232,11 +245,16 @@ wire        pcm_cs = (z_addr[15:13] == 3'b110);   // C000-DFFF
 wire [7:0]  rf_rdata;
 wire signed [15:0] rf_l, rf_r;
 
-s32_rf5c68 rf5c68 (
+s32_rf5c68 #(.EXTERNAL_WAVE_RAM(SYSTEM32_ONLY)) rf5c68 (
     .clk(clk), .ce(ce_pcm & ~is_multi32), .rst(rst),
     .cs(pcm_cs & ~is_multi32 & (z_mem_rd | z_mem_wr)),
     .we(z_mem_wr),
     .addr(z_addr[12:0]), .wdata(z_dout), .rdata(rf_rdata),
+    .wave_rd_req(wave_rd_req), .wave_rd_addr(wave_rd_addr),
+    .wave_rd_data(wave_rd_data), .wave_rd_ack(wave_rd_ack),
+    .wave_wr_req(wave_wr_req), .wave_wr_addr(wave_wr_addr),
+    .wave_wr_data(wave_wr_data), .wave_wr_ack(wave_wr_ack),
+    .cpu_wait(rf_cpu_wait),
     .out_l(rf_l), .out_r(rf_r)
 );
 

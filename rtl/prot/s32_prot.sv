@@ -8,7 +8,7 @@ import s32_pkg::*;
 
 // ---------------------------------------------------------------------------
 //  s32_prot_hle: the write-triggered work-RAM protections
-//  (sonic §8.2, darkedge/f1lap vblank §8.4, dbzvrvs, jleague §8.5)
+//  (supported production parents: Sonic §8.2 and Dark Edge §8.4)
 //  Watches CPU writes; issues its own work-RAM writes via a dedicated port
 //  (arbitration handled by the bus controller: prot port wins, CPU stalls).
 // ---------------------------------------------------------------------------
@@ -51,15 +51,11 @@ typedef enum logic [3:0] {
     P_IDLE,
     // sonic: on write to 0x20E5C4 -> read level table, update 0xF06E/F0BC
     SON_RD0, SON_RD1, SON_WR0, SON_WR1, SON_WR2,
-    // darkedge/f1lap vblank writes
-    DKE_W0, DKE_R0, DKE_W1, DKE_W2,
-    F1L_W0, F1L_R0, F1L_W1,
-    // dbzvrvs: copy 0x200044 -> 0x2080C8
-    DBZ_R0, DBZ_W0
+    // darkedge vblank writes
+    DKE_W0, DKE_R0, DKE_W1, DKE_W2
 } pst_t;
 pst_t ps;
 
-reg [15:0] cleared;      // sonic cleared-levels value
 reg [15:0] level;
 reg [7:0]  tmp;
 wire [15:0] sonic_merged = {
@@ -81,7 +77,6 @@ always @(posedge clk) begin
             case (prot_sel)
             PROT_SONIC:
                 if (cpu_wr && cpu_addr == 24'h20E5C4) begin
-                    cleared <= sonic_merged;
                     if (sonic_merged == 0) begin
                         level <= 16'h0007;
                         ps <= SON_WR0;
@@ -94,40 +89,12 @@ always @(posedge clk) begin
                         ps <= SON_RD0;
                     end
                 end
-            PROT_DBZVRVS:
-                // audit R20 IO-8: dbzvrvs prot window is 0xA00000-0xA7FFFF (MAME install range)
-                if (cpu_wr && cpu_addr[23:19] == 5'b10100) begin
-                    wram_req <= 1'b1; wram_we <= 0;
-                    wram_addr <= 16'h0044 >> 1;   // read 0x200044
-                    ps <= DBZ_R0;
-                end
-            PROT_JLEAGUE:
-                if (cpu_wr && cpu_addr[23:1] == (24'h20F700 >> 1)) begin
-                    // write_byte(0x20F708, ROM[0x7BBC0 + data*2])
-                    rom_req  <= 1'b1;
-                    rom_addr <= 24'h07BBC0 + {cpu_wdata[14:0], 1'b0};
-                    ps <= SON_RD1;   // reuse: single-byte fetch + write
-                end
-                else if (cpu_wr && cpu_addr[23:1] == (24'h20F704 >> 1)) begin
-                    wram_req <= 1'b1; wram_we <= 1'b1;
-                    wram_addr <= 16'h0016 >> 1;   // 0x200016
-                    wram_wdata <= {8'h00, cpu_wdata[7:0]};
-                    wram_be <= 2'b01;
-                    ps <= SON_WR2;
-                end
             PROT_DARKEDGE:
                 if (vblank) begin
                     wram_req <= 1'b1; wram_we <= 1'b1;
                     wram_addr <= 16'hF072 >> 1;
                     wram_wdata <= 16'h0000; wram_be <= 2'b11;
                     ps <= DKE_W0;
-                end
-            PROT_F1LAP:
-                if (vblank) begin
-                    wram_req <= 1'b1; wram_we <= 1'b1;
-                    wram_addr <= 16'hF7C6 >> 1;
-                    wram_wdata <= 16'h0000; wram_be <= 2'b01;
-                    ps <= F1L_W0;
                 end
             default: ;
             endcase
@@ -164,15 +131,6 @@ always @(posedge clk) begin
             else wram_req <= 0;
             ps <= P_IDLE;
         end
-        SON_RD1: if (rom_ack) begin       // jleague byte fetch
-            rom_req <= 0;
-            wram_req <= 1'b1; wram_we <= 1'b1;
-            wram_addr <= 16'hF708 >> 1;
-            wram_wdata <= {8'h00, rom_data[7:0]};
-            wram_be <= 2'b01;
-            ps <= SON_WR2;
-        end
-
         // ---- darkedge vblank sequence ----
         DKE_W0: if (wram_ack) begin
             wram_req <= 1'b1; wram_we <= 1'b1;
@@ -206,32 +164,6 @@ always @(posedge clk) begin
             else wram_req <= 0;
             ps <= P_IDLE;
         end
-
-        // ---- f1lap vblank ----
-        F1L_W0: if (wram_ack) begin
-            wram_req <= 1'b1; wram_we <= 1'b0;
-            wram_addr <= 16'hEE81 >> 1;
-            ps <= F1L_R0;
-        end
-        F1L_R0: if (wram_ack) begin
-            if (wram_rdata[15:8] == 8'hFF) begin
-                wram_req <= 1'b1; wram_we <= 1'b1;
-                wram_addr <= 16'hEE81 >> 1;
-                wram_wdata <= 16'h0000; wram_be <= 2'b10;  // odd byte
-                ps <= F1L_W1;
-            end
-            else begin wram_req <= 0; ps <= P_IDLE; end
-        end
-        F1L_W1: if (wram_ack) begin wram_req <= 0; ps <= P_IDLE; end
-
-        // ---- dbzvrvs copy ----
-        DBZ_R0: if (wram_ack) begin
-            wram_req <= 1'b1; wram_we <= 1'b1;
-            wram_addr <= 16'h80C8 >> 1;
-            wram_wdata <= wram_rdata; wram_be <= 2'b11;
-            ps <= DBZ_W0;
-        end
-        DBZ_W0: if (wram_ack) begin wram_req <= 0; ps <= P_IDLE; end
 
         default: ps <= P_IDLE;
         endcase

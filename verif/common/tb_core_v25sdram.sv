@@ -1,5 +1,5 @@
 //============================================================================
-//  Real-V25 + REAL SDRAM CONTROLLER integration test (S32_REAL_V25).
+//  Real-V25 + REAL SDRAM CONTROLLER integration test (S32_UNIVERSAL/S32_V25_HW).
 //
 //  tb_core_v25int proves the V25 inside s32_core against a *behavioural* p5
 //  server; tb_loader_hpspace proves the loader + sdram.sv in isolation.  On

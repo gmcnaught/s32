@@ -14,7 +14,7 @@ $repoRoot = (Resolve-Path -LiteralPath (Join-Path (Split-Path -Parent $resolvedS
 # remain per-project, but two fits must never run at the same time: they can
 # contend for memory/CPU and make placement comparisons non-reproducible.
 # Use a stable machine-wide name rather than a root hash so separate worktrees
-# and the two production profiles serialize as well.
+# and the universal production profile serializes as well.
 $mutexName = "Global\SegaS32QuartusBuild"
 $mutex = [Threading.Mutex]::new($false, $mutexName)
 $acquired = $false

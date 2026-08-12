@@ -35,7 +35,7 @@ fi
 "$verilator_safe" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 "${warnings[@]}" \
   +define+SIMULATION +define+S32_REAL_FB_SIM \
   +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_STANDARD \
-  +define+S32_REAL_V25 +define+S80X86_PSEUDO_286_INT=0 \
+  +define+S32_UNIVERSAL +define+S32_V25_HW +define+S80X86_PSEUDO_286_INT=0 \
   "-DMICROCODE_ROM_PATH=\"$microcode\"" \
   --top-module tb_core_romboot --Mdir "$build_dir" -o romboot \
   -f verif/v25/s80x86.f \
