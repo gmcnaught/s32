@@ -1,7 +1,0 @@
-This component is licensed under the GNU General Public License version 3.
-The complete license is available in the repository root LICENSE file and at:
-https://www.gnu.org/licenses/gpl-3.0.txt
-
-Donor: MiSTer-devel/SNES_MiSTer
-Commit: ac616cade7df274a491614e95765ba87164798c7
-Files adapted: rtl/chip/DSP/DSPn.vhd; RAM interface informed by rtl/bram.vhd

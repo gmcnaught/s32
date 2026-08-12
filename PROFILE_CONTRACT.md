@@ -2,35 +2,15 @@
 
 This is the persistent cross-chat routing record for the core.
 
-## 2026-08-12: dual-PCB implementation boundary and DSP laboratory
+## 2026-08-12: Air Rescue removed from production scope
 
-The standard-profile source now contains a tested two-initiator System 32
-communication bridge, an optional external bridge endpoint on `s32_core`, a
-transparent `s32_dual_system` integration boundary, and a two-client p0 SDRAM
-transaction arbiter. The legacy one-board bridge wrapper retains its existing
-two-clock response contract. The new bridge provides main/sub identities 0/1,
-Air Rescue zero and F1 Exhaust Note `ffff` lazy initialization, byte-lane
-merging, and an explicit collision indication; main wins an overlapping
-same-lane write only as a deterministic FPGA arbitration rule, not a claim
-about unmeasured PCB collision behavior.
-
-These modules are not yet selected by `Arcade-SegaSystem32.sv`: `dual_pcb` is
-a runtime descriptor, while a second FPGA context is an elaboration-time
-resource. A complete second `s32_core` cannot fit the current Standard profile
-(the accepted report is already near the device RAM-block ceiling). A pinned
-MAME 0.289 census proves the Air Rescue peer touches every major private
-digital subsystem during early startup, so an incomplete mailbox-only peer is
-rejected. The active architecture is therefore a state-banked/time-multiplexed
-V60/bus engine plus private external-memory-backed board state, not a duplicated
-renderer or a pruned behavioral peer.
-
-A standalone GPL-3.0 uPD77P25 laboratory under `rtl/cpu/upd7725/` can load
-synthetic or legally supplied 2Kx24 program and 1Kx16 data images and exposes
-the architectural DSP/host status boundary. It remains outside `files.qip`
-and does not replace the production Air Rescue HLE. Native daughterboard
-integration remains conditional on resolving the firmware's DMA/DR handshake,
-P0/P1 latch selection, and external interrupt source; current MAME also leaves
-that physical wiring unresolved.
+Air Rescue requires two complete linked System 32 PCBs. The production core
+does not claim that hardware boundary, so `arescue`, `arescueu`, and `arescuej`
+are intentionally excluded from `tools/gen_mra.py`, tracked MRAs, releases, and
+the supported-game table. The experimental peer-board, dual-V60, dual-PCB RAM,
+peer-DDR, and uPD77P25 shadow paths have been removed from production sources
+and manifests. This exclusion is a scope decision, not a claim that a
+single-board mailbox substitute is sufficient.
 
 ## 2026-08-11: integrated CPU, memory and renderer throughput package
 
@@ -170,7 +150,7 @@ two games that were actually shipping:
   the V60 ROM cache's `prot_rom_grant` tie-off assuming no game needed
   generic protection ROM-read arbitration -- is fixed, see
   `rtl/s32_core.sv`'s `s32_ga_rom_cache` arbiter). Holo, Spider-Man, Alien3,
-  Air Rescue, Burning Rival, Dark Edge, Jurassic Park, and Rad Rally are
+  Burning Rival, Dark Edge, Jurassic Park, and Rad Rally are
   restored to this profile; `radm` remains staged. This profile has never been fit; its
   QSF's fitter/seed settings are starting points carried over from
   `segas32v25.qsf`, not validated for its own resource shape.
@@ -178,8 +158,8 @@ two games that were actually shipping:
 `rtl/s32_core.sv` is shared by both profiles. The scope trim is now
 three-way: `GAME_ONLY` (the real-V25 shape ties off unrelated standard-board
 hardware) and `GAME_ONLY_STD` (keeps the trackball, descriptor-gated ADC,
-positional-gun conditioner, Air Rescue DSP responder, dual-PCB bridge,
-Burning Rival responder, and generic protection HLE live in `segas32.qsf`,
+positional-gun conditioner, Burning Rival responder, and generic protection
+HLE live in `segas32.qsf`,
 while still implying `GAME_ONLY`). Do not name a
 macro after a specific game (`S32_SONIC_ONLY` etc.) -- see the routing rule
 below, unchanged since before the merge.
@@ -193,7 +173,7 @@ state.
 ## Outputs
 
 - `segas32v25.rbf` / `segas32v25.qsf`: `ga2`, `arabfgt` (real V25).
-- `segas32.rbf` / `segas32.qsf`: `alien3`, `arescue`, `brival`, `darkedge`,
+- `segas32.rbf` / `segas32.qsf`: `alien3`, `brival`, `darkedge`,
   `holo`, `jpark`, `radr`, `slipstrm`, `sonic`, and `spidman` (HLE only, no
   real V25 hardware). `radm` remains staged.
 - No production image supports Multi 32 sets.
@@ -202,7 +182,7 @@ state.
 
 The following parents are intentionally ignored and must not be emitted as
 MRAs, staged by the active profile sweep, or treated as supported in future
-profile work: `dbzvrvs`, `f1en`, `f1lap`, `svf`, and `jleague`. Local ROMs
+profile work: `arescue`, `dbzvrvs`, `f1en`, `f1lap`, `svf`, and `jleague`. Local ROMs
 and historical captures may remain on disk;
 they are outside the production profile.
 
@@ -231,7 +211,7 @@ by both profiles and never changes the external V60 bus clock.
 | MSM6253 ADC | no (`GAME_ONLY` tie-off; neither V25 game has an analog board) | yes, descriptor-driven for Slip Stream (`ANALOG_DRIVING`); right-stick up/down drive accelerator/brake, A/B are full-scale digital fallbacks, and X toggles gear; inactive games do not select the device |
 | Trackball (`s32_upd4701`) | no (no game here has one) | yes, descriptor-driven (`GAME_ONLY_STD`); all three Sonic players use frame-paced nonlinear left-stick velocity (15-count deadzone, 30 counts/frame at full deflection) and exact action/start/coin wiring |
 | Generic protection HLE (`s32_prot_hle`) | no (both games are `PROT_NONE`) | yes (`GAME_ONLY_STD`; descriptor-selected Sonic/Dark Edge paths) |
-| Burning Rival / Air Rescue DSP responders and dual-PCB bridge | no | yes, descriptor-gated for `brival`/`arescue` |
+| Burning Rival protection responder | no | yes, descriptor-gated for `brival` |
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_REAL_V25=1`), enabled per-game by the descriptor's `has_v25` bit | not compiled in at all; HLE responder `s32_v25` only |
 | V25 table/cadence selection | descriptor-driven (`v25_table`) | n/a (no V25 hardware) |
 | CPU Turbo | removed (V60 timing relies on fixed CE spacing) | removed (same) |
@@ -240,6 +220,16 @@ by both profiles and never changes the external V60 bus clock.
 | HDMI shadow-mask post-process | compiled out (`MISTER_DISABLE_SHADOWMASK`; optional output effect) | compiled out (same) |
 
 ## Evidence status (2026-08-01)
+
+- 2026-08-12 315-5242 digital-output audit: the pinned SiliconRE M71064
+  decap-derived material establishes a pixel-clocked 5-bit RGB output latch,
+  blanking, greyscale, and component-nonzero shade/highlight controls. It does
+  not establish a mismatch in the upstream System 32 offset/blend/shadow
+  arithmetic. Functional video RTL therefore remains unchanged; the directed
+  mixer regression now pins offset -> blend -> shadow -> clamp and final
+  5-bit-to-8-bit latch expansion. No remaining evidence-backed digital video
+  correction was identified; analog DAC levels and exact latch phase remain
+  outside the current digital equivalence claim.
 
 - Source/profile checks: passed.
 - Python verification: 102 tests passed, one environment-only WSL skip.
@@ -254,10 +244,6 @@ by both profiles and never changes the external V60 bus clock.
   V25/table boundary; a regression test protects that classification.
 - Quartus fit/timing and physical hardware: intentionally not run for this
   profile-routing task.
-- Resource-focused RTL change: `s32_dualpcb` now uses lazy reset defaults and
-  a written bitmap so its 2,048 x 16-bit communication store can infer RAM;
-  the F1 bridge contract remains covered by tier 36. Quartus ALM
-  and M10K impact is still unmeasured until the authorized profile builds.
 - The pinned-MAME EPR-14084 link-status HLE is source-integrated for the radr
   descriptor, reuses the existing communication RAM, and passes focused map
   plus byte/wide ROM-loader tests. Full-core radr attract verification now
@@ -267,7 +253,7 @@ by both profiles and never changes the external V60 bus clock.
 
 The current user-directed gameplay/attract acceptance matrix covers true parent
 sets only. Clone and regional revisions and all Multi 32 parents are excluded
-from this audit. The active Standard parents are `alien3`, `arescue`, `brival`,
+from this audit. The active Standard parents are `alien3`, `brival`,
 `darkedge`, `holo`, `spidman`, `jpark`, `radr`, `slipstrm`, and `sonic`;
 `radm` remains staged, and the two V25 parents remain `ga2` and `arabfgt`.
 

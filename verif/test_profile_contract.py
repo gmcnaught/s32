@@ -22,7 +22,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("holo", GAMES)
         self.assertIn("spidman", GAMES)
         self.assertIn("slipstrm", GAMES)
-        for promoted in ("alien3", "arescue", "brival", "darkedge", "jpark", "radr"):
+        for promoted in ("alien3", "brival", "darkedge", "jpark", "radr"):
             self.assertIn(promoted, GAMES)
         for path in MRA_DIR.glob("*.mra"):
             root = ElementTree.parse(path).getroot()
@@ -331,9 +331,8 @@ class GlobalProfileContractTests(unittest.TestCase):
     def test_standard_shape_retains_promoted_game_hardware(self) -> None:
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
-        self.assertIn("s32_arescue_dsp dsp (", core)
         self.assertIn("if (GAME_ONLY && !GAME_ONLY_STD) begin : g_game_no_brival", core)
-        self.assertIn("if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_dualpcb", core)
+        self.assertNotIn("s32_arescue_dsp dsp (", core)
         self.assertIn("wire gun_aim_active = active_board.gun_aim", top)
         self.assertIn("wire alien3_controls = active_board.gun_aim && active_board.coin_swap", top)
 

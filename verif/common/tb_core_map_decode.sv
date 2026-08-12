@@ -153,6 +153,10 @@ module tb_core_map_decode;
             $display("FAIL disabled comm FG write changed fg=%b", core.comm_fg);
             errors = errors + 1;
         end
+        release core.m_req;
+        release core.m_we;
+        release core.m_be;
+        release core.m_wdata;
         core_rst = 1'b1;
         @(posedge clk); #1;
         if (core.comm_cn !== 1'b0 || core.comm_fg !== 1'b0) begin
@@ -163,6 +167,9 @@ module tb_core_map_decode;
         // The EPR-14084 HLE publishes MAME's one-node online status after
         // the link timer expires. Force the boundary for a short focused test.
         core_rst = 1'b0;
+        force core.m_req = 1'b1;
+        force core.m_we = 1'b1;
+        force core.m_be = 2'b01;
         force core.m_wdata = 16'h0001;
         probe = 24'h801000; @(posedge clk); #1;
         release core.m_req;

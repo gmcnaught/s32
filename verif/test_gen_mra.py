@@ -18,7 +18,6 @@ class BoardDescriptorTests(unittest.TestCase):
 
     def test_promoted_standard_games_keep_their_board_features(self) -> None:
         self.assertEqual(GAMES["alien3"][:2], bytes.fromhex("080c"))
-        self.assertEqual(GAMES["arescue"][:2], bytes.fromhex("4801"))
         self.assertEqual(GAMES["brival"][:3], bytes.fromhex("200002"))
         self.assertEqual(GAMES["darkedge"][:3], bytes.fromhex("200003"))
         self.assertEqual(GAMES["jpark"][:2], bytes.fromhex("0804"))
@@ -76,7 +75,7 @@ class ButtonMetadataTests(unittest.TestCase):
 
     def test_promoted_games_keep_cabinet_button_counts(self) -> None:
         expected = {
-            "alien3": 2, "arescue": 2, "brival": 6,
+            "alien3": 2, "brival": 6,
             "darkedge": 5, "holo": 2, "jpark": 1, "radr": 1,
         }
         for parent, count in expected.items():
@@ -147,21 +146,35 @@ class OptimizedLayoutTests(unittest.TestCase):
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
-        # Six requested parent families add 17 regional MRAs to the existing
-        # 13-file two-profile set.
-        self.assertEqual(len(paths), 30)
+        # Air Rescue is intentionally excluded because its second PCB is not
+        # part of the production core.
+        self.assertEqual(len(paths), 27)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
             indexes = [int(rom.attrib["index"]) for rom in roms]
             self.assertEqual(indexes[-1], 0, path.name)
-            self.assertTrue(all(index in {0, 2, 4, 5, 6, 7, 8, 9}
+            self.assertTrue(all(index in {0, 2, 4, 5, 6, 7, 8, 9, 13, 14}
                                 for index in indexes), path.name)
             descriptor_rom = roms[-1]
             self.assertNotIn("zip", descriptor_rom.attrib, path.name)
             descriptor = bytes.fromhex(descriptor_rom.findtext("part", ""))
             self.assertEqual(len(descriptor), 64, path.name)
             self.assertTrue(any(index >= 4 for index in indexes), path.name)
+
+    def test_air_rescue_is_not_emitted(self) -> None:
+        names = {path.name for path in (Path(__file__).parents[1] / "mra").glob("*.mra")}
+        self.assertFalse(any("Air Rescue" in name for name in names))
+
+    def test_rad_rally_firmware_planes_precede_descriptor_commit(self) -> None:
+        for path in (Path(__file__).parents[1] / "mra").glob("Rad Rally*.mra"):
+            root = ElementTree.parse(path).getroot()
+            roms = root.findall("rom")
+            indexes = [int(rom.attrib["index"]) for rom in roms]
+            self.assertEqual(indexes[-3:], [13, 14, 0], path.name)
+            for rom in roms[-3:-1]:
+                self.assertEqual(rom.find("part").attrib,
+                                 {"name": "epr-14084.17", "crc": "f14ed074"})
 
 
 class RegenerationFidelityTests(unittest.TestCase):

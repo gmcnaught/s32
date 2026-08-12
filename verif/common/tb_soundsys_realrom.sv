@@ -11,28 +11,28 @@ module tb_soundsys_realrom #(
 
     reg rst = 1'b1;
     reg z80_reset = 1'b1;
-    reg [15:0] acc_z80 = 16'd0;
-    reg [15:0] acc_fm = 16'd0;
-    reg [15:0] acc_pcm = 16'd0;
+    reg [31:0] acc_z80 = 32'd0;
+    reg [31:0] acc_fm = 32'd0;
+    reg [31:0] acc_pcm = 32'd0;
     reg ce_z80 = 1'b0;
     reg ce_fm = 1'b0;
     reg ce_pcm = 1'b0;
 
     always @(posedge clk) begin
-        logic [16:0] sum;
+        logic [32:0] sum;
         if (rst) begin
-            acc_z80 <= 16'd0;
-            acc_pcm <= 16'd0;
+            acc_z80 <= 32'd0;
+            acc_pcm <= 32'd0;
             ce_z80  <= 1'b0;
             ce_pcm  <= 1'b0;
         end
         else begin
-            sum = acc_z80 + 17'd10924;
-            ce_z80 <= sum[16];
-            acc_z80 <= sum[15:0];
-            sum = acc_pcm + 17'd16955;
-            ce_pcm <= sum[16];
-            acc_pcm <= sum[15:0];
+            sum = {1'b0,acc_z80} + 33'd715924818;
+            ce_z80 <= sum[32];
+            acc_z80 <= sum[31:0];
+            sum = {1'b0,acc_pcm} + 33'd1111135834;
+            ce_pcm <= sum[32];
+            acc_pcm <= sum[31:0];
         end
     end
 
@@ -40,10 +40,10 @@ module tb_soundsys_realrom #(
     // Production FM NCO is deliberately free-running during reset so JT12's
     // enabled-clock reset rings are actually flushed.
     always @(posedge clk) begin
-        logic [16:0] sum;
-        sum = acc_fm + 17'd10924;
-        ce_fm <= sum[16];
-        acc_fm <= sum[15:0];
+        logic [32:0] sum;
+        sum = {1'b0,acc_fm} + 33'd715924818;
+        ce_fm <= sum[32];
+        acc_fm <= sum[31:0];
     end
 
     wire        zrom_req;

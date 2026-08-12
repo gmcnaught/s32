@@ -73,8 +73,8 @@ set_global_assignment -name PERIPHERY_TO_CORE_PLACEMENT_AND_ROUTING_OPTIMIZATION
 set_global_assignment -name PHYSICAL_SYNTHESIS_ASYNCHRONOUS_SIGNAL_PIPELINING ON
 set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # 2026-08-05: seed 2 was the best archived-legal-fit seed for the *pre-audit*
-# resource profile. This session's RAM-inference fixes (s32_dualpcb,
-# s32_v25_rom_cache, comm_ram) freed enough ALUTs to change the design's
+# resource profile. This session's RAM-inference fixes in
+# s32_v25_rom_cache and comm_ram freed enough ALUTs to change the design's
 # whole placement problem, exposing marginal sub-0.2ns setup paths
 # (s32_tilemap lay->vram_addr) that were never the worst path before, once
 # the OSD pixcnt/multiscan multicycle exceptions below closed the larger

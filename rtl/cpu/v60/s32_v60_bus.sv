@@ -174,4 +174,16 @@ always @(posedge clk) begin
     end
 end
 
+// Reset is a bus epoch boundary: neither a held CPU acknowledgement nor an
+// in-flight physical request may survive it.
+`ifndef SYNTHESIS
+reg reset_sampled = 1'b0;
+always @(posedge clk) reset_sampled <= rst;
+always @(negedge clk)
+    if (reset_sampled && !$isunknown({c_ack,m_req})) begin
+        assert (!c_ack);
+        assert (!m_req);
+    end
+`endif
+
 endmodule

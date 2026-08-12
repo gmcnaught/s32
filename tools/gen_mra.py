@@ -77,7 +77,6 @@ GAMES = {
     # return one at a time; see PROFILE_CONTRACT.md for routing.
     "alien3":   desc(adc=1, gun=1, coin_swap=1),
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
-    "arescue":  desc(adc=1, dual=1, dsp=1),
     "brival":   desc(ppi=1, prot=PROT["BRIVAL"]),
     "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
@@ -104,7 +103,7 @@ GAMES = {
 # Keep the exclusion explicit so a future source refresh cannot re-emit them by
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
-    "dbzvrvs", "f1en", "f1lap", "svf", "jleague",
+    "arescue", "dbzvrvs", "f1en", "f1lap", "svf", "jleague",
     # 2026-08-07: Holo and Spider-Man are restored to the standard HLE
     # profile. Other non-V25 games remain intentionally staged for later
     # one-at-a-time promotion.
@@ -131,10 +130,6 @@ BUTTONS = {
     ),
     "alien3": (
         "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "arescue": (
-        "Button 1,Button 2,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
     ),
     "brival": (
@@ -176,7 +171,6 @@ BUTTONS = {
 BUTTON_COUNTS = {
     "alien3": 2,
     "arabfgt": 2,
-    "arescue": 2,
     "brival": 6,
     "darkedge": 5,
     "ga2": 2,
@@ -414,6 +408,14 @@ def gen(setname, data, outdir):
         lines.append(f'    <part name="{escape(ee["loads"][0]["file"])}" crc="{ee["loads"][0]["crc"]}"/>')
         lines.append('  </rom>')
     lines.append('  <nvram index="3" size="128"/>')
+
+    # Legal diagnostic firmware is delivered before the descriptor commit.
+    # Identity is pinned to MAME 0.289; RTL keeps the existing HLE authoritative.
+    if parent == "radr":
+        for fw_index in (13, 14):
+            lines.append(f'  <rom index="{fw_index}" zip="{rom_zips}" md5="none">')
+            lines.append('    <part name="epr-14084.17" crc="f14ed074"/>')
+            lines.append('  </rom>')
 
     hexd = bytes(d).hex().upper()
     lines.append('  <rom index="0">')

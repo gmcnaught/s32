@@ -22,6 +22,17 @@ The legal ROM is never committed. Convert it with
 `python tools/convert_epr14084_rom.py epr-14084.17 <ignored-output>.hex`; the
 converter requires size 32768 and SHA1
 `e1bb23eac85e3236046527c5c7688f6f23d43aef`.
+The production loader accepts that verified 32 KiB image without embedding it:
+narrow transfers use index 13 byte addresses; wide transfers use index 13 for
+even bytes and index 14 for odd bytes. Rad Rally MRAs emit both legal archive
+references before the final descriptor commit. The native shadow runs only
+when the Rad Rally descriptor and both firmware planes are present; the
+existing communication HLE remains authoritative.
+The native lab owns a mirrored diagnostic shared-RAM
+array: it observes V60 host transactions but is not the authoritative HLE
+`comm_ram`, so HLE-internal publications/clears and native-side writes do not
+cross between them. `ram_diverged` exposes differing host readback when the
+shadow is enabled; this is not claimed as shared-memory integration.
 
 With that verified image supplied through `EPR14084_HEX`, the real T80 reaches
 its first peripheral transaction deterministically at 705 ns: `OUT (60h),00h`.

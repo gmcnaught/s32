@@ -129,6 +129,18 @@ initial begin
     transact(0, 32'd10, 2'd2, 32'd0, 2, rd); check_read(rd, 32'h89abcdef, "even dword read");
     transact(0, 32'd15, 2'd2, 32'd0, 3, rd); check_read(rd, 32'h01234567, "odd dword read");
 
+    // Reset is an epoch boundary even when a CPU request is held and a
+    // physical cycle is outstanding. No stale request/ACK may escape it.
+    @(negedge clk); c_req = 1'b1; c_addr = 32'd20; c_size = 2'd1;
+    wait(m_req); @(negedge clk); rst = 1'b1;
+    @(posedge clk); #1;
+    if (m_req !== 1'b0 || c_ack !== 1'b0) begin
+        $display("FAIL reset retained stale bus request/ack m_req=%b c_ack=%b",m_req,c_ack);
+        errors = errors + 1;
+    end
+    @(negedge clk); c_req = 1'b0; rst = 1'b0;
+    repeat(2) @(posedge clk);
+
     if (errors == 0)
         $display("V60 BUS LANES PASS");
     else

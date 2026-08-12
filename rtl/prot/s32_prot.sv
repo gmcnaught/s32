@@ -23,6 +23,10 @@ module s32_prot_hle #(
     input             cpu_wr,
     input      [23:0] cpu_addr,
     input      [15:0] cpu_wdata,
+    input       [1:0] cpu_be,
+    // Port-A RAM read value primed by the held CPU bus address.  On a write
+    // cycle this is the pre-write word used by COMBINE_DATA semantics.
+    input      [15:0] cpu_pre_wram_data,
 
     // vblank strobe (darkedge/f1lap FD1149 behaviour)
     input             vblank,
@@ -58,6 +62,10 @@ pst_t ps;
 reg [15:0] cleared;      // sonic cleared-levels value
 reg [15:0] level;
 reg [7:0]  tmp;
+wire [15:0] sonic_merged = {
+    cpu_be[1] ? cpu_wdata[15:8] : cpu_pre_wram_data[15:8],
+    cpu_be[0] ? cpu_wdata[7:0]  : cpu_pre_wram_data[7:0]
+};
 
 generate
 if (ENABLE) begin : g_enabled
@@ -73,8 +81,8 @@ always @(posedge clk) begin
             case (prot_sel)
             PROT_SONIC:
                 if (cpu_wr && cpu_addr == 24'h20E5C4) begin
-                    cleared <= cpu_wdata;
-                    if (cpu_wdata == 0) begin
+                    cleared <= sonic_merged;
+                    if (sonic_merged == 0) begin
                         level <= 16'h0007;
                         ps <= SON_WR0;
                     end
@@ -82,7 +90,7 @@ always @(posedge clk) begin
                         // level = ROM[base + cleared*2 - 2] << 8 |
                         //         ROM[base + cleared*2 - 1]
                         rom_req  <= 1'b1;
-                        rom_addr <= 24'h00263A + {cpu_wdata[14:0], 1'b0} - 24'd2;
+                        rom_addr <= 24'h00263A + {sonic_merged[14:0], 1'b0} - 24'd2;
                         ps <= SON_RD0;
                     end
                 end
@@ -348,175 +356,6 @@ always @(posedge clk) begin
     end
 end
 
-endmodule
-
-// ---------------------------------------------------------------------------
-//  s32_arescue_dsp: command-level model of the Air Rescue math DSP interface.
-// ---------------------------------------------------------------------------
-module s32_arescue_dsp (
-    input             clk,
-    input             rst,
-    input             enable,
-    input             cs,
-    input             we,
-    input       [1:0] be,
-    input       [1:0] addr,
-    input      [15:0] wdata,
-    output reg [15:0] rdata
-);
-
-reg [15:0] io [0:3];
-
-always @(posedge clk) begin
-    if (rst) begin
-        io[0] <= 0; io[1] <= 0; io[2] <= 0; io[3] <= 0;
-        rdata <= 0;
-    end
-    else if (enable && cs) begin
-        if (we) begin
-            if (be[0]) io[addr][7:0]  <= wdata[7:0];
-            if (be[1]) io[addr][15:8] <= wdata[15:8];
-        end
-        else begin
-            if (addr == 2'd2) begin
-                case (io[0])
-                    16'h0003: begin io[0] <= 16'h8000; io[1] <= 16'h0001; end
-                    16'h0006: io[0] <= {io[1][13:0], 2'b00};
-                    default: ;
-                endcase
-            end
-            rdata <= io[addr];
-        end
-    end
-end
-
-endmodule
-
-// ---------------------------------------------------------------------------
-//  s32_dualpcb_bridge: the physical two-initiator dual-PCB bridge (§8.6).
-//
-// Both initiators share one 2Kx16 byte-enabled store. Reads retain the legacy
-// two-clock response latency. Simultaneous writes to different words or byte
-// lanes both commit. If both write the same byte lane, the main-board value
-// wins deterministically and collision is asserted for that cycle. This
-// priority is an explicit FPGA arbitration contract; software must not depend
-// on the result of a same-lane collision on the asynchronous PCB bridge.
-// ---------------------------------------------------------------------------
-module s32_dualpcb_bridge (
-    input             clk,
-    input             rst,
-    input             enable,
-    input             init_ff,
-
-    input             main_cs_ram,
-    input             main_cs_id,
-    input             main_we,
-    input      [1:0]  main_be,
-    input      [11:1] main_addr,
-    input      [15:0] main_wdata,
-    output reg [15:0] main_rdata,
-
-    input             sub_cs_ram,
-    input             sub_cs_id,
-    input             sub_we,
-    input      [1:0]  sub_be,
-    input      [11:1] sub_addr,
-    input      [15:0] sub_wdata,
-    output reg [15:0] sub_rdata,
-    output            collision
-);
-reg [15:0] comm [0:2047];
-reg [2047:0] comm_written;
-reg [15:0] comm_default;
-reg [15:0] main_mem_q, sub_mem_q;
-reg main_written_d, sub_written_d;
-reg main_ram_d, main_id_d, sub_ram_d, sub_id_d;
-
-wire main_wr = enable && main_cs_ram && main_we && (main_be != 0);
-wire sub_wr  = enable && sub_cs_ram  && sub_we  && (sub_be  != 0);
-wire same_addr = main_addr == sub_addr;
-assign collision = main_wr && sub_wr && same_addr && |(main_be & sub_be);
-
-wire main_first = main_wr && !comm_written[main_addr];
-wire sub_first  = sub_wr && !comm_written[sub_addr];
-wire joined_wr  = main_wr && sub_wr && same_addr;
-
-// Quartus 17 true-dual-port inference shape: each clocked block owns one RAM
-// port, has one unconditional registered read and at most one byte-enabled
-// write. A same-address pair is deliberately collapsed onto the main port;
-// this avoids relying on device-specific mixed-port collision behaviour while
-// retaining two physical writes when the addresses differ.
-always @(posedge clk) begin
-    main_mem_q <= comm[main_addr];
-    if (main_wr) begin
-        if (main_be[0] || (joined_wr && sub_be[0]) || main_first)
-            comm[main_addr][7:0] <= main_be[0] ? main_wdata[7:0] :
-                                      (joined_wr && sub_be[0]) ? sub_wdata[7:0] :
-                                      comm_default[7:0];
-        if (main_be[1] || (joined_wr && sub_be[1]) || main_first)
-            comm[main_addr][15:8] <= main_be[1] ? main_wdata[15:8] :
-                                       (joined_wr && sub_be[1]) ? sub_wdata[15:8] :
-                                       comm_default[15:8];
-    end
-end
-
-always @(posedge clk) begin
-    sub_mem_q <= comm[sub_addr];
-    if (sub_wr && !joined_wr) begin
-        if (sub_be[0] || sub_first)
-            comm[sub_addr][7:0] <= sub_be[0] ? sub_wdata[7:0] : comm_default[7:0];
-        if (sub_be[1] || sub_first)
-            comm[sub_addr][15:8] <= sub_be[1] ? sub_wdata[15:8] : comm_default[15:8];
-    end
-end
-
-always @(posedge clk) begin
-    if (rst) comm_written <= 2048'b0;
-    else begin
-        if (sub_wr)  comm_written[sub_addr]  <= 1'b1;
-        if (main_wr) comm_written[main_addr] <= 1'b1;
-    end
-end
-
-always @(posedge clk) begin
-    if (rst) begin
-        comm_default <= init_ff ? 16'hffff : 16'h0000;
-        main_written_d <= 0; sub_written_d <= 0;
-        main_ram_d <= 0; main_id_d <= 0; sub_ram_d <= 0; sub_id_d <= 0;
-        main_rdata <= init_ff ? 16'hffff : 16'h0000;
-        sub_rdata  <= init_ff ? 16'hffff : 16'h0000;
-    end
-    else begin
-        main_written_d <= comm_written[main_addr];
-        sub_written_d  <= comm_written[sub_addr];
-        main_ram_d <= main_cs_ram && enable; main_id_d <= main_cs_id && enable;
-        sub_ram_d  <= sub_cs_ram  && enable; sub_id_d  <= sub_cs_id  && enable;
-        if (main_ram_d) main_rdata <= main_written_d ? main_mem_q : comm_default;
-        else if (main_id_d) main_rdata <= 16'h0000;
-        if (sub_ram_d) sub_rdata <= sub_written_d ? sub_mem_q : comm_default;
-        else if (sub_id_d) sub_rdata <= 16'h0001;
-    end
-end
-
-endmodule
-
-// Legacy one-board wrapper. Its interface, main-board identity and two-clock
-// read timing are unchanged; the dormant sub port is tied off.
-module s32_dualpcb (
-    input clk, input rst, input enable, input init_ff,
-    input cs_ram, input cs_id, input we, input [1:0] be,
-    input [11:1] addr, input [15:0] wdata, output [15:0] rdata
-);
-wire [15:0] unused_sub_rdata;
-wire unused_collision;
-s32_dualpcb_bridge bridge (
-    .clk(clk), .rst(rst), .enable(enable), .init_ff(init_ff),
-    .main_cs_ram(cs_ram), .main_cs_id(cs_id), .main_we(we), .main_be(be),
-    .main_addr(addr), .main_wdata(wdata), .main_rdata(rdata),
-    .sub_cs_ram(1'b0), .sub_cs_id(1'b0), .sub_we(1'b0), .sub_be(2'b00),
-    .sub_addr(11'b0), .sub_wdata(16'b0), .sub_rdata(unused_sub_rdata),
-    .collision(unused_collision)
-);
 endmodule
 
 // ---------------------------------------------------------------------------

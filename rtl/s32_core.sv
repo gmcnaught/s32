@@ -50,11 +50,10 @@ module s32_core #(
     // The SegaS32 Quartus revision sets this macro so Cyclone V only pays for
     // hardware present on a single-screen System 32 board.  A future Multi 32
     // revision leaves the macro unset (or explicitly overrides the parameter).
-    parameter SYSTEM32_ONLY = 1'b1,
+    parameter SYSTEM32_ONLY = 1'b1
 `else
-    parameter SYSTEM32_ONLY = 1'b0,
+    parameter SYSTEM32_ONLY = 1'b0
 `endif
-    parameter EXTERNAL_DUAL_BRIDGE = 1'b0
 ) (
     input             clk_sys,      // 48.317307 MHz
     input             clk_ram,      // 96.634615 MHz
@@ -67,17 +66,18 @@ module s32_core #(
 
     input  board_desc_t board,
 
-    // Optional main-board endpoint for a bridge owned above this board
-    // instance. Default builds retain the internal compatibility wrapper.
-    output            dual_ext_enable,
-    output            dual_ext_init_ff,
-    output            dual_ext_cs_ram,
-    output            dual_ext_cs_id,
-    output            dual_ext_we,
-    output      [1:0] dual_ext_be,
-    output     [11:1] dual_ext_addr,
-    output     [15:0] dual_ext_wdata,
-    input      [15:0] dual_ext_rdata,
+    input             comm_rom_wr,
+    input      [14:0] comm_rom_addr,
+    input       [7:0] comm_rom_data,
+    input             comm_fw_loaded,
+    input             comm_native_zfg,
+    input             comm_native_io_ack,
+    input       [7:0] comm_native_io_rdata,
+    output            comm_native_io_req,
+    output            comm_native_io_write,
+    output      [7:0] comm_native_io_addr,
+    output      [7:0] comm_native_io_wdata,
+    output            comm_native_first_out60,
 
     // clock enables (from fractional CE generators in emu top)
     input             ce_cpu,       // 16.108 / 20 MHz physical V60/V70 bus
@@ -213,9 +213,6 @@ wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = 1'b0;
 wire       cfg_has_track         = 1'b0;
 wire       cfg_has_ppi           = 1'b1;
-wire       cfg_has_dsp_hle       = 1'b0;
-wire       cfg_dual_pcb          = 1'b0;
-wire       cfg_dual_comm_ff      = 1'b0;
 wire       cfg_comm_link_hle     = 1'b0;
 wire [6:0] cfg_prot_sel          = PROT_NONE;
 wire       cfg_sprite_bank_valid = 1'b1;
@@ -230,9 +227,6 @@ wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
-wire       cfg_has_dsp_hle       = board.has_dsp_hle;
-wire       cfg_dual_pcb          = board.dual_pcb;
-wire       cfg_dual_comm_ff      = board.dual_comm_ff;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
 wire [6:0] cfg_prot_sel          = board.prot_sel;
 wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
@@ -245,9 +239,6 @@ wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
-wire       cfg_has_dsp_hle       = board.has_dsp_hle;
-wire       cfg_dual_pcb          = board.dual_pcb;
-wire       cfg_dual_comm_ff      = board.dual_comm_ff;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
 wire [6:0] cfg_prot_sel          = board.prot_sel;
 wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
@@ -976,6 +967,22 @@ wire       comm_pub_start = cfg_comm_link_hle && comm_cn && !comm_link_status &&
                              vbl_start && (comm_link_timer <= 16'd1) &&
                              (comm_pub_seq == 2'd0);
 wire       comm_cpu_we    = m_req && m_we && sel_comm_ram && m_be[0];
+wire [15:0] comm_native_host_rdata;
+s32_epr14084_shadow #(.ENABLE_NATIVE_SHADOW(1'b1)) comm_native_shadow (
+    .clk(clk_sys), .rst(rst || !cfg_comm_link_hle || !comm_fw_loaded),
+    .ce(ce_z80), .rom_we(comm_rom_wr), .rom_addr(comm_rom_addr),
+    .rom_data(comm_rom_data),
+    .host_en(m_req && sel_comm_ram), .host_we(m_we),
+    .host_addr(A[10:1]), .host_be(m_be), .host_wdata(m_wdata),
+    .host_rdata(comm_native_host_rdata),
+    .cn(comm_cn), .fg(comm_fg), .zfg(comm_native_zfg),
+    .io_req(comm_native_io_req), .io_write(comm_native_io_write),
+    .io_addr(comm_native_io_addr), .io_wdata(comm_native_io_wdata),
+    .io_ack(comm_native_io_ack), .io_rdata(comm_native_io_rdata),
+    .int_n(1'b1), .dma_window(), .dlc_window(), .unknown_latch(),
+    .authoritative_host_rdata({8'hff, comm_q}), .ram_diverged(),
+    .first_out60(comm_native_first_out60), .first_out60_data()
+);
 wire       comm_cn_clr_we = m_req && m_we && sel_comm_cn && m_be[0] &&
                              cfg_comm_link_hle;   // both cn=0 and cn=1 clear byte 4 to 0x00
 wire       comm_ram_we    = comm_cpu_we || comm_cn_clr_we || (comm_pub_seq != 2'd0);
@@ -1169,16 +1176,6 @@ s32_intc intc (
 // ---------------------------------------------------------------------------
 wire        br_trap;
 wire [15:0] br_trap_q;
-wire [15:0] dsp_q, dual_q;
-assign dual_ext_enable = cfg_dual_pcb;
-assign dual_ext_init_ff = cfg_dual_comm_ff;
-assign dual_ext_cs_ram = EXTERNAL_DUAL_BRIDGE && m_req && sel_dual && !A[15];
-assign dual_ext_cs_id = EXTERNAL_DUAL_BRIDGE && m_req && sel_dual && A[15] &&
-                        A[14:2] == 13'd0;
-assign dual_ext_we = m_we;
-assign dual_ext_be = m_be;
-assign dual_ext_addr = A[11:1];
-assign dual_ext_wdata = m_wdata;
 wire        prot_rom_req;
 wire [23:0] prot_rom_addr;
 wire        prot_rom_ack;
@@ -1207,28 +1204,14 @@ generate
             .clk(clk_sys), .rst(rst), .prot_sel(cfg_prot_sel),
             .cpu_wr(m_req && m_we && (sel_wram || sel_prot_a)),
             .cpu_addr(A), .cpu_wdata(m_wdata),
+            .cpu_be(m_be),
+            .cpu_pre_wram_data(wram_q),
             .vblank(vbl_start),
             .wram_req(pr_req), .wram_we(pr_we), .wram_addr(pr_addr),
             .wram_wdata(pr_wdata), .wram_be(pr_be),
             .wram_rdata(pr_q), .wram_ack(pr_ack),
             .rom_req(prot_rom_req), .rom_addr(prot_rom_addr),
             .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
-        );
-    end
-`endif
-endgenerate
-
-generate
-`ifdef S32_REAL_V25
-    begin : g_no_arescue_dsp
-        assign dsp_q = 16'hffff;
-    end
-`else
-    begin : g_arescue_dsp
-        s32_arescue_dsp dsp (
-            .clk(clk_sys), .rst(rst), .enable(cfg_has_dsp_hle),
-            .cs(m_req && sel_prot_a && A[15:4] == 12'h000), .we(m_we),
-            .be(m_be), .addr(A[2:1]), .wdata(m_wdata), .rdata(dsp_q)
         );
     end
 `endif
@@ -1257,31 +1240,6 @@ generate
             .pram_wdata(br_pram_wdata),
             .rom_req(br_rom_req), .rom_addr(br_rom_addr),
             .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
-        );
-    end
-endgenerate
-
-generate
-    if (EXTERNAL_DUAL_BRIDGE) begin : g_external_dualpcb
-        assign dual_q = dual_ext_rdata;
-    end
-    else if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_dualpcb
-        // Dedicated profiles target boards with no dual-PCB bridge. The
-        // array itself now infers M10K correctly (2026-08-05 fix,
-        // rtl/prot/s32_prot.sv) so this is no longer a large resource win,
-        // just an unused module for the current game scope.
-        assign dual_q = 16'h0000;
-    end
-    else begin : g_dualpcb
-        s32_dualpcb dual (
-            .clk(clk_sys), .rst(rst), .enable(cfg_dual_pcb),
-            .init_ff(cfg_dual_comm_ff),
-            .cs_ram(m_req && sel_dual && !A[15]),
-            // MAME serves the dual-PCB identity only at 0x818000-0x818003; the
-            // rest of the 0x818000-0x81FFFF window reads open-bus (audit R20
-            // IO-10a).  A[14:2]==0 selects the low id words.
-            .cs_id(m_req && sel_dual && A[15] && A[14:2] == 13'd0),
-            .we(m_we), .be(m_be), .addr(A[11:1]), .wdata(m_wdata), .rdata(dual_q)
         );
     end
 endgenerate
@@ -1620,18 +1578,15 @@ always @(posedge clk_sys) begin
                 // Open-bus outside the comm RAM (A[15]=0) and the 4-byte id
                 // window (A[15] && A[14:2]==0); the module holds stale rdata
                 // when neither chip-select fires (audit R20 IO-10a).
-                sel_dual:    rmux <= (cfg_dual_pcb &&
-                                      (!A[15] || A[14:2] == 13'd0)) ? dual_q
-                                                                    : 16'hffff;
+                sel_dual:    rmux <= 16'hffff;
                 sel_v25:     if (GAME_ONLY && !GAME_ONLY_STD)
                                  // Open-bus when this board has no V25 (holo,
                                  // spidman): MAME leaves 0xA00000 unmapped
                                  // (audit R20 PF-7).
                                  rmux <= cfg_has_v25 ? {8'hff, v25_q} : 16'hffff;
                              else
-                                 rmux <= cfg_has_v25 ? {8'hff, v25_q} :
-                                         cfg_has_dsp_hle ? dsp_q : 16'hffff;
-                sel_prot_a:  rmux <= cfg_has_dsp_hle ? dsp_q : 16'hffff;
+                                 rmux <= cfg_has_v25 ? {8'hff, v25_q} : 16'hffff;
+                sel_prot_a:  rmux <= 16'hffff;
                 sel_io0:     rmux <= {8'hff, io0_q};
                 sel_io1:     rmux <= {8'hff, io1_q};
                 // MSM6253 serial output is wired to D7, not D0 (MAME

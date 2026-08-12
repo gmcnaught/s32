@@ -86,8 +86,8 @@ package s32_pkg;
         logic       has_adc;       // MSM6253 analog board
         logic       has_track;     // uPD4701 trackball board
         logic       has_ppi;       // i8255 4/6-player board
-        logic       has_dsp_hle;   // Air Rescue math-DSP command responder
-        logic       dual_pcb;      // F1 Exhaust Note bridge responder
+        logic       has_dsp_hle;   // reserved descriptor bit; unsupported
+        logic       dual_pcb;      // reserved descriptor bit; unsupported
         logic [6:0] prot_sel;      // HLE protection select (PROT_*)
         logic       comm_link_hle; // descriptor-selected EPR-14084 link HLE
         // Sprite ROMs contain one, two, or four 4 MiB banks.  MAME mirrors

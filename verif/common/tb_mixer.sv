@@ -10,6 +10,8 @@
 //  8. backdrop static/line-color indices come from VRAM $1FF5E, not mixer $5E
 //  9. offset-before-blend arithmetic and both palette operands are phase-safe
 // 10. $1FF8E NBG pen-0 pixels are backdrop fallbacks, never normal-priority
+// 11. production digital output order is offset -> blend -> shadow -> clamp,
+//     followed by the 5-bit-to-8-bit output latch expansion
 //============================================================================
 `timescale 1ns/1ps
 
@@ -469,6 +471,19 @@ initial begin
     wreg(6'h19, 16'h4100);             // bank 0 + blendmask NBG1
     px(9'd10);
     check(rgb, 24'hB8B8B8, 9'd10);
+
+    // --- 11: exact 315-5242-facing digital pipeline invariant ---
+    // The same offset/blend result is 23. A shadow pen then shifts it to 11,
+    // clamp5 retains 11, and the output latch expands 5'b01011 as 0x58.
+    // Applying shadow before blend, or quantizing/clamping at either earlier
+    // stage, produces a different value and must fail this fixture.
+    wreg(6'h26, 16'h0007);
+    wreg(6'h00, 16'h000F);
+    spr_pix = 16'h07FE;
+    px(9'd10);
+    check(rgb, 24'h585858, 9'd10);
+    spr_pix = 16'hffff;
+
     wreg(6'h27, 16'h0000);
     wreg(6'h19, 16'h0000);
     wreg(6'h20, 16'h0000); wreg(6'h21, 16'h0000); wreg(6'h22, 16'h0000);

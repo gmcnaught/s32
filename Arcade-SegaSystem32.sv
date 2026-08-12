@@ -245,8 +245,9 @@ always @(posedge clk_sys) begin
 end
 
 // fractional clock enables (DESIGN.md §3.3)
-reg ce_cpu, ce_z80, ce_fm, ce_pcm;
-reg [15:0] acc_cpu, acc_z80, acc_fm, acc_pcm;
+reg ce_cpu;
+wire ce_z80, ce_fm, ce_pcm;
+reg [15:0] acc_cpu;
 wire is_multi32 = active_board.multi32;
 // CPU Turbo is retired in the single merged profile: s32.sdc's V60 register-
 // to-register multicycle relaxation now applies unconditionally, and that
@@ -264,42 +265,21 @@ wire [15:0] cpu_ce_inc = active_board.has_v25
 always @(posedge clk_sys) begin
     logic [16:0] s;
     if (reset) begin
-        ce_cpu <= 1'b0; ce_z80 <= 1'b0; ce_pcm <= 1'b0;
-        acc_cpu <= 16'd0; acc_z80 <= 16'd0; acc_pcm <= 16'd0;
+        ce_cpu <= 1'b0;
+        acc_cpu <= 16'd0;
     end
     else begin
         // cpu: 16.10795/48.317307 (V60); 20/48.317307 (V70)
         s = acc_cpu + {1'b0, cpu_ce_inc};  // base increment * turbo mult (capped)
         ce_cpu <= s[16];
         acc_cpu <= s[15:0];
-        // Z80/YM3438: 32.2159 MHz / 4 on the standard board.
-        s = acc_z80 + (is_multi32 ? 16'd10851 : PCB_Z80_CE_INC);
-        ce_z80 <= s[16];
-        acc_z80 <= s[15:0];
-        // RF5C68-family PCM: separate 50 MHz source / 4 = 12.5 MHz.
-        s = acc_pcm + (is_multi32 ? 16'd13564 : PCB_PCM_CE_INC);
-        ce_pcm <= s[16];
-        acc_pcm <= s[15:0];
     end
 end
 
-// JT12's resettable operator/envelope rings advance only on its enabled
-// clock.  Keep the FM chip clock running throughout board/ROM-load reset;
-// tying it to the halted Z80 CE leaves those rings unreset and can poison the
-// stereo mixer with unknown/random startup state.  PLL unlock is the only
-// condition that stops and rephases this NCO.
-always @(posedge clk_sys) begin
-    logic [16:0] s;
-    if (!pll_locked) begin
-        ce_fm <= 1'b0;
-        acc_fm <= 16'd0;
-    end
-    else begin
-        s = acc_fm + (is_multi32 ? 16'd10851 : PCB_Z80_CE_INC);
-        ce_fm <= s[16];
-        acc_fm <= s[15:0];
-    end
-end
+s32_audio_ce audio_ce(
+    .clk(clk_sys), .reset(reset), .pll_locked(pll_locked),
+    .is_multi32(is_multi32), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm)
+);
 
 ///////////////////////////////   HPS IO   ////////////////////////////////////
 
@@ -355,6 +335,10 @@ wire  [1:0] sw_be;
 wire        v25_wr;
 wire [15:0] v25_waddr;
 wire  [7:0] v25_wdata;
+wire comm_rom_wr;
+wire [14:0] comm_rom_addr;
+wire [7:0] comm_rom_data;
+wire comm_fw_loaded;
 wire        eep_wr;
 wire  [5:0] eep_waddr;
 wire [15:0] eep_wdata;
@@ -369,6 +353,9 @@ s32_rom_loader #(.WIDE(1)) loader (
     .sdr_wr_req(sw_req), .sdr_wr_addr(sw_addr), .sdr_wr_din(sw_din),
     .sdr_wr_be(sw_be), .sdr_wr_ack(sw_ack),
     .v25_wr(v25_wr), .v25_waddr(v25_waddr), .v25_wdata(v25_wdata),
+    .comm_rom_wr(comm_rom_wr), .comm_rom_addr(comm_rom_addr),
+    .comm_rom_data(comm_rom_data),
+    .comm_fw_loaded(comm_fw_loaded),
     .eep_wr(eep_wr), .eep_waddr(eep_waddr), .eep_wdata(eep_wdata),
     .eep_loaded(), .rom_loaded(rom_loaded)
 );
@@ -412,7 +399,6 @@ wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_blend_buf;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix, fbr_pix;
-
 s32_fb_if fb (
     .clk(clk_ram), .rst(reset),
     .DDRAM_BUSY(DDRAM_BUSY), .DDRAM_BURSTCNT(DDRAM_BURSTCNT),
@@ -739,7 +725,6 @@ wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
 wire [23:0] rgb_a, rgb_b;
 wire ce_pix_core, core_hs, core_hb, core_vb, mode_416_active;
 wire signed [15:0] aud_l, aud_r;
-
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
 `ifdef S32_REAL_V25
@@ -786,7 +771,13 @@ s32_core core (
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
     .mode_416_active(mode_416_active),
     .audio_l(aud_l), .audio_r(aud_r),
-    .out_lamps()
+    .out_lamps(),
+    .comm_rom_wr(comm_rom_wr), .comm_rom_addr(comm_rom_addr),
+    .comm_rom_data(comm_rom_data),
+    .comm_fw_loaded(comm_fw_loaded),
+    .comm_native_zfg(1'b0),.comm_native_io_ack(1'b0),.comm_native_io_rdata(8'hff),
+    .comm_native_io_req(),.comm_native_io_write(),.comm_native_io_addr(),
+    .comm_native_io_wdata(),.comm_native_first_out60()
 );
 
 assign AUDIO_L = aud_l;

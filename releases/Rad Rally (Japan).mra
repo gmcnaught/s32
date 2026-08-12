@@ -60,6 +60,12 @@
     <part name="eeprom-radr.ic76" crc="602032c6"/>
   </rom>
   <nvram index="3" size="128"/>
+  <rom index="13" zip="radr.zip|radrj.zip" md5="none">
+    <part name="epr-14084.17" crc="f14ed074"/>
+  </rom>
+  <rom index="14" zip="radr.zip|radrj.zip" md5="none">
+    <part name="epr-14084.17" crc="f14ed074"/>
+  </rom>
   <rom index="0">
     <part>08908081000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000</part>
   </rom>

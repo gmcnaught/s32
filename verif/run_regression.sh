@@ -7,21 +7,18 @@ iverilog -g2012 -DSIMULATION -o /tmp/s32_lint \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_lint.sv
 vvp /tmp/s32_lint | grep -q "CORE UNIVERSAL LINT PASS" || { echo "CORE UNIVERSAL LINT: FAIL"; exit 1; }
 iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING -o /tmp/s32_lint_s32 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_lint.sv
 vvp /tmp/s32_lint_s32 | grep -q "CORE STANDARD PROFILE LINT PASS" && echo "CORE BUILD PROFILES: PASS" || { echo "CORE STANDARD LINT: FAIL"; exit 1; }
 echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv
 vvp /tmp/s32_v60_smoke | grep -q "SMOKE PASS" && echo "V60 SMOKE: PASS" || { echo "V60 SMOKE: FAIL"; exit 1; }
-iverilog -g2012 -o /tmp/s32_v60_dualctx \
-  rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_dualctx.sv verif/v60/tb_v60_dualctx.sv
-vvp /tmp/s32_v60_dualctx | grep -q "V60 DUALCTX PASS" && echo "V60 DUALCTX: PASS" || { echo "V60 DUALCTX: FAIL"; exit 1; }
 echo "[3/35] V60 directed suite"
 iverilog -g2012 -o /tmp/s32_v60_dir \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_directed.sv
@@ -31,13 +28,13 @@ iverilog -g2012 -DSIMULATION -o /tmp/s32_boot \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_boot.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_boot.sv
 vvp /tmp/s32_boot | grep -q "CORE BOOT PASS" || { echo "CORE UNIVERSAL BOOT: FAIL"; exit 1; }
 iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING -o /tmp/s32_boot_s32 \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_boot.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_boot.sv
 vvp /tmp/s32_boot_s32 | grep -q "CORE BOOT PASS" && echo "CORE BUILD-PROFILE BOOTS: PASS" || { echo "CORE S32-ONLY BOOT: FAIL"; exit 1; }
 echo "[5/35] V60 differential co-sim vs independent reference (50 seeds)"
 sh verif/cosim/run_diff.sh 50
@@ -46,7 +43,7 @@ iverilog -g2012 -DSIMULATION -o /tmp/s32_soak \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_soak.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_soak.sv
 vvp /tmp/s32_soak | grep -q "CORE SOAK PASS" && echo "CORE SOAK: PASS" || { echo "CORE SOAK: FAIL"; exit 1; }
 echo "[7/35] V60 audit-fix directed test (string/CALL/RET/RSR — audit.md)"
 iverilog -g2012 -o /tmp/s32_v60_audit \
@@ -76,7 +73,7 @@ iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PC
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_ga2path.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_ga2path.sv
 vvp /tmp/s32_ga2 | grep -q "GA2 PATH PASS" && echo "GA2 PATH: PASS" || { echo "GA2 PATH: FAIL"; exit 1; }
 iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PCB_TIMING \
   -s tb_ga_rom_cache -o /tmp/s32_ga_rom_cache \
@@ -158,9 +155,6 @@ vvp /tmp/s32_i8255 | grep -q "I8255 MAME PASS" && echo "I8255 MAME: PASS" || { e
 iverilog -g2012 -s tb_brival_protection -o /tmp/s32_brival_protection \
   rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_brival_protection.sv
 vvp /tmp/s32_brival_protection | grep -q "BRIVAL PROTECTION PASS" && echo "BRIVAL PROTECTION: PASS" || { echo "BRIVAL PROTECTION: FAIL"; exit 1; }
-iverilog -g2012 -s tb_arescue_protection -o /tmp/s32_arescue_protection \
-  rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_arescue_protection.sv
-vvp /tmp/s32_arescue_protection | grep -q "AIR RESCUE PROTECTION PASS" && echo "AIR RESCUE PROTECTION: PASS" || { echo "AIR RESCUE PROTECTION: FAIL"; exit 1; }
 echo "[19/35] V60 20-byte F1 / high fetch-buffer offset regression"
 iverilog -g2012 -o /tmp/s32_v60_long_ea \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_long_ea.sv
@@ -301,7 +295,7 @@ iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
   rtl/video/*.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
-  verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_map_decode.sv
+  verif/common/jt12_stub.v rtl/comm/epr14084/s32_epr14084_shadow.sv rtl/s32_core.sv verif/common/tb_core_map_decode.sv
 vvp /tmp/s32_core_map | grep -q "CORE MAP DECODE PASS" && echo "CORE MAP DECODE: PASS" || { echo "CORE MAP DECODE: FAIL"; exit 1; }
 echo "[35a/37] Three-player left-stick to trackball velocity"
 iverilog -g2012 -s tb_trackball_stick -o /tmp/s32_trackball_stick \
