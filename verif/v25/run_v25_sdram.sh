@@ -53,6 +53,7 @@ fi
 
 "$safe_verilator" \
     --binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4 \
+    -CFLAGS -D_GLIBCXX_USE_CXX11_ABI=0 \
     -Wall -Wno-fatal \
     -Wno-WIDTH -Wno-UNSIGNED -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-UNDRIVEN \
     -Wno-WIDTHEXPAND -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE -Wno-IMPLICIT \
@@ -72,7 +73,28 @@ fi
     rtl/s32_core.sv verif/common/tb_core_v25sdram.sv \
     2>&1 | tee "$build_dir/compile.log"
 
-"$safe_sim" -- "$build_dir/obj_dir/Vtb_core_v25sdram" 2>&1 | tee "$build_dir/run.log"
+if [[ "${S32_V25_BUILD_ONLY:-0}" == "1" ]]; then
+    build_exe="$build_dir/obj_dir/Vtb_core_v25sdram.exe"
+    if command -v cygpath >/dev/null 2>&1; then
+        build_exe="$(cygpath -w "$build_exe")"
+        build_dir_native="$(cygpath -w "$build_dir")"
+    else
+        build_dir_native="$build_dir"
+    fi
+    echo "V25_SDRAM EXE: $build_exe"
+    echo "V25_SDRAM BUILD DIR: $build_dir_native"
+    echo "V25_SDRAM BUILD: PASS ($((SECONDS - start_seconds))s)"
+    exit 0
+fi
+
+sim_exe="$build_dir/obj_dir/Vtb_core_v25sdram"
+if [[ -f "$sim_exe.exe" ]]; then
+    sim_exe="$sim_exe.exe"
+fi
+if command -v cygpath >/dev/null 2>&1; then
+    sim_exe="$(cygpath -w "$sim_exe")"
+fi
+"$safe_sim" -- "$sim_exe" 2>&1 | tee "$build_dir/run.log"
 
 if ! grep -Fq "V25 SDRAM INTEGRATION PASS" "$build_dir/run.log"; then
     echo "V25_SDRAM RUNNER FAIL: integration marker missing" >&2

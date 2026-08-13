@@ -44,9 +44,11 @@ class GlobalProfileContractTests(unittest.TestCase):
     def test_universal_qsf_carries_both_hardware_shapes(self) -> None:
         qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
         for macro in ("S32_PROFILE_STANDARD=1", "S32_GAME_ONLY_STD=1",
-                      "S32_UNIVERSAL=1", "S32_V25_HW=1",
-                      "S32_V25_MLAB_EEPROM=1", "S32_V25_MLAB_FIFO=1"):
+                      "S32_UNIVERSAL=1", "S32_V25_HW=1"):
             self.assertIn(f'VERILOG_MACRO "{macro}"', qsf)
+        for macro in ("S32_JT12_MLAB_SHIFTS=1", "S32_V25_MLAB_FIFO=1",
+                      "S32_V25_MLAB_EEPROM=1"):
+            self.assertNotIn(f'VERILOG_MACRO "{macro}"', qsf)
         self.assertNotIn('VERILOG_MACRO "S32_REAL_V25=1"', qsf)
         self.assertNotIn('VERILOG_MACRO "S32_PROFILE_V25=1"', qsf)
         self.assertIn("QIP_FILE rtl/cpu/v25/v25.qip", qsf)
@@ -242,28 +244,10 @@ class GlobalProfileContractTests(unittest.TestCase):
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
         self.assertIn('"h0O[8],Alien 3 Flicker Blend,Off,On;"', text)
         self.assertIn(
-            ".status_menumask({14'd0, ~status[9], active_board.gun_aim && "
+            ".status_menumask({15'd0, active_board.gun_aim && "
             "active_board.coin_swap})",
             text,
         )
-        self.assertIn('"O[28:27],Scale,Normal,V-Integer,HV-Integer;"', text)
-        self.assertIn('"O[9],CRT Adjust,Off,On;"', text)
-        self.assertIn('"H1O[14:10],CRT H-Size,', text)
-        self.assertIn('"H1O[21:15],CRT H-Position,', text)
-        self.assertIn('"H1O[26:22],CRT V-Shift,', text)
-        self.assertIn('SYSTEMVERILOG_FILE rtl/crt_adjust.sv', (ROOT / "files.qip").read_text(encoding="utf-8"))
-        self.assertIn('crt_adjust #(', text)
-        self.assertIn('.AW        (10)', text)
-        self.assertIn(
-            "wire hdmi_output_active = (HDMI_WIDTH != 12'd0) || "
-            "(HDMI_HEIGHT != 12'd0);",
-            text,
-        )
-        self.assertIn(
-            "wire crt_adjust_active = crt_on && !hdmi_output_active",
-            text,
-        )
-        self.assertIn('video_freak s32_video_freak', text)
         self.assertIn(
             ".alien3_hud_blend(alien3_controls && status[8])",
             text,
@@ -278,6 +262,105 @@ class GlobalProfileContractTests(unittest.TestCase):
         )
         self.assertIn("s32_fb_line_ram line_ram0", fb_if)
         self.assertIn("s32_fb_line_ram line_ram1", fb_if)
+
+    def test_production_video_path_excludes_optional_geometry(self) -> None:
+        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
+        for removed in (
+            '"O[9],CRT Adjust,Off,On;"',
+            '"H1O[14:10],CRT H-Size,',
+            '"H1O[21:15],CRT H-Position,',
+            '"H1O[26:22],CRT V-Shift,',
+            "crt_adjust #(",
+        ):
+            self.assertNotIn(removed, text)
+        self.assertIn('"O[28:27],Scale,Normal,V-Integer,HV-Integer;"', text)
+        self.assertIn("video_freak s32_video_freak", text)
+        self.assertIn("status[28:27]", text)
+        self.assertNotIn("SYSTEMVERILOG_FILE rtl/crt_adjust.sv", files_qip)
+        for direct in (
+            ".VIDEO_ARX (VIDEO_ARX)",
+            ".VIDEO_ARY (VIDEO_ARY)",
+            "assign CE_PIXEL = ce_pix_core;",
+            "assign VGA_HS = core_hs;",
+            "assign VGA_VS = core_vs;",
+            "assign VGA_DE = ~(core_hb | core_vb);",
+        ):
+            self.assertIn(direct, text)
+
+    def test_universal_memory_storage_targets_m10k(self) -> None:
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        v25 = (ROOT / "rtl/cpu/v25/s32_v25_cpu.sv").read_text(
+            encoding="utf-8")
+        self.assertIn(
+            '(* ramstyle = "M10K, no_rw_check" *) reg [CACHE_WIDTH-1:0] cache_mem',
+            core,
+        )
+        self.assertEqual(v25.count('ram_block_type = "M10K"'), 2)
+
+    def test_default_regressions_do_not_force_retired_mlab_branches(self) -> None:
+        for relative in ("verif/run_regression.ps1", "verif/run_regression.sh"):
+            runner = (ROOT / relative).read_text(encoding="utf-8")
+            for macro in ("S32_JT12_MLAB_SHIFTS", "S32_V25_MLAB_FIFO",
+                          "S32_V25_MLAB_EEPROM"):
+                self.assertNotIn(macro, runner, relative)
+
+    def test_modelsim_isolates_incompatible_v25_donor_without_losing_gates(self) -> None:
+        runner = (ROOT / "verif/run_regression.ps1").read_text(
+            encoding="utf-8")
+        self.assertIn("function Assert-V25SourceClosure", runner)
+        self.assertIn("V25 UNIVERSAL SOURCE CLOSURE: PASS", runner)
+        self.assertNotIn("$V25Sources", runner)
+        self.assertNotIn('"-mfcu"', runner)
+        self.assertIn("ModelSim full-core lint (compatible HLE shape)", runner)
+        self.assertIn("-ModelSimBin $ModelSimDirectory", runner)
+        for gate in (
+            "verif/v25/run_v25_firmware.ps1",
+            "verif/v25/run_v25_integration.ps1",
+            "verif/v25/run_v25_sdram.ps1",
+        ):
+            self.assertIn(gate, runner)
+
+    def test_sound_benches_use_the_external_wave_ram_contract(self) -> None:
+        runner = (ROOT / "verif/run_regression.ps1").read_text(
+            encoding="utf-8")
+        self.assertGreaterEqual(
+            runner.count("verif/common/s32_wave_ram_model.sv"), 2)
+        for name in ("tb_soundsys_z80.sv", "tb_soundsys_shared.sv"):
+            bench = (ROOT / "verif/common" / name).read_text(encoding="utf-8")
+            self.assertIn("s32_wave_ram_model wave_mem", bench, name)
+            self.assertIn(".wave_rd_req(wave_rd_req)", bench, name)
+            self.assertIn(".wave_wr_req(wave_wr_req)", bench, name)
+            self.assertNotIn("dut.rf5c68.wave_ram", bench, name)
+
+    def test_real_v25_runners_use_native_safe_build_run_handoff(self) -> None:
+        for stem, marker in (
+            ("integration", "V25_INTEGRATION"),
+            ("sdram", "V25_SDRAM"),
+        ):
+            ps1 = (ROOT / "verif/v25" / f"run_v25_{stem}.ps1").read_text(
+                encoding="utf-8")
+            shell = (ROOT / "verif/v25" / f"run_v25_{stem}.sh").read_text(
+                encoding="utf-8")
+            self.assertIn(r"C:\msys64\usr\bin\bash.exe", ps1)
+            self.assertNotIn("& wsl", ps1)
+            self.assertIn("$env:S32_V25_BUILD_ONLY = '1'", ps1)
+            self.assertIn("& $safeSimulator -- $firmwareExe", ps1)
+            self.assertIn("-CFLAGS -D_GLIBCXX_USE_CXX11_ABI=0", shell)
+            self.assertIn(f"{marker} EXE:", shell)
+            self.assertIn(f"{marker} BUILD DIR:", shell)
+
+    def test_sprite_srom_verification_uses_real_v25_descriptor_scope(self) -> None:
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        self.assertIn(".VERIFY_SROM(1'b1)", core)
+        self.assertIn(
+            ".verify_srom(cfg_has_v25 && !cfg_v25_table)", core)
+        self.assertNotIn(".verify_srom(!cfg_v25_table)", core)
+        selected = {
+            parent for parent, descriptor in GAMES.items()
+            if (descriptor[0] & 0x02) and not (descriptor[0] & 0x04)
+        }
+        self.assertEqual(selected, {"ga2"})
 
     def test_rad_rally_gear_is_a_descriptor_selected_toggle(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")

@@ -136,6 +136,10 @@ reg [63:0] ddin;
 reg [7:0]  dbe;
 reg [6:0]  beat, beats;
 reg [6:0]  rbeat;
+// Word currently being serviced by the run flusher.  Capturing this at the
+// flush boundary keeps the active byte-enable path independent of run_x0 and
+// the beat counter's add chain.
+reg [6:0]  run_word_q;
 reg [1:0]  rd_blend_buf_latched;
 reg [63:0] compose_other;
 reg  [6:0] compose_addr;
@@ -206,10 +210,10 @@ endfunction
 // accepting edge q still contains the immediately following word.  Thus the
 // registered RAM sustains one DDR word per accepted clock without allowing a
 // stalled request's data to change.
-wire [6:0] run_word_base = run_x0[8:2];
-wire [6:0] run_cur_word  = run_word_base + beat;
-wire [6:0] run_next_word = run_cur_word + 7'd1;
-wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? run_word_base :
+wire [6:0] run_word_base = run_word_q;
+wire [6:0] run_cur_word  = run_word_q;
+wire [6:0] run_next_word = run_word_q + 7'd1;
+wire [6:0] run_ram_raddr = (dst == D_IDLE)       ? run_x0[8:2] :
                             (dst == D_WR_PF)      ? run_next_word :
                             (dst == D_WR_SKIP)    ? run_cur_word :
                             (dst == D_WR_SKIP_PF) ? run_next_word :
@@ -300,6 +304,7 @@ assign wr_busy = wr_end | flush_req |
 always @(posedge clk) begin
     if (rst) begin
         dst <= D_IDLE; dwe <= 0; drd <= 0; er_ack <= 0; rd_ack <= 0;
+        run_word_q <= 7'd0;
         rd_blend_latched <= 1'b0;
         rd_blend_buf_latched <= 2'd0;
         display_bank <= 1'b0;
@@ -345,6 +350,7 @@ always @(posedge clk) begin
             else if (flush_req) begin
                 beat  <= 0;
                 beats <= (run_xe[8:2] - run_x0[8:2]);
+                run_word_q <= run_x0[8:2];
                 daddr <= pix_addr(run_bufsel, run_y, run_x0[8:2]);
                 if (!run_any) begin
                     // fully-transparent row: nothing to flush
@@ -393,12 +399,14 @@ always @(posedge clk) begin
                 // A zero-BE DDR write has no framebuffer effect, so walk the
                 // mask locally instead of consuming external acceptance slots.
                 beat  <= beat + 1'd1;
+                run_word_q <= run_word_q + 1'd1;
                 daddr <= daddr + 1'd1;
                 dwe   <= 1'b0;
                 dst   <= D_WR_SKIP;
             end
             else begin
                 beat  <= beat + 1'd1;
+                run_word_q <= run_word_q + 1'd1;
                 daddr <= daddr + 1'd1;
                 dbe   <= run_next_be;
                 dwe   <= 1'b1;
@@ -416,6 +424,7 @@ always @(posedge clk) begin
             end
             else begin
                 beat  <= beat + 1'd1;
+                run_word_q <= run_word_q + 1'd1;
                 daddr <= daddr + 1'd1;
             end
         end
@@ -443,6 +452,7 @@ always @(posedge clk) begin
             if (beat == beats) dst <= D_IDLE;
             else begin
                 beat   <= beat + 1'd1;
+                run_word_q <= run_word_q + 1'd1;
                 daddr  <= daddr + 1'd1;
                 dburst <= 8'd1;
                 if (run_next_mask != 4'b0000) begin
@@ -473,6 +483,7 @@ always @(posedge clk) begin
             end
             else begin
                 beat  <= beat + 1'd1;
+                run_word_q <= run_word_q + 1'd1;
                 daddr <= daddr + 1'd1;
             end
         end

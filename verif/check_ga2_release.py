@@ -8,11 +8,13 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 standard_qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
 for macro in ("S32_PROFILE_STANDARD=1", "S32_UNIVERSAL=1", "S32_V25_HW=1",
-              "S32_V25_MLAB_FIFO=1",
-              "S32_JT12_MLAB_SHIFTS=1",
               "S32_GAME_ONLY_STD=1", "S32_V60_NO_FP=1"):
     assert f'VERILOG_MACRO "{macro}"' in standard_qsf, \
         f"segas32.qsf is missing {macro}"
+for macro in ("S32_V25_MLAB_FIFO=1", "S32_V25_MLAB_EEPROM=1",
+              "S32_JT12_MLAB_SHIFTS=1"):
+    assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
+        f"segas32.qsf must not force {macro}"
 assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in standard_qsf, \
     "the obsolete fixed V25 profile macro must not return"
 assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \

@@ -202,14 +202,14 @@ echo "[24/35] byte-wide true-dual-port BRAM timing / hold / collision semantics"
 iverilog -g2012 -s tb_byte_dpram -o /tmp/s32_byte_dpram \
   rtl/video/s32_big_dpram.sv verif/common/tb_byte_dpram.sv
 vvp /tmp/s32_byte_dpram | grep -q "BYTE DPRAM PASS" && echo "BYTE DPRAM: PASS" || { echo "BYTE DPRAM: FAIL"; exit 1; }
-echo "[25/35] V25 mailbox BRAM + production MLAB FIFO profile"
+echo "[25/35] V25 mailbox BRAM + production default FIFO profile"
 iverilog -g2012 -s tb_v25_dpram -o /tmp/s32_v25_dpram \
   rtl/s32_pkg.sv rtl/video/s32_big_dpram.sv rtl/prot/s32_prot.sv \
   verif/common/tb_v25_dpram.sv
 vvp /tmp/s32_v25_dpram | grep -q "V25 DPRAM PASS" && echo "V25 DPRAM: PASS" || { echo "V25 DPRAM: FAIL"; exit 1; }
-iverilog -g2012 -DS32_V25_MLAB_FIFO -s Fifo -o /tmp/s32_v25_mlab_fifo \
+iverilog -g2012 -s Fifo -o /tmp/s32_v25_default_fifo \
   rtl/cpu/v25/s80x86/rtl/Fifo.sv
-echo "V25 MLAB FIFO COMPILE: PASS"
+echo "V25 DEFAULT FIFO COMPILE: PASS"
 echo "[26/35] SDRAM CL2 centred input capture / first-word freshness / burst ordering"
 iverilog -g2012 -s tb_sdram -o /tmp/s32_sdram \
   rtl/mem/sdram.sv verif/common/tb_sdram.sv
@@ -248,7 +248,7 @@ iverilog -g2012 -DS32_SYSTEM32_ONLY -s tb_audio_mix_diff -o /tmp/s32_audio_mix_d
   rtl/audio/s32_audio_mix.sv verif/common/tb_audio_mix_diff.sv
 vvp /tmp/s32_audio_mix_diff_ga | grep -q "PASS: audio mixer differential checks=20012" && \
   echo "AUDIO MIX DIFFERENTIAL (GOLDEN AXE): PASS" || { echo "AUDIO MIX DIFFERENTIAL (GOLDEN AXE): FAIL"; exit 1; }
-echo "[30/35] sound map/cache throughput + production JT12 MLAB-shift reset"
+echo "[30/35] sound map/cache throughput + production JT12 default-storage reset"
 iverilog -g2012 -DSIMULATION -o /tmp/s32_soundsys_bus \
   rtl/s32_pkg.sv rtl/video/s32_big_dpram.sv \
   rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
@@ -271,10 +271,10 @@ echo "SOUNDSYS ZROM CACHE A/B: PASS"
 jt12_sources=$(sed -n 's/.*"\([^"]*\)".*/rtl\/audio\/jt12\/\1/p' rtl/audio/jt12/jt12.qip)
 # QIP paths contain no whitespace; intentional splitting supplies one source per argument.
 # shellcheck disable=SC2086
-iverilog -g2012 -DS32_JT12_MLAB_SHIFTS -s tb_jt12_reset -o /tmp/s32_jt12_reset \
+iverilog -g2012 -s tb_jt12_reset -o /tmp/s32_jt12_reset \
   $jt12_sources verif/common/tb_jt12_reset.sv
-vvp /tmp/s32_jt12_reset | grep -q "JT12 RESET PASS" && echo "JT12 MLAB-SHIFT RESET: PASS" || \
-  { echo "JT12 MLAB-SHIFT RESET: FAIL"; exit 1; }
+vvp /tmp/s32_jt12_reset | grep -q "JT12 RESET PASS" && echo "JT12 DEFAULT-STORAGE RESET: PASS" || \
+  { echo "JT12 DEFAULT-STORAGE RESET: FAIL"; exit 1; }
 unset jt12_sources
 echo "[31/35] MAME-backed MultiPCM descriptor / pitch / pan / loop / ACK semantics"
 iverilog -g2012 -o /tmp/s32_multipcm \

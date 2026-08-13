@@ -23,6 +23,11 @@ module tb_soundsys_shared;
     reg  [15:0] zrom_data = 16'h0000;
     reg         zrom_ack  = 1'b0;
     wire signed [15:0] audio_l, audio_r;
+    wire        wave_rd_req, wave_rd_ack;
+    wire [15:0] wave_rd_addr, wave_rd_data;
+    wire        wave_wr_req, wave_wr_ack;
+    wire [15:0] wave_wr_addr;
+    wire  [7:0] wave_wr_data;
 
     // V60 side of the shared RAM
     reg         sh_cs   = 1'b0;
@@ -47,7 +52,19 @@ module tb_soundsys_shared;
         .zrom_req(zrom_req), .zrom_addr(zrom_addr),
         .zrom_data(zrom_data), .zrom_ack(zrom_ack),
         .mpcm_req(), .mpcm_addr(), .mpcm_data(8'd0), .mpcm_ack(1'b0),
+        .wave_rd_req(wave_rd_req), .wave_rd_addr(wave_rd_addr),
+        .wave_rd_data(wave_rd_data), .wave_rd_ack(wave_rd_ack),
+        .wave_wr_req(wave_wr_req), .wave_wr_addr(wave_wr_addr),
+        .wave_wr_data(wave_wr_data), .wave_wr_ack(wave_wr_ack),
         .audio_l(audio_l), .audio_r(audio_r)
+    );
+
+    s32_wave_ram_model wave_mem (
+        .clk(clk),
+        .rd_req(wave_rd_req), .rd_addr(wave_rd_addr),
+        .rd_data(wave_rd_data), .rd_ack(wave_rd_ack),
+        .wr_req(wave_wr_req), .wr_addr(wave_wr_addr),
+        .wr_data(wave_wr_data), .wr_ack(wave_wr_ack)
     );
 
     // One-cycle SDRAM response for Z80 program fetches.

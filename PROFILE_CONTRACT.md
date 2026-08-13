@@ -63,8 +63,9 @@ four independent SDRAM transactions.  The transport improved from 52 to 16
 protection reads remain single-word non-bursts.  The production synchronous
 cache is 64 lines instead of 32: a measured alternating conflict fixture drops
 from eight misses to zero after warm-up.  The previous accepted report shows
-this cache class uses MLABs rather than M10Ks; the estimated increase is about
-40 memory ALMs, but the new inference and timing remain Quartus-unverified.
+this cache class used MLABs rather than M10Ks. The universal profile now returns
+the cache to M10K storage to preserve memory-ALM slack; the new inference and
+timing remain Quartus-unverified.
 
 The tilemap retains tagged bitmap VRAM words for all lanes and caches exact
 NBG0/NBG1 reciprocal results by their complete effective zoom-denominator key.
@@ -213,6 +214,15 @@ changes the external V60 bus clock.
 | V60 Fetch | reset-latched PCB/Fast instruction transport; data/I/O bus fixed at PCB cadence |
 | Multi 32 second screen/peripheral hardware | no |
 | HDMI shadow-mask post-process | compiled out (`MISTER_DISABLE_SHADOWMASK`) |
+| CRT Adjust | not instantiated; native video and 4:3/custom aspect pass directly to the framework |
+| Integer scaling | framework `video_freak` target-size calculation retained for Normal, V-Integer, and HV-Integer OSD modes |
+
+The production QSF no longer forces the JT12 shift stores, V25 FIFOs, or V25
+EEPROM replicas into MLABs. The V25 internal data-memory byte lanes and the
+main-ROM cache explicitly target M10Ks. Sprite-ROM read verification remains
+compiled for the universal real-V25 hardware and is enabled only when the
+descriptor selects `has_v25 && !v25_table` (GA2, not Arabian Fight or standard
+HLE titles).
 
 ## Evidence status (2026-08-01)
 

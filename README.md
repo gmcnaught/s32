@@ -31,19 +31,16 @@ selected by the MRA descriptor; no game-specific production macro is used.
 | --- | --- |
 | Aspect ratio | Original, Full Screen |
 | Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
+| Scale | Normal, V-Integer, HV-Integer |
 | Service Mode | Off, On |
 | Alien 3 Flicker Blend | Off, On; Alien3: The Gun only |
 | V60 Fetch | Fast, PCB (Reset); the setting is latched on reset |
-| Scale | Normal, V-Integer, HV-Integer |
-| CRT Adjust | Off, On |
-| CRT H-Size | `-16` to `+15` |
-| CRT H-Position | `-48` to `+48` |
-| CRT V-Shift | `-16` to `+15` lines |
 | Reset | Resets the running core |
 
-CRT Adjust changes image geometry while keeping the native sync signals
-stable. Game controls are remappable through MiSTer input settings; each MRA
-declares the button labels and defaults for its game.
+The core reports the original arcade monitor as 4:3 by default; MiSTer's
+standard aspect choices and integer scaling modes remain available. Game
+controls are remappable through MiSTer input settings; each MRA declares the
+button labels and defaults for its game.
 
 ## PCB Accuracy
 
@@ -139,7 +136,7 @@ RBF here.
   and the MegaCD RF5C164 implementation, as documented in
   [`reference-cores.md`](docs/reference-cores.md) and [`DESIGN.md`](docs/DESIGN.md).
 - **Umberto Parisi (rmonic79), with Andrea Bogazzi (@asturur)** — the GPL CRT
-  Adjust module used by the geometry controls.
+  Adjust source retained as an uncompiled legacy reference.
 - **Tool authors and maintainers** — [Intel Quartus](https://www.intel.com/content/www/us/en/software/programmable/quartus-prime/overview.html),
   [Verilator](https://www.veripool.org/verilator/), [Icarus Verilog](https://steveicarus.github.io/iverilog/),
   ModelSim, and MAME, used for synthesis, simulation, and verification.
@@ -154,7 +151,8 @@ that retain their own notices and licenses:
 - JT12: GNU GPL version 3; [`LICENSE`](rtl/audio/jt12/LICENSE).
 - JT8255 conformance reference: MIT; [`LICENSE.jt8255`](verif/donors/LICENSE.jt8255).
 - T80: BSD-style terms in the source headers under [`rtl/audio/T80/`](rtl/audio/T80/).
-- CRT Adjust: GNU GPL version 3 or later, as stated in [`crt_adjust.sv`](rtl/crt_adjust.sv).
+- The uncompiled legacy CRT Adjust source: GNU GPL version 3 or later, as
+  stated in [`crt_adjust.sv`](rtl/crt_adjust.sv).
 - MiSTer framework and Intel/Altera generated IP under [`sys/`](sys/): retain
   their upstream/vendor notices.
 - SiliconRE reference material: [`SiliconRE-LICENSE`](docs/references/siliconre/315-5385/SiliconRE-LICENSE).

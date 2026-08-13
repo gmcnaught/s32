@@ -226,6 +226,7 @@ function Run-SoundZ80Test {
         "rtl/audio/s32_audio_mix.sv",
         "rtl/audio/s32_soundsys.sv",
         "verif/common/jt12_stub.v",
+        "verif/common/s32_wave_ram_model.sv",
         "verif/common/tb_soundsys_z80.sv"
     )
     [void](Invoke-NativeCapture $script:Vlog (@(
@@ -264,6 +265,7 @@ function Run-SoundSharedTest {
         "rtl/audio/s32_audio_mix.sv",
         "rtl/audio/s32_soundsys.sv",
         "verif/common/jt12_stub.v",
+        "verif/common/s32_wave_ram_model.sv",
         "verif/common/tb_soundsys_shared.sv"
     )
     [void](Invoke-NativeCapture $script:Vlog (@(
@@ -294,7 +296,7 @@ function Run-JT12ResetTest {
     }
     $sources = @($jt12Sources) + (Resolve-Sources @("verif/common/tb_jt12_reset.sv"))
     [void](Invoke-NativeCapture $script:Vlog (@(
-        "-sv", "-work", $library, "+define+S32_JT12_MLAB_SHIFTS"
+        "-sv", "-work", $library
     ) + $sources) "vlog ($name)")
 
     $testDirectory = Split-Path -Parent $library
@@ -308,7 +310,53 @@ function Run-JT12ResetTest {
 }
 
 function Write-Tier {    param([int]$Number, [string]$Description)
-    Write-RunLine ("`n[{0}/38] {1}" -f $Number, $Description)
+    Write-RunLine ("`n[{0}/41] {1}" -f $Number, $Description)
+}
+
+function Assert-V25SourceClosure {
+    # ModelSim Intel 10.5b cannot parse the s80x86 donor: its modules rely on
+    # declarations later in the same body and its ALU task fragments precede
+    # FlagsEnum. -mfcu does not change either rule and produces cascaded false
+    # undefined/duplicate diagnostics. Keep the ModelSim full-core lane on the
+    # compatible HLE shape, but fail closed if the production QIP and the
+    # Verilator file list used by the real-V25 gates diverge.
+    $fileListPath = Join-Path $Root "verif/v25/s80x86.f"
+    $qipPath = Join-Path $Root "rtl/cpu/v25/s80x86/s80x86_files.qip"
+    $fileList = @(
+        Get-Content -LiteralPath $fileListPath |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and -not $_.StartsWith("#") }
+    )
+    $qipList = @(
+        foreach ($line in Get-Content -LiteralPath $qipPath) {
+            if ($line -match 'SYSTEMVERILOG_FILE \[file join \$S80X86_QIP_DIR ([^\]]+)\]') {
+                $parts = @($Matches[1] -split '\s+' | Where-Object { $_ })
+                "rtl/cpu/v25/s80x86/" + ($parts -join "/")
+            }
+        }
+    )
+    if ([string]::Join("`n", $fileList) -cne [string]::Join("`n", $qipList)) {
+        throw "The production s80x86 QIP and real-V25 Verilator file list differ."
+    }
+    [void](Resolve-Sources $fileList)
+
+    $v25Qip = Get-Content -Raw -LiteralPath (Join-Path $Root "rtl/cpu/v25/v25.qip")
+    foreach ($source in ("s80x86 s80x86_files.qip", "s32_v25_rom_cache.sv", "s32_v25_cpu.sv")) {
+        if (-not $v25Qip.Contains($source)) {
+            throw "Production V25 QIP is missing $source."
+        }
+    }
+    $profile = Get-Content -Raw -LiteralPath (Join-Path $Root "segas32.qsf")
+    foreach ($contract in ('QIP_FILE rtl/cpu/v25/v25.qip',
+                           'VERILOG_MACRO "S32_UNIVERSAL=1"',
+                           'VERILOG_MACRO "S32_V25_HW=1"')) {
+        if (-not $profile.Contains($contract)) {
+            throw "Universal profile is missing $contract."
+        }
+    }
+    $marker = "V25 UNIVERSAL SOURCE CLOSURE: PASS"
+    $script:Summary.Add($marker)
+    Write-RunLine $marker
 }
 
 function Run-Differential {
@@ -383,6 +431,9 @@ $VideoSources = @(
         Sort-Object Name |
         ForEach-Object { $_.FullName }
 )
+# ModelSim's full-core tests use the HLE-compatible shape. The production
+# real-V25 source closure is audited above and compiled/executed by tiers
+# 38, 39, and 41 through the project-owned strict Verilator runners.
 $FullCoreSources = @(
     "rtl/s32_pkg.sv",
     "rtl/cpu/v60/s32_v60.sv",
@@ -403,9 +454,10 @@ Push-Location $Root
 try {
     Write-RunLine "ModelSim native regression (no Cygwin/Icarus dependency)"
 
-    Write-Tier 1 "full-core lint compile (universal profile)"
-    Run-HdlTest "t01_lint_universal" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE UNIVERSAL PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_UNIVERSAL", "S32_V25_HW", "S32_GAME_ONLY_STD", "S32_PCB_TIMING")
-    Write-RunLine "CORE UNIVERSAL PROFILE: PASS"
+    Write-Tier 1 "ModelSim full-core lint (compatible HLE shape) + universal V25 source closure"
+    Assert-V25SourceClosure
+    Run-HdlTest "t01_lint_standard" "tb_core_lint" ($FullCoreSources + "verif/common/tb_core_lint.sv") "CORE STANDARD PROFILE LINT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING")
+    Write-RunLine "CORE MODELSIM STANDARD PROFILE: PASS"
 
     Write-Tier 2 "V60 smoke test"
     Run-HdlTest "t01c_epr_shadow" "tb_epr14084_shadow" @("rtl/comm/epr14084/s32_epr14084_shadow.sv","verif/common/tb_epr14084_shadow.sv") "EPR14084 SHADOW PASS" @("SIMULATION")
@@ -420,9 +472,9 @@ try {
     Write-Tier 3 "Sonic MOVCFU/RSR/dispatcher continuation"
     Run-HdlTest "t03c_v60_sonic_dispatch" "tb_v60_sonic_dispatch" ($V60Sources + "verif/v60/tb_v60_sonic_dispatch.sv") "SONIC DISPATCH PASS"
 
-    Write-Tier 4 "full-core integration boot (universal profile)"
-    Run-HdlTest "t04_boot_universal" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_UNIVERSAL", "S32_V25_HW", "S32_GAME_ONLY_STD", "S32_PCB_TIMING") @("-novopt")
-    Write-RunLine "CORE UNIVERSAL BOOT: PASS"
+    Write-Tier 4 "ModelSim full-core integration boot (compatible HLE shape)"
+    Run-HdlTest "t04_boot_standard" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING") @("-novopt")
+    Write-RunLine "CORE MODELSIM STANDARD BOOT: PASS"
 
     Write-Tier 5 "V60 differential co-sim vs independent reference ($Seeds seeds)"
     Run-Differential $Seeds
@@ -566,11 +618,11 @@ try {
         "rtl/audio/s32_audio_ce.sv", "verif/common/tb_audio_ce.sv"
     ) "AUDIO CE PASS"
 
-    Write-Tier 25 "V25 mailbox BRAM + production MLAB FIFO profile"
+    Write-Tier 25 "V25 mailbox BRAM + production default FIFO profile"
     Run-HdlTest "t25_v25_dpram" "tb_v25_dpram" @("rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_v25_dpram.sv") "V25 DPRAM PASS"
-    Run-HdlCompile "t25_v25_mlab_fifo" @(
+    Run-HdlCompile "t25_v25_default_fifo" @(
         "rtl/cpu/v25/s80x86/rtl/Fifo.sv"
-    ) "V25 MLAB FIFO COMPILE PASS" @("S32_V25_MLAB_FIFO")
+    ) "V25 DEFAULT FIFO COMPILE PASS"
 
     Write-Tier 26 "SDRAM CL2 capture / row-open ROM write throughput / burst ordering"
     Run-HdlTest "t26_sdram" "tb_sdram" @("rtl/mem/sdram.sv", "verif/common/tb_sdram.sv") "SDRAM CAPTURE PASS"
@@ -600,7 +652,7 @@ try {
         "rtl/audio/s32_audio_mix.sv", "verif/common/tb_audio_mix_diff.sv"
     ) "PASS: audio mixer differential checks=20012" @("S32_SYSTEM32_ONLY")
 
-    Write-Tier 30 "sound map/cache throughput/T80 boot + production JT12 MLAB-shift reset"
+    Write-Tier 30 "sound map/cache throughput/T80 boot + production JT12 default-storage reset"
     Run-HdlTest "t30_soundsys_bus" "tb_soundsys_bus" @(
         "rtl/s32_pkg.sv", "rtl/video/s32_big_dpram.sv",
         "rtl/audio/s32_rf5c68.sv", "rtl/audio/s32_multipcm.sv",
@@ -686,7 +738,7 @@ try {
     ) "RAD MOBILE MSM6253 PASS"
 
     Write-Tier 38 "real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
-    $v25Output = @(& (Join-Path $Root "verif/v25/run_v25_firmware.ps1") 2>&1)
+    $v25Output = @(& (Join-Path $Root "verif/v25/run_v25_firmware.ps1") -ModelSimBin $ModelSimDirectory 2>&1)
     foreach ($line in $v25Output) { Write-RunLine $line }
     Assert-Marker $v25Output "V25_FIRMWARE RUNNER: PASS" "real V25 firmware"
     Assert-Marker $v25Output "V25_FIRMWARE CE: PASS" "V25 clock enable cadence"

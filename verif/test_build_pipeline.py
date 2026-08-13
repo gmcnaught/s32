@@ -451,10 +451,11 @@ class BatchPipelineSafetyTests(unittest.TestCase):
         self.assertIn("build-stage-release.ps1", lowered)
         self.assertIn("build-seed-state.ps1", lowered)
 
-    def test_merged_qsf_enables_resource_saving_macros(self) -> None:
+    def test_merged_qsf_preserves_memory_alm_slack(self) -> None:
         qsf = (REPO_ROOT / "segas32.qsf").read_text(encoding="utf-8")
-        self.assertIn("S32_JT12_MLAB_SHIFTS=1", qsf)
-        self.assertIn("S32_V25_MLAB_FIFO=1", qsf)
+        self.assertNotIn("S32_JT12_MLAB_SHIFTS=1", qsf)
+        self.assertNotIn("S32_V25_MLAB_FIFO=1", qsf)
+        self.assertNotIn("S32_V25_MLAB_EEPROM=1", qsf)
         self.assertIn("S32_UNIVERSAL=1", qsf)
         self.assertIn("S32_V25_HW=1", qsf)
 

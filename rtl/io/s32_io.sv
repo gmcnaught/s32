@@ -118,7 +118,7 @@ module s32_eeprom_ram (
 // EEPROM has only one writer, so keep two coherent simple-dual-port replicas:
 // one supplies the serial engine's read view and one supplies NVRAM upload.
 // This preserves simultaneous reads while releasing the otherwise mostly
-// empty M10K in the RAM-constrained real-V25 production profile.
+// empty M10K when this optional non-production branch is selected.
 wire [15:0] q_a_mem;
 reg         q_a_write_forward = 1'b0;
 reg  [15:0] q_a_write_data = 16'h0000;

@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$ModelSimBin = ""
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -26,7 +28,21 @@ if (Test-Path -LiteralPath $msysBash -PathType Leaf) {
         $safeSimulator = (Get-Command verilator-sim-safe -ErrorAction Stop).Source
         $env:S32_VERILATOR_SAFE = ($safeVerilator -replace '\\', '/')
         $env:S32_VERILATOR_SIM_SAFE = ($safeSimulator -replace '\\', '/')
-        $env:MODELSIM_BIN = ((Split-Path -Parent (Get-Command vsim.exe -ErrorAction Stop).Source) -replace '\\', '/')
+        $modelSimDirectory = $ModelSimBin
+        if (-not $modelSimDirectory) {
+            $modelSimDirectory = $savedModelSim
+        }
+        if (-not $modelSimDirectory) {
+            $modelSimDirectory = Split-Path -Parent (
+                Get-Command vsim.exe -ErrorAction Stop).Source
+        }
+        $modelSimDirectory = [IO.Path]::GetFullPath($modelSimDirectory)
+        foreach ($tool in ("vlib.exe", "vlog.exe", "vsim.exe")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $modelSimDirectory $tool) -PathType Leaf)) {
+                throw "ModelSim directory is missing $tool`: $modelSimDirectory"
+            }
+        }
+        $env:MODELSIM_BIN = ($modelSimDirectory -replace '\\', '/')
         $env:S32_V25_BUILD_ONLY = '1'
         $env:KEEP_BUILD = '1'
 
@@ -99,4 +115,3 @@ if (Test-Path -LiteralPath $msysBash -PathType Leaf) {
 else {
     throw 'MSYS2 bash is required for the native Windows V25 firmware runner.'
 }
-

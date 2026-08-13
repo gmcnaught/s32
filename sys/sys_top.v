@@ -1502,10 +1502,10 @@ reg  [39:0] PhaseInc;
 	wire vgas_hs, vgas_vs, vgas_cs, vgas_de;
 	wire [23:0] hdmi_data_vgas_in;
 	wire hdmi_hs_vgas_in, hdmi_vs_vgas_in, hdmi_cs_vgas_in, hdmi_de_vgas_in;
-	`ifdef S32_PROFILE_V25
-		// The real-V25 profile places the HDMI OSD and VGA scaler shift RAM
-		// at opposite ends of the device. Preserve one matched pipeline stage
-		// for both protected games so the global profile stays self-consistent.
+	`ifdef S32_UNIVERSAL
+		// The universal production profile can place the HDMI OSD and VGA
+		// scaler shift RAM at opposite ends of the device. Preserve one
+		// matched pipeline stage so the profile stays timing-consistent.
 		(* preserve *) reg [23:0] hdmi_data_vgas_pipe;
 		(* preserve *) reg hdmi_hs_vgas_pipe, hdmi_vs_vgas_pipe;
 		(* preserve *) reg hdmi_cs_vgas_pipe, hdmi_de_vgas_pipe;

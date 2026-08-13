@@ -590,8 +590,9 @@ endmodule
 
 // V25 internal data memory: 128 RAM words followed by 128 SFR read-back words.
 // It is logically one 256x16 byte-enabled synchronous memory. Two physical
-// 256x8 lanes are used so Quartus 17 can map partial writes into Cyclone V MLABs
-// without read/modify/write logic or M10K consumption.
+// 256x8 lanes preserve the byte-write behavior without read/modify/write
+// logic. Keep both lanes in M10Ks so the universal profile does not spend
+// scarce memory ALMs on this 4 Kbit store.
 module s32_v25_internal_dmem (
     input  wire        clock,
     input  wire  [7:0] address,
@@ -623,7 +624,7 @@ defparam
     lo_ram.width_byteena_a = 1,
     lo_ram.outdata_reg_a = "UNREGISTERED",
     lo_ram.power_up_uninitialized = "FALSE",
-    lo_ram.ram_block_type = "MLAB",
+    lo_ram.ram_block_type = "M10K",
     lo_ram.read_during_write_mode_port_a = "NEW_DATA_NO_NBE_READ";
 
 altsyncram hi_ram (
@@ -643,7 +644,7 @@ defparam
     hi_ram.width_byteena_a = 1,
     hi_ram.outdata_reg_a = "UNREGISTERED",
     hi_ram.power_up_uninitialized = "FALSE",
-    hi_ram.ram_block_type = "MLAB",
+    hi_ram.ram_block_type = "M10K",
     hi_ram.read_during_write_mode_port_a = "NEW_DATA_NO_NBE_READ";
 
 assign q = {q_hi, q_lo};

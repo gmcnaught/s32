@@ -652,7 +652,7 @@ s32_sprite #(
 `endif
 ) sprite (
     .clk(clk_ram), .rst(rst), .is_multi32(is_multi32),
-    .verify_srom(!cfg_v25_table),
+    .verify_srom(cfg_has_v25 && !cfg_v25_table),
     // Old MRAs predate bank metadata and therefore retain the original
     // four-bank address space. New descriptors mirror 4/8 MiB ROMs exactly.
     .srom_bank_mask(cfg_sprite_bank_valid ? cfg_sprite_bank_mask : 2'b11),
@@ -1649,11 +1649,10 @@ localparam integer LINE_COUNT = 1 << INDEX_BITS;
 localparam integer TAG_BITS = 18 - INDEX_BITS;
 localparam integer CACHE_WIDTH = 64 + TAG_BITS;
 
-// 64 x 76 = 4,864 bits in production.  The previous 32 x 77 shape used 40
-// memory ALMs and no M10Ks in the accepted segas32 fit, so doubling depth here
-// consumes MLAB capacity without worsening the profile's 512/553 M10K ceiling.
-// Keeping validity separate avoids a reset loop on the inferred memory.
-(* ramstyle = "MLAB" *) reg [CACHE_WIDTH-1:0] cache_mem [0:LINE_COUNT-1];
+// 64 x 76 = 4,864 bits in production. Keep this synchronous, full-line store
+// in an M10K so it does not consume scarce memory ALMs. Validity remains
+// separate to avoid a reset loop on the inferred memory.
+(* ramstyle = "M10K, no_rw_check" *) reg [CACHE_WIDTH-1:0] cache_mem [0:LINE_COUNT-1];
 reg [CACHE_WIDTH-1:0] cache_q;
 reg [LINE_COUNT-1:0] cache_valid;
 
