@@ -84,7 +84,6 @@ package s32_pkg;
         logic       has_v25;       // protection MCU present
         logic       v25_table;     // 0=ga2 table, 1=arf table
         logic       has_adc;       // MSM6253 analog board
-        logic       has_track;     // uPD4701 trackball board
         logic       has_ppi;       // i8255 4/6-player board
         logic       has_dsp_hle;   // reserved descriptor bit; unsupported
         logic       dual_pcb;      // reserved descriptor bit; unsupported
@@ -96,8 +95,6 @@ package s32_pkg;
         logic       sprite_bank_valid;
         logic [1:0] sprite_bank_mask; // 0/1/3 for 4/8/16 MiB respectively
         logic       flip_y;         // cabinet/game orientation (holo)
-        logic       gun_aim;        // positional-gun conditioner (alien3/jpark)
-        logic       coin_swap;      // Alien3 cabinet trigger/start/coin wiring
         logic [1:0] analog_profile; // ADC source/default layout (ANALOG_*)
         logic       dual_comm_ff;   // dual-PCB comm RAM reset state (F1 Exhaust Note)
         logic       gear_toggle;    // edge-latched two-state cabinet gear input
@@ -112,8 +109,6 @@ package s32_pkg;
 
     // HLE protection selects (prot_sel)
     localparam [6:0] PROT_NONE     = 7'd0;
-    localparam [6:0] PROT_SONIC    = 7'd1;  // rev C level loader
-    localparam [6:0] PROT_BRIVAL   = 7'd2;
     localparam [6:0] PROT_DARKEDGE = 7'd3;
     localparam [6:0] PROT_F1LAP    = 7'd4;
     localparam [6:0] PROT_DBZVRVS  = 7'd5;

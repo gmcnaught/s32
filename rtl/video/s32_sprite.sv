@@ -64,8 +64,7 @@ module s32_sprite #(
     input             fb_er_ack,
 
     output reg  [1:0] disp_buf,     // CPU-visible logical A/B selector
-    output reg  [1:0] scan_buf,     // completed physical buffer used by scanout
-    output reg  [1:0] scan_buf_prev // preceding completed buffer for HUD blend
+    output reg  [1:0] scan_buf      // completed physical buffer used by scanout
 
 );
 
@@ -283,7 +282,6 @@ always @(posedge clk) begin
         rs <= R_IDLE;
         disp_buf <= 2'b00;
         scan_buf <= 2'b00;
-        scan_buf_prev <= 2'b00;
         srom_verify_data <= 128'd0;
         srom_retry_count <= 16'd0;
         list_count <= 0;
@@ -323,7 +321,6 @@ always @(posedge clk) begin
         // Only a frame that reached R_DONE may become visible, and publication
         // occurs at the raster boundary before the line-0 framebuffer fetch.
         if (present_rise && !is_multi32 && ready_valid) begin
-            scan_buf_prev <= scan_buf;
             scan_buf <= ready_buf;
             ready_valid <= 1'b0;
         end

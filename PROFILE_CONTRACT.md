@@ -2,6 +2,16 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-13: four game families removed
+
+Alien3: The Gun, Burning Rival, Jurassic Park, and SegaSonic The Hedgehog are
+outside the production profile. Their parents and clones are not emitted as
+MRAs or swept as supported software. The production RTL no longer contains
+their gun/aim and coin wiring, trackball/uPD4701 path, protection responders,
+Jurassic Park ROM patch, Burning Rival PPI map, or Alien3 framebuffer blend.
+Historical evidence below is retained only as an engineering record and does
+not indicate current support.
+
 ## 2026-08-12: universal-profile memory-budget reduction
 
 System 32 does not load or execute MultiPCM sample ROMs, so the universal
@@ -19,10 +29,9 @@ also removed from the source manifest and core integration. Rad Rally's
 descriptor-selected behavioral link responder remains authoritative and its
 MRAs no longer download unused diagnostic firmware planes.
 
-The generic protection FSM now contains only the supported Sonic and Dark
-Edge sequences; the Burning Rival responder remains separate. Dormant F1 Lap,
-DBZ VRVS, and J.League branches are no longer synthesized, while their reserved
-descriptor numbers remain part of the on-disk ABI and resolve to no action.
+The production protection RTL now contains only the Dark Edge sequence and the
+descriptor-selected real V25 path. Dormant and excluded-title responders are
+not synthesized; reserved descriptor values resolve to no action.
 
 These changes are estimated to save roughly 64 RAM blocks from RF wave memory,
 plus any resources formerly retained by the disabled diagnostic shadow. The
@@ -45,10 +54,14 @@ single-board mailbox substitute is sufficient.
 ## 2026-08-11: integrated CPU, memory and renderer throughput package
 
 The universal production profile keeps the PCB V60 clock and every external data/I/O
-bus cadence unchanged.  `V60 Fetch: Fast / PCB (Reset)` now defaults to the
-existing ROM-only wide instruction path; PCB fetch remains selectable.  Work
-RAM code, data, I/O, interrupts and protection transactions always use the
-ordinary hardware-timed bus.
+bus cadence unchanged.  Instruction fetch, work RAM code, data, I/O, interrupts
+and protection transactions all use the ordinary hardware-timed bus.
+
+**2026-08-14 update:** the `V60 Fetch: Fast / PCB (Reset)` option described in
+this and the 2026-08-10 entry below has been REMOVED, along with the wide
+instruction-fetch datapath it selected.  The core always uses the PCB fetch
+path.  The OSD entry is gone and `status[29]` is reserved/unused so every later
+option keeps its bit assignment.  The entries below are retained as history.
 
 The shared V60 overlaps the execute edge with sequential retirement only for
 explicitly allowlisted register-result and no-writeback operations.  Memory,
@@ -97,20 +110,19 @@ length is present. Unknown target forms retain the ordinary `S_FILL` path;
 there is no cross-instruction register speculation, no change to physical PCB
 bus acceptance or cadence, and no change to non-loop branches. The 256-iteration
 immediate-MOVW/DBR fixture improved from 2,609 to 2,101 `clk_sys` cycles
-(-19.5%) with the same 12 physical fetch reads. The focused Sonic burst
-fixture now reports 36,225 cycles for its overlap-A case.
+(-19.5%) with the same 12 physical fetch reads. The focused burst fixture
+reported 36,225 cycles for its overlap-A case before that title-specific
+fixture was retired.
 
 ## 2026-08-10: V60 throughput improvements
 
 The universal production profile compiles the existing 8-byte ROM-cache instruction
-port and expose `V60 Fetch: Fast / PCB (Reset)`. The selection is latched only
-while reset is asserted and Fast is the default. `PCB` keeps instruction
-prefetch on the shared, ce-gated 16-bit V60 adapter; `Fast` uses the dedicated
-cache port for the two main-ROM windows. Code executing from work/shared RAM
-automatically stays on the ordinary V60 bus. Data, I/O,
-interrupt, video, audio and protection traffic retain their PCB clocks and bus
-ordering in both modes. This is an explicit selectable performance aid, not a
-claim that an original V60 had an 8-byte external instruction bus.
+port and exposed `V60 Fetch: Fast / PCB (Reset)`.  **Superseded 2026-08-14:**
+that option and its wide instruction-fetch datapath have been removed; every
+instruction prefetch now uses the shared, ce-gated 16-bit V60 adapter, the same
+path the `PCB` setting selected.  Data, I/O, interrupt, video, audio and
+protection traffic retain their PCB clocks and bus ordering, as they always
+did.
 
 The shared V60 now launches common displacement/register-indirect source reads,
 destination reads and result writes as soon as their addresses/data are ready.
@@ -162,7 +174,7 @@ pending.
 
 ## 2026-08-12: one universal production profile
 
-The former split revisions are retired. `segas32.qsf` is the only production
+The former split revisions are retired. `Arcade-SegaSystem32.qsf` is the only production
 Quartus revision and contains the standard-board peripherals together with the
 real NEC V25 core/cache/program memories. Descriptor fields select the V25
 path for `ga2`/`arabfgt` and the existing HLE or optional I/O/protection paths
@@ -170,48 +182,47 @@ for other supported parents. This is a source/routing unification; it is not a
 claim that the new combined shape has already been fit or timing-closed.
 
 `rtl/s32_core.sv` is compiled once with the universal shape. `GAME_ONLY_STD`
-keeps the trackball, descriptor-gated ADC, positional-gun conditioner,
-Burning Rival responder, and generic protection HLE live while still allowing
-single-screen resource trimming. Do not name a macro after a specific game.
+keeps the descriptor-gated driving ADC, PPI, Dark Edge protection, and real
+V25 path while still allowing single-screen resource trimming. Do not name a
+macro after a specific game.
 
 ## Outputs
 
-- `segas32.rbf` / `segas32.qsf`: every supported parent, including `ga2` and
-  `arabfgt` (descriptor-selected real V25). `radm` remains staged.
+- `Arcade-SegaSystem32.rbf` / `Arcade-SegaSystem32.qsf`: every supported parent, including `ga2` and
+  `arabfgt` (descriptor-selected real V25).
 - No production image supports Multi 32 sets.
 
 ## User-requested exclusions (2026-08-03)
 
 The following parents are intentionally ignored and must not be emitted as
 MRAs, staged by the active profile sweep, or treated as supported in future
-profile work: `arescue`, `dbzvrvs`, `f1en`, `f1lap`, `svf`, and `jleague`. Local ROMs
-and historical captures may remain on disk;
-they are outside the production profile.
+profile work: `alien3`, `arescue`, `brival`, `dbzvrvs`, `f1en`, `f1lap`,
+`jpark`, `sonic`, `svf`, and `jleague`. Local private media and historical
+captures may remain on disk; they are outside the production profile.
 
 ## Source of truth
 
 `tools/gen_mra.py:RBF_BY_PARENT` is authoritative for MRA-to-RBF routing and
-maps every supported parent to `"segas32"`. `segas32.qsf` is the only
+maps every supported parent to `"Arcade-SegaSystem32"`. `Arcade-SegaSystem32.qsf` is the only
 production Quartus revision. `S32_PROFILE_STANDARD`, `S32_UNIVERSAL`,
 `S32_V25_HW`, and `S32_GAME_ONLY_STD` define the universal hardware shape.
 `S32_PROFILE_V25` and `S32_REAL_V25` must never be defined again. Any macro
 named after a specific game (`S32_GA2_ONLY`,
 `S32_SONIC_ONLY`, etc.) is a test legacy and must not be used to route a
 shipped game. `S32_PCB_TIMING` is a common behavior flag for fixed production
-timing and never selects a game or RBF. Runtime `V60 Fetch` selection never
-changes the external V60 bus clock.
+timing and never selects a game or RBF.
 
 ## Feature placement (universal profile)
 
-| Feature/change | `segas32` |
+| Feature/change | `Arcade-SegaSystem32` |
 |---|---:|---:|
 | Shared V60, video, sprite, audio, I/O, loader, and dedicated V60 ROM cache | yes |
-| MSM6253 ADC, trackball, PPI, gun input and generic protection HLE | descriptor-driven |
-| Burning Rival protection responder and Rad Rally communication HLE | descriptor-driven |
+| MSM6253 driving ADC, PPI, and Dark Edge protection | descriptor-driven |
+| Rad Rally communication HLE | descriptor-driven |
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_V25_HW=1`), enabled by `has_v25` |
 | V25 table/cadence selection | descriptor-driven (`v25_table`) |
 | CPU Turbo | removed (V60 timing relies on fixed CE spacing) |
-| V60 Fetch | reset-latched PCB/Fast instruction transport; data/I/O bus fixed at PCB cadence |
+| V60 Fetch | removed; instruction fetch always uses the PCB bus (`status[29]` reserved) |
 | Multi 32 second screen/peripheral hardware | no |
 | HDMI shadow-mask post-process | compiled out (`MISTER_DISABLE_SHADOWMASK`) |
 | CRT Adjust | not instantiated; native video and 4:3/custom aspect pass directly to the framework |
@@ -237,9 +248,12 @@ HLE titles).
   outside the current digital equivalence claim.
 
 - Source/profile checks: passed.
-- Python verification: 102 tests passed, one environment-only WSL skip.
-- Native ModelSim regression on 2026-08-01: tiers 1–37 passed; the later
-  universal-profile merge has not been run through ModelSim.
+- Python verification on 2026-08-13: 132 tests passed, with one
+  environment-only skip; GA2, Arabian Fight, and Holosseum release checks
+  passed.
+- Native headless regression on 2026-08-13: all 41/41 tiers passed with one
+  differential seed, including full-core soak, Dark Edge protection, driving
+  I/O, real encrypted V25 firmware, and production SDRAM integration.
 - The universal profile includes the V25 path, but no Quartus, Verilator, or
   hardware qualification is claimed for this source-only merge.
 - The native full-core romboot model was rebuilt after correcting a
@@ -256,10 +270,9 @@ HLE titles).
 ## Current goal acceptance scope (2026-08-02)
 
 The current user-directed gameplay/attract acceptance matrix covers true parent
-sets only. Clone and regional revisions and all Multi 32 parents are excluded
-from this audit. The active parents are `alien3`, `brival`, `darkedge`, `holo`,
-`spidman`, `jpark`, `radr`, `slipstrm`, and `sonic`; `radm` remains staged, and
-`ga2`/`arabfgt` select the real V25 descriptor path in the universal profile.
+sets only. Clone and regional revisions and all excluded or Multi 32 parents
+are outside this audit. The active parents are `arabfgt`, `darkedge`, `ga2`,
+`holo`, `radr`, `slipstrm`, and `spidman`.
 
 ## Universal-profile attract evidence (2026-08-01, in progress)
 
@@ -314,19 +327,13 @@ closed. Only 100% counts as proven attract mode.
 | `holo` | no | historical attract capture retained; reactivated in the standard profile | rerun the combined attract/frame-diff gate |
 | `ga2` | no | 50% | staged V25 parent image; real-V25 attract and MAME frame-diff gate pending |
 | `arabfgt` | no | 50% | staged V25 parent image; real-V25 attract and MAME frame-diff gate pending |
-| `jpark` | no | 50% | 150-frame Verilator smoke; run the corresponding 1200-frame Verilator title window selected from MAME |
-| `radm` | no | not MAME-exact | **2026-08-05 pixel-exact MAME comparison** (`docs/radm-radr-bringup.md`): the earlier "50%/non-black-pixel" gate above did not compare against MAME frames. A 1740-frame sweep vs MAME shows the RTL matches MAME almost exactly at frame 900 (0.49% differing) — both sides show the "Motor warm up now !! Please wait" screen — but MAME transitions off it within the next 60-frame sample while the RTL is still on it at frame 1740 (the end of the capture). Interrupt delivery and the MSM6253 ADC were both traced live against MAME and are confirmed correct/identical; the remaining gap is not yet isolated past "likely another symptom of the known V60 throughput gap" — no RTL change made. |
 | `radr` | no | not MAME-exact | **2026-08-05 pixel-exact MAME comparison** (`docs/radm-radr-bringup.md`) supersedes the "100%/screenshot-gate" verdict below, which also predates any MAME frame comparison. Frames 60-240 match MAME closely (0.67% differing, stable residual — static title/logo screen); from frame 300 onward the RTL diverges from MAME with no nearby-frame rescue (a genuine content divergence, not timing drift), recovering briefly at frame 480 then diverging again from 600 through 1740. Not yet root-caused. Historical context retained below since it reflects real, still-true findings (screenshot gate, IRQ vectors, zero overruns) — it just isn't evidence of MAME-exactness. 420-frame full-core Verilator attract run passed; retained frame-360 Rad Rally capture, `ROMBOOT DONE`, screenshot gate, IRQ-only vectors 40/41, and zero freeze/tile/FB overruns; MAME-derived CN/FG plus EPR-14084 link-status HLE remains descriptor-routed and focused-tested |
 | `slipstrm` | no | Strict Verilator road continuation verified through RTL frame 4500 | **2026-08-09/11 deep trace** (`docs/slipstrm-bringup.md`): fixed a shared V60 RSR return that popped the correct PC but retained the CHLVL handler's stale prefetch window, then proved and fixed an MSM6253 bus-integration error that shifted neutral wheel `0x80` before the read mux sampled D7 (the game stored `0x00` and selected Time Trial instead of MAME's World Championship). Corrected RTL selects World Championship; scene-aligned car selection differs by 192/93,184 pixels (0.2065%) after the known one-pixel horizontal offset. An assertion-clean savable replay reached the post-stadium scene at RTL frame 4500; its forest edge, apron, road-to-horizon geometry, signs, and marshal align with pinned MAME frame 3600, so no draw-distance truncation was reproduced. Exact speed/frame alignment still requires MAME's pre-race HIGH-gear input state. |
-| `sonic` | **yes (attract)** | 100% attract / gameplay: one known cosmetic gap, root-caused and accepted | **Attract gate closed 2026-08-04**: the whole attract cycle is pixel-exact against MAME — 9 sampled 416-wide frames (120–600) and 13 sampled 320-wide frames (660–1380), 0 differing pixels each, no x/y offset (`docs/segasonic-bringup.md`). Gameplay re-measured the same day with MAME's coin/start/button/trackball schedule: exact through RTL frame 1015 (0/71,680 at 955 and 1015), then the floor's palette bank1 (`0x3C01`–`0x3E6F`) reads black. **Root cause closed, not a video/logic bug**: a mixer write-both mirror race — our V60 clears blend-enable (`$4E`) a few cycles earlier, mid-loop, relative to the same palette-fill routine MAME runs; VRAM and palette bank0 are proven bit-identical to MAME. Classified as V60 timing-authenticity (same class as the tracked ga2/arabfgt work), not patched — see `docs/segasonic-bringup.md` for the full trace evidence and why a narrow patch was rejected. |
 | `spidman` | no | reactivated in the standard profile; current gate not rerun | run the Spider-Man attract gate |
 
-MAME-only timing leads (from the local 0.285 executable; not attract proof for
-the pinned source or RTL) are retained for deterministic run planning:
-`jpark` showed its title at 1200; `radm` showed its title/road attract at 600;
-and `sonic` and `spidman` showed attract/title frames at 1200.
-These windows replace the old 120/150-frame smoke assumptions when each parent
-is promoted through the full-core Verilator gate.
+MAME-only timing leads are retained for deterministic run planning of supported
+parents. Spider-Man uses the 1200-frame title window; these windows replace old
+short smoke assumptions when a parent is promoted through the full-core gate.
 
 An earlier local MAME 0.285 `-validate` sweep returned zero for the previously
 routed Standard parents, but that command does not prove that the ROM files are

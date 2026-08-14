@@ -68,11 +68,11 @@
     },
     {
       "id": "production-fetch-boundary",
-      "subject": "Production profiles keep V60 instruction requests on the ce-gated 16-bit bus; the wide cache path is an A/B diagnostic override",
+      "subject": "Production profiles keep V60 instruction requests on the ce-gated 16-bit bus; the wide cache path was removed 2026-08-14 after it black-screened on hardware",
       "confidence": "medium",
       "status": "implemented",
       "sources": ["research_32_md"],
-      "implementation": ["rtl/s32_core.sv", "segas32.qsf"]
+      "implementation": ["rtl/s32_core.sv", "Arcade-SegaSystem32.qsf"]
     },
     {
       "id": "custom-asic-wait-states",

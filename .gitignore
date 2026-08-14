@@ -84,3 +84,8 @@ releases/*.rbf
 output_files/
 __pycache__/
 /mra_goldenaxe_rbf/
+
+# Local tool/session workdirs (CodeGraph index, MAME MCP session, snapshots)
+/.codegraph/
+/.mame_mcp/
+/snap/

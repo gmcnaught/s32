@@ -25,8 +25,6 @@ reg  [7:0]  er_y = 0;
 wire        er_ack;
 reg         rd_req = 0;
 reg  [1:0]  rd_buf = 0;
-reg  [1:0]  rd_blend_buf = 0;
-reg         rd_blend = 0;
 reg  [7:0]  rd_y = 0;
 wire        rd_ack;
 reg  [8:0]  rd_x = 0;
@@ -51,8 +49,7 @@ s32_fb_if #(.FB_BASE(32'h3000_0000)) dut (
     .wr_valid(wr_valid), .wr_pix(wr_pix), .wr_end(wr_end),
     .wr_shadow(wr_shadow), .wr_busy(wr_busy),
     .er_req(er_req), .er_buf(er_buf), .er_y(er_y), .er_ack(er_ack),
-    .rd_req(rd_req), .rd_buf(rd_buf), .rd_blend_buf(rd_blend_buf),
-    .rd_blend(rd_blend), .rd_y(rd_y), .rd_ack(rd_ack),
+    .rd_req(rd_req), .rd_buf(rd_buf), .rd_y(rd_y), .rd_ack(rd_ack),
     .rd_x(rd_x), .rd_pix(rd_pix)
 );
 
@@ -182,7 +179,7 @@ endfunction
 task reset_case;
     begin
         wr_start <= 0; wr_valid <= 0; wr_end <= 0; wr_shadow <= 0;
-        er_req <= 0; rd_req <= 0; rd_blend <= 0; rd_x <= 0;
+        er_req <= 0; rd_req <= 0; rd_x <= 0;
         rst <= 1;
         repeat (5) @(posedge clk);
         rst <= 0;

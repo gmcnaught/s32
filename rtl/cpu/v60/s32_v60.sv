@@ -30,12 +30,6 @@
 module s32_v60 #(
     parameter [31:0] START_PC = 32'hFFFFFFF0,   // V60/V70 reset PC (MAME m_start_pc; audit V60-21)
     parameter        IS_V70   = 1'b0,
-    // FAST_IFETCH=1: the prefetch uses the dedicated wide instruction port (if_*)
-    // served from the core's ROM icache (8 bytes/access, clk_sys latency),
-    // instead of the ce-gated 16-bit data adapter.  This is what makes the
-    // prefetch pay off on the production (gated-ce) build; the unit testbenches
-    // run ce=1 (adapter already fast) and leave it 0 so if_* can stay unconnected.
-    parameter        FAST_IFETCH = 1'b0,
     // SEQ_DISPATCH=1: overlap the inter-instruction handoff with the completing
     // instruction (docs/v60-pipelining-plan.md Stage A).  The real uPD70616 runs
     // six concurrent units and overlaps up to four instructions; this core is
@@ -70,23 +64,6 @@ module s32_v60 #(
     input             clk,
     input             ce,            // 16.108 MHz (V60) / 20 MHz (V70) enable
     input             rst,
-    // Runtime transport select, stable from reset in the production core.
-    // FAST_IFETCH is the compile-time capability; when it is 0 this input is
-    // ignored and all instruction fetches use the shared physical bus.
-    input             fast_ifetch,
-
-    // dedicated instruction-fetch port (used only when FAST_IFETCH=1): request an
-    // 8-byte line at if_addr; if_data/if_ack return it.  Left unconnected when
-    // FAST_IFETCH=0 (the internal reads are forced to 0 so no X propagates).
-    output reg        if_req,
-    output     [23:0] if_addr,       // frontier byte address; s32_core reads the
-                                     // containing 8-byte line and returns it already
-                                     // aligned so byte0 == the frontier byte (the
-                                     // >>foff shift lives there, off the CPU's tight
-                                     // execution clock domain -- timing-closure guard)
-    input      [63:0] if_data,
-    input             if_ack,
-
     // logical bus (to s32_v60_bus adapter).  Externally one port; internally an
     // arbiter multiplexes the CPU's DATA accesses (dbus_*, priority) and the
     // instruction PREFETCH (pf_*) onto it.  Data path is unchanged: the 45 data
@@ -174,18 +151,15 @@ wire pf_ack = bus_ack && (bus_owner == OWN_PF);
 // window discards a stale ack via an epoch tag; the data port keeps priority.
 // ---------------------------------------------------------------------------
 reg        pf_busy;           // 0 = idle, 1 = awaiting a fetch acknowledgement
-reg        pf_fast;           // transport latched for the in-flight request
 reg  [3:0] pf_epoch;          // bumped on every window rebase/flush
 reg  [3:0] pf_iss_epoch;      // epoch captured when the in-flight fetch issued
 reg        pf_suppress;       // 1 while in an fb_prev-cached loop: skip lookahead
 reg        pf_loop_hint;      // upcoming DBcc/TB may reuse a complete window
 wire [4:0] pf_high = pf_loop_hint ? 5'd24 : 5'd20;
-// dedicated fast-fetch port: line address of the in-flight prefetch; ack/data
-// forced to 0 when FAST_IFETCH=0 so an unconnected if_* input cannot inject X.
-assign      if_addr   = pf_addr[23:0];   // full byte address; s32_core aligns by [2:0]
-wire        if_ack_i  = FAST_IFETCH ? if_ack  : 1'b0;
-wire [63:0] if_data_i = FAST_IFETCH ? if_data : 64'b0;
-wire        fetch_ack = pf_fast ? if_ack_i : pf_ack; // ack from issued transport
+// Instruction fetch always uses the shared PCB bus (pf_*), exactly as the real
+// uPD70616 does through the 315-5325 bus controller.  A dedicated wide
+// instruction port ("V60 Fetch: Fast") used to exist alongside it and was
+// removed; there is only one instruction transport now.
 
 // ---------------------------------------------------------------------------
 // fetch buffer: 16 bytes from PC, filled before each decode
@@ -199,14 +173,7 @@ reg [4:0]  fb_valid;         // valid byte count decode may read (0..24)
 // frontier without disturbing what decode consumes (P1 scaffolding; today it
 // tracks fb_valid exactly, so behavior is bit-identical).
 reg [4:0]  fb_wr;
-// The dedicated wide port is backed by the main-ROM caches only. System 32
-// software also executes copied code from work/shared RAM, so select the port
-// per request rather than treating the reset-latched mode as a global bus
-// replacement. All non-ROM instruction fetches retain the shared PCB bus.
 wire [31:0] fetch_frontier = fb_base + {27'b0, fb_wr};
-wire        fetch_is_rom = (fetch_frontier[23:21] == 3'b000) ||
-                           (fetch_frontier[23:20] == 4'hf);
-wire        use_fast_ifetch = FAST_IFETCH && fast_ifetch && fetch_is_rom;
 reg [7:0]  fb_prev[0:23];   // previous sequential window for tight loops
 reg [31:0] fb_prev_base;
 reg [4:0]  fb_prev_valid;
@@ -1032,9 +999,7 @@ if (rst) begin
     xdiv_active <= 0;
     bus_owner <= OWN_NONE;
     pf_req <= 0;
-    if_req <= 0;
     pf_busy <= 0;
-    pf_fast <= 0;
     pf_epoch <= 0;
     pf_iss_epoch <= 0;
     pf_suppress <= 0;
@@ -2485,7 +2450,7 @@ else if (ce) begin
         // If the successor is a complete DBcc/TB encoding that branches to
         // the saved window, retain that window for the imminent loop-back.
         // This models the V60 PFU keeping a short multi-instruction loop (the
-        // Sonic MOVCUH/MOV/DBR body is 13 bytes) without altering the branch's
+        // A representative MOVCUH/MOV/DBR body is 13 bytes) without altering the branch's
         // own decode/refill states or published instruction latency.
         if (fb_prev_valid != 0 && total_len <= 5'd20 &&
             fb_valid >= total_len + 5'd4 &&
@@ -3766,14 +3731,11 @@ else if (ce) begin
             pf_addr      <= fetch_frontier;
             pf_iss_epoch <= pf_epoch;
             pf_busy      <= 1'b1;
-            pf_fast      <= use_fast_ifetch;
-            if (use_fast_ifetch) if_req <= 1'b1; // wide 8-byte icache line via if_addr
-            else                  pf_req <= 1'b1; // 32-bit read via the shared adapter
+            pf_req       <= 1'b1; // 32-bit read via the shared adapter
         end
     end
-    else if (fetch_ack) begin
+    else if (pf_ack) begin
         pf_req  <= 1'b0;
-        if_req  <= 1'b0;
         pf_busy <= 1'b0;
         // win_shift_now covers BOTH window-shifting states (S_FILL realign and
         // the S_NEXT realign added for Stage A).  Note the frontier ADDRESS is
@@ -3784,30 +3746,11 @@ else if (ce) begin
         if (pf_iss_epoch == pf_epoch
             && pf_addr == fb_base + {27'b0, fb_wr}
             && !win_shift_now) begin
-            if (pf_fast) begin
-                // append the 8-byte line from the frontier offset to the line end
-                // (1..8 bytes).  s32_core has ALREADY aligned if_data so byte 0 is
-                // the frontier byte (the >>foff barrel shift lives there, off this
-                // tight clock domain), so we only place bytes at the frontier fb_wr
-                // -- the same simple (i-fb_wr)*8 index the legacy 4-byte path uses.
-                // navail = bytes from the frontier to the line end (1..8).
-                logic [4:0]  foff, navail, ncom;
-                foff    = {2'b0, pf_addr[2:0]};
-                navail  = 5'd8 - foff;
-                ncom    = ((fb_wr + navail) > 5'd24) ? (5'd24 - fb_wr) : navail;
-                for (int i = 0; i < 24; i++)
-                    if (i >= fb_wr && i < fb_wr + ncom)
-                        fb[i] <= if_data_i[(i - fb_wr)*8 +: 8];
-                fb_wr    <= fb_wr + ncom;
-                fb_valid <= fb_wr + ncom;
-            end
-            else begin
-                for (int i = 0; i < 24; i++)
-                    if (i >= fb_wr && i < fb_wr + 4)
-                        fb[i] <= bus_rdata[(i - fb_wr)*8 +: 8];
-                fb_wr    <= (fb_wr > 5'd20) ? 5'd24 : fb_wr + 5'd4;
-                fb_valid <= (fb_wr > 5'd20) ? 5'd24 : fb_wr + 5'd4;
-            end
+            for (int i = 0; i < 24; i++)
+                if (i >= fb_wr && i < fb_wr + 4)
+                    fb[i] <= bus_rdata[(i - fb_wr)*8 +: 8];
+            fb_wr    <= (fb_wr > 5'd20) ? 5'd24 : fb_wr + 5'd4;
+            fb_valid <= (fb_wr > 5'd20) ? 5'd24 : fb_wr + 5'd4;
         end
     end
 

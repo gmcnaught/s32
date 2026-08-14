@@ -3,7 +3,7 @@
   <setname>spidman</setname>
   <year>1991</year>
   <manufacturer>Sega</manufacturer>
-  <rbf>segas32</rbf>
+  <rbf>Arcade-SegaSystem32</rbf>
   <buttons names="Attack,Jump,-,-,-,-,Start,Coin,Test,Service" default="A,B,Start,Select,R,L" count="2"/>
   <rom index="4" zip="spidman.zip" md5="none">
     <part name="epr-14307.ic13" crc="d900219c"/>

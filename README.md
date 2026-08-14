@@ -13,7 +13,7 @@ supported or emitted by the production profile.
 | Core title | Sega System 32 |
 | Target hardware | MiSTer DE10-Nano, Cyclone V, SDRAM expansion |
 | Original board | Sega System 32 standard single-screen PCB, 837-7428 / 171-5964E |
-| Production RBF | `segas32.rbf` |
+| Production RBF | `Arcade-SegaSystem32.rbf` |
 | Toolchain | Quartus Prime 17.0.2 Build 602 |
 
 ## Profiles
@@ -23,7 +23,7 @@ selected by the MRA descriptor; no game-specific production macro is used.
 
 | Profile | Production macros | Games | RBF |
 | --- | --- | --- | --- |
-| `segas32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1`, `S32_UNIVERSAL=1`, `S32_V25_HW=1` | All supported parents; descriptors select the real V25 for `ga2`/`arabfgt` | `segas32.rbf` |
+| `Arcade-SegaSystem32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1`, `S32_UNIVERSAL=1`, `S32_V25_HW=1` | All supported parents; descriptors select the real V25 for `ga2`/`arabfgt` | `Arcade-SegaSystem32.rbf` |
 
 ## Features in the OSD
 
@@ -33,8 +33,6 @@ selected by the MRA descriptor; no game-specific production macro is used.
 | Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
 | Scale | Normal, V-Integer, HV-Integer |
 | Service Mode | Off, On |
-| Alien 3 Flicker Blend | Off, On; Alien3: The Gun only |
-| V60 Fetch | Fast, PCB (Reset); the setting is latched on reset |
 | Reset | Resets the running core |
 
 The core reports the original arcade monitor as 4:3 by default; MiSTer's
@@ -66,21 +64,18 @@ The following table is the complete set exposed by the tracked MRAs in
 
 | Parent | Supported variants | Profile | RBF |
 | --- | --- | --- | --- |
-| Alien3: The Gun | Japan (`alien3j`), US, Rev A (`alien3u`), World (`alien3`) | Standard | `segas32.rbf` |
-| Arabian Fight | Japan (`arabfgtj`), US (`arabfgtu`), World (`arabfgt`) | Universal / real V25 descriptor path | `segas32.rbf` |
-| Burning Rival | Japan (`brivalj`), World (`brival`) | Standard | `segas32.rbf` |
-| Dark Edge | Japan (`darkedgej`), World (`darkedge`) | Standard | `segas32.rbf` |
-| Golden Axe: The Revenge of Death Adder | Japan (`ga2j`), US, Rev A (`ga2u`), World, Rev B (`ga2`) | Universal / real V25 descriptor path | `segas32.rbf` |
-| Holosseum | US, Rev A (`holo`) | Standard | `segas32.rbf` |
-| Jurassic Park | Japan, Deluxe (`jparkja`), Japan, Rev A, Conversion (`jparkjc`), Japan, Rev A, Deluxe (`jparkj`), World, Rev A (`jpark`) | Standard | `segas32.rbf` |
-| Rad Rally | Japan (`radrj`), US (`radru`), World (`radr`) | Standard | `segas32.rbf` |
-| SegaSonic The Hedgehog | Japan, rev. C (`sonic`) | Standard | `segas32.rbf` |
-| Slip Stream | Brazil 950515 (`slipstrm`), Hispanic 950515 (`slipstrmh`) | Standard | `segas32.rbf` |
-| Spider-Man: The Videogame | Japan (`spidmanj`), US, Rev A (`spidmanu`), World (`spidman`) | Standard | `segas32.rbf` |
+| Arabian Fight | Japan (`arabfgtj`), US (`arabfgtu`), World (`arabfgt`) | Universal / real V25 descriptor path | `Arcade-SegaSystem32.rbf` |
+| Dark Edge | Japan (`darkedgej`), World (`darkedge`) | Standard | `Arcade-SegaSystem32.rbf` |
+| Golden Axe: The Revenge of Death Adder | Japan (`ga2j`), US, Rev A (`ga2u`), World, Rev B (`ga2`) | Universal / real V25 descriptor path | `Arcade-SegaSystem32.rbf` |
+| Holosseum | US, Rev A (`holo`) | Standard | `Arcade-SegaSystem32.rbf` |
+| Rad Rally | Japan (`radrj`), US (`radru`), World (`radr`) | Standard | `Arcade-SegaSystem32.rbf` |
+| Slip Stream | Brazil 950515 (`slipstrm`), Hispanic 950515 (`slipstrmh`) | Standard | `Arcade-SegaSystem32.rbf` |
+| Spider-Man: The Videogame | Japan (`spidmanj`), US, Rev A (`spidmanu`), World (`spidman`) | Standard | `Arcade-SegaSystem32.rbf` |
 
-Hard Dunk, OutRunners, Stadium Cross, Title Fight, AS-1, and other Multi 32
-families are outside the production contract and have no production MRA or
-RBF here.
+Alien3: The Gun, Burning Rival, Jurassic Park, SegaSonic The Hedgehog, Hard
+Dunk, OutRunners, Stadium Cross, Title Fight, AS-1, and other excluded or
+Multi 32 families are outside the production contract and have no production
+MRA or game-specific hardware path here.
 
 ## **Hardware emulated**
 
@@ -93,7 +88,7 @@ RBF here.
 | Sega 315-5388 / 315-5242 video boundary | Pixel path; palette, priority, mixer, and digital RGB output | [`s32_mixer.sv`](rtl/video/s32_mixer.sv) and top-level video path; schematic sheet 5 plus [315-5242 SiliconRE evidence](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242) |
 | Sega 315-5296 I/O | V60-mapped 8-bit I/O ports; JAMMA, DIP, service, coin, and reset control | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 and [the EEPROM/I/O reference](docs/references.md) |
 | BR93C46 / 93C46 EEPROM | Serial CS, clock, data-in, and data-out lines on the 315-5296 interface | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 and MiSTer NVRAM upload/download support |
-| MSM6253 ADC, µPD4701 counters, and 8255 PPI | Descriptor-selected V60-mapped ADC, trackball, and parallel-I/O interfaces | [`s32_io.sv`](rtl/io/s32_io.sv); MAME device maps and per-game MRA descriptors in [`gen_mra.py`](tools/gen_mra.py) |
+| MSM6253 ADC and 8255 PPI | Descriptor-selected V60-mapped driving ADC and parallel-I/O interfaces | [`s32_io.sv`](rtl/io/s32_io.sv); MAME device maps and per-game MRA descriptors in [`gen_mra.py`](tools/gen_mra.py) |
 | NEC V25 protection path | Universal profile; descriptor-selected program/cache and dual-port mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv), [`s32_v25_rom_cache.sv`](rtl/cpu/v25/s32_v25_rom_cache.sv), and the pinned [s80x86 provenance record](rtl/cpu/v25/s80x86/README.system32.md) |
 | Z80 sound CPU | Approximately 8.054 MHz; ROM, shared RAM, and memory/I/O bus | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv) and the vendored [`T80`](rtl/audio/T80/) core; schematic sheets 7–8 |
 | 2 × YM3438 FM | Z80 I/O register interface on the sound board | [`JT12`](rtl/audio/jt12/) instances; schematic sheet 8 and [JT12](https://github.com/jotego/jt12) |
@@ -163,7 +158,7 @@ their copyright holders.
 
 ## How to install
 
-1. Obtain `segas32.rbf` and the MRA files. It is the universal image for all
+1. Obtain `Arcade-SegaSystem32.rbf` and the MRA files. It is the universal image for all
    supported parents, including Arabian Fight and Golden Axe II.
 2. Copy the RBF file to `/media/fat/_Arcade/` on the MiSTer SD card.
 3. Copy the MRA files to the same `/media/fat/_Arcade/` directory. Equivalent

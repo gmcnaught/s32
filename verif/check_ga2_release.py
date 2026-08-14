@@ -6,19 +6,19 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-standard_qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
+standard_qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
 for macro in ("S32_PROFILE_STANDARD=1", "S32_UNIVERSAL=1", "S32_V25_HW=1",
               "S32_GAME_ONLY_STD=1", "S32_V60_NO_FP=1"):
     assert f'VERILOG_MACRO "{macro}"' in standard_qsf, \
-        f"segas32.qsf is missing {macro}"
+        f"Arcade-SegaSystem32.qsf is missing {macro}"
 for macro in ("S32_V25_MLAB_FIFO=1", "S32_V25_MLAB_EEPROM=1",
               "S32_JT12_MLAB_SHIFTS=1"):
     assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
-        f"segas32.qsf must not force {macro}"
+        f"Arcade-SegaSystem32.qsf must not force {macro}"
 assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in standard_qsf, \
     "the obsolete fixed V25 profile macro must not return"
 assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \
-    "segas32.qsf must not retain the retired debug/release macro"
+    "Arcade-SegaSystem32.qsf must not retain the retired debug/release macro"
 
 matches = []
 for path in (ROOT / "mra").glob("*.mra"):
@@ -30,11 +30,11 @@ assert len(matches) == 1, f"expected exactly one GA2 MRA, found {len(matches)}"
 path, tree = matches[0]
 root = tree.getroot()
 
-assert root.findtext("rbf") == "segas32", "GA2 MRA must load segas32.rbf"
+assert root.findtext("rbf") == "Arcade-SegaSystem32", "GA2 MRA must load Arcade-SegaSystem32.rbf"
 for regional_path in (ROOT / "mra").glob("Golden Axe The Revenge of Death Adder (*.mra"):
     regional_tree = ET.parse(regional_path)
-    assert regional_tree.findtext("rbf") == "segas32", \
-        f"{regional_path.name} must load segas32.rbf"
+    assert regional_tree.findtext("rbf") == "Arcade-SegaSystem32", \
+        f"{regional_path.name} must load Arcade-SegaSystem32.rbf"
     buttons = regional_tree.getroot().find("buttons")
     assert buttons is not None, f"{regional_path.name} is missing button metadata"
     # GA2's magic action is the Attack+Jump chord, not a third cabinet button.

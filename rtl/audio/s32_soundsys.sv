@@ -245,7 +245,32 @@ wire        pcm_cs = (z_addr[15:13] == 3'b110);   // C000-DFFF
 wire [7:0]  rf_rdata;
 wire signed [15:0] rf_l, rf_r;
 
-s32_rf5c68 #(.EXTERNAL_WAVE_RAM(SYSTEM32_ONLY)) rf5c68 (
+// 2026-08-14: reverted to the internal M10K wave RAM.
+//
+// Commit 739eba0 (2026-08-12) moved the RF5C68's 64 KiB wave RAM into an SDRAM
+// aperture purely to reclaim ~64 M10Ks. Every build since has produced ZERO PCM
+// sound effects on real hardware, in every game, while FM music plays normally.
+//
+// Seven separate hypotheses were tested and refuted against the external path:
+// SDRAM byte-mask/DQM generation, the div48 voice-slot guard, the full write
+// datapath (65 wave writes -> 65 SDRAM writes, zero data mismatches through a
+// raw-storage DQM-honouring chip model), byte polarity, the sample ROM/bank
+// path, p4 port arbitration, and the T80 WAIT_n handshake. All are correct in
+// simulation. The fault survives only where simulation cannot reach -- the
+// clk_sys/clk_ram ack crossings and real device timing -- and the failure mode
+// is fail-silent: a single missed p4 read ack wedges wave_rd_req forever and
+// starves the voice engine permanently, which is precisely the symptom.
+//
+// The memory-budget reason for the aperture no longer applies: removing the V60
+// fast instruction-fetch transport freed ~580 ALMs, and the design sits at
+// 479/553 M10Ks, so the 64 blocks this costs still fit. The internal path is
+// single-cycle, needs no WAIT state on the sound Z80 at all, and is the exact
+// configuration that worked on hardware before 739eba0.
+//
+// Prefer known-good silicon behaviour over an unproven optimization. If the
+// aperture is ever revisited, it needs hardware-level evidence (a latched
+// "wave_rd_req high > N cycles" diagnostic), not more simulation.
+s32_rf5c68 #(.EXTERNAL_WAVE_RAM(1'b0)) rf5c68 (
     .clk(clk), .ce(ce_pcm & ~is_multi32), .rst(rst),
     .cs(pcm_cs & ~is_multi32 & (z_mem_rd | z_mem_wr)),
     .we(z_mem_wr),

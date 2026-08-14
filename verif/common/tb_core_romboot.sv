@@ -205,21 +205,19 @@ initial begin
     board.has_v25     = b0[1];
     board.v25_table   = b0[2];
     board.has_adc     = b0[3];
-    board.has_track   = b0[4];
     board.has_ppi     = b0[5];
     board.dual_pcb    = b1[0];
     board.flip_y      = b1[1];
-    board.gun_aim     = b1[2];
     board.analog_profile = b1[5:4];
     board.dual_comm_ff = b1[6];
     board.comm_link_hle = b2[7];
     board.prot_sel    = b2[6:0];
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
-    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d track=%0d ppi=%0d dual=%0d prot=%0d flip_y=%0d gun=%0d analog=%0d sbm=%0d",
+    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d ppi=%0d dual=%0d prot=%0d flip_y=%0d analog=%0d sbm=%0d",
              board.multi32, board.has_v25, board.v25_table,
-             ga2_qualification, board.has_adc, board.has_track, board.has_ppi, board.dual_pcb,
-             board.prot_sel, board.flip_y, board.gun_aim,
+             ga2_qualification, board.has_adc, board.has_ppi, board.dual_pcb,
+             board.prot_sel, board.flip_y,
              board.analog_profile,
              board.sprite_bank_mask);
 end
@@ -354,8 +352,8 @@ end
 // Framebuffer service.  The broad regression keeps the compact behavioral
 // memory; +define+S32_REAL_FB_SIM selects the production s32_fb_if plus a
 // deterministic MiSTer-style DDR model for Golden Axe qualification.
-wire        fbw_start, fbw_valid, fbw_end, fbe_req, fbr_req, fbr_blend;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_blend_buf;
+wire        fbw_start, fbw_valid, fbw_end, fbe_req, fbr_req;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix;
@@ -365,8 +363,6 @@ wire [15:0] fbr_pix;
 
 integer fbr_accepts = 0;
 reg [1:0] fbr_buf_l;
-reg [1:0] fbr_blend_buf_l;
-reg       fbr_blend_l;
 reg [7:0] fbr_y_l;
 reg fbr_req_d = 0, fbr_ack_h_d = 0;
 always @(posedge clk_ram) begin
@@ -374,8 +370,6 @@ always @(posedge clk_ram) begin
     fbr_ack_h_d <= fbr_ack;
     if (fbr_req && !fbr_req_d) begin
         fbr_buf_l <= fbr_buf;
-        fbr_blend_buf_l <= fbr_blend_buf;
-        fbr_blend_l <= fbr_blend;
         fbr_y_l   <= fbr_y;
     end
     if (fbr_ack && !fbr_ack_h_d)
@@ -393,8 +387,7 @@ s32_fb_ddr_model fb_service (
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
-    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_blend_buf(fbr_blend_buf),
-    .rd_blend(fbr_blend), .rd_y(fbr_y), .rd_ack(fbr_ack),
+    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
     .rd_x(fbr_x), .rd_pix(fbr_pix),
     .write_accepts(fb_ddr_writes), .read_accepts(fb_ddr_reads),
     .line_acks(fb_line_acks),
@@ -422,13 +415,7 @@ always @(posedge clk_ram) begin
         for (int x = 0; x < 512; x++) fbmem[fbe_buf][fbe_y][x] = 16'hffff;
 end
 wire [15:0] fbr_pix_new = fbmem[fbr_buf_l][fbr_y_l][fbr_x];
-wire [15:0] fbr_pix_other = fbmem[fbr_blend_buf_l][fbr_y_l][fbr_x];
-wire fbr_hud_x = (fbr_x >= 9'd16 && fbr_x <= 9'd143) ||
-                 (fbr_x >= 9'd176 && fbr_x <= 9'd303);
-assign fbr_pix = (fbr_blend_l && fbr_hud_x &&
-                  (fbr_pix_new & 16'h7fff) == 16'h7fff)
-               ? {fbr_pix_other[15] & fbr_pix_new[15], fbr_pix_other[14:0]}
-               : fbr_pix_new;
+assign fbr_pix = fbr_pix_new;
 `endif
 integer spr_px = 0;
 always @(posedge clk_ram) if (fbw_valid) spr_px = spr_px + 1;
@@ -515,11 +502,7 @@ integer p1_event_count;
 // simulation never samples a partially written control word.
 string input_path;
 integer input_fd, input_scan, input_mask_value;
-integer trk_at, trk_len, trk_dx_arg, trk_dy_arg;
 integer cur_frame = 0;
-reg trk0_dv = 1'b0;
-reg signed [8:0] trk0_dx = 9'sd0;
-reg signed [8:0] trk0_dy = 9'sd0;
 initial begin
     if (!$value$plusargs("COINAT=%d", coin_at)) coin_at = -1;
     if (!$value$plusargs("COINLEN=%d", coin_len)) coin_len = 1;
@@ -544,10 +527,6 @@ initial begin
     if (!$value$plusargs("P1AT3=%d", p1_at[3])) p1_at[3] = -1;
     if (!$value$plusargs("P1LEN3=%d", p1_len[3])) p1_len[3] = 1;
     if (!$value$plusargs("P1MASK3=%h", p1_mask[3])) p1_mask[3] = 0;
-    if (!$value$plusargs("TRKAT=%d", trk_at)) trk_at = -1;
-    if (!$value$plusargs("TRKLEN=%d", trk_len)) trk_len = 1;
-    if (!$value$plusargs("TRKDX=%d", trk_dx_arg)) trk_dx_arg = 0;
-    if (!$value$plusargs("TRKDY=%d", trk_dy_arg)) trk_dy_arg = 0;
     if (!$value$plusargs("INPUTFILE=%s", input_path)) input_path = "";
     if (input_path != "")
         $display("[input] live keyboard bridge: %0s", input_path);
@@ -555,9 +534,6 @@ initial begin
                      (p1_at[2] >= 0) + (p1_at[3] >= 0);
 end
 wire [7:0] adc_a [0:7];
-wire       tdv_a [0:2];
-wire signed [8:0] tdx_a [0:2], tdy_a [0:2];
-wire [7:0] tbt_a [0:2];
 // MAME's no-input PADDLE default is not always the nominal 0x80.  The
 // retained Rad Rally reference trace reports 0x75, so allow a bounded
 // diagnostic override while keeping the normal deterministic board defaults.
@@ -576,33 +552,7 @@ assign adc_a[2] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
 generate
     for (genvar gi = 3; gi < 8; gi = gi + 1)
         assign adc_a[gi] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
-    assign tdv_a[0] = trk0_dv;
-    assign tdx_a[0] = trk0_dx;
-    assign tdy_a[0] = trk0_dy;
-    assign tbt_a[0] = 8'hff;
-    for (genvar gj = 1; gj < 3; gj = gj + 1) begin
-        assign tdv_a[gj] = 1'b0;
-        assign tdx_a[gj] = 9'sd0;
-        assign tdy_a[gj] = 9'sd0;
-        assign tbt_a[gj] = 8'hff;
-    end
 endgenerate
-
-integer track_log_n = 0;
-integer track_log_max;
-initial if (!$value$plusargs("TRACKLOG=%d", track_log_max)) track_log_max = 0;
-always @(posedge clk_sys) begin
-    if (track_log_n < track_log_max && trk_at >= 0 &&
-        cur_frame >= trk_at - 5 && cur_frame <= trk_at + trk_len + 5 &&
-        core.m_req && core.m_ack &&
-        !core.ack_d && {core.A[23:3], 3'b000} == 24'hc00040) begin
-        $display("[track] f=%0d pc=%08x rw=%s a=%06x d=%04x be=%b",
-            cur_frame, core.v60.pc, core.m_we ? "w" : "r",
-            {core.A[23:1], 1'b0}, core.m_we ? core.m_wdata : core.m_rdata,
-            core.m_be);
-        track_log_n = track_log_n + 1;
-    end
-end
 
 wire hs, vs, hb, vb;
 wire [23:0] rgb_a;
@@ -611,8 +561,6 @@ wire signed [15:0] audio_l, audio_r;
 reg        eep_ld_wr = 1'b0;
 reg  [5:0] eep_ld_addr = 6'd0;
 reg [15:0] eep_ld_data = 16'hffff;
-reg        test_fast_v60 = 1'b0;
-initial test_fast_v60 = $test$plusargs("FASTV60");
 
 // Reproduce the live loader's index-2 default transfer before reset releases.
 // eeprom.hex already contains the little-endian 16-bit words that ioctl_dout
@@ -658,8 +606,7 @@ s32_core core (
     .clk_v25(clk_v25),
 `endif
     .rst(rst), .video_rst(rst), .board(board),
-    .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0), .fast_v60(test_fast_v60),
-    .alien3_hud_blend(1'b0),
+    .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(p1_req), .sdr_p1_addr(p1_addr), .sdr_p1_dout(p1_dout), .sdr_p1_ack(p1_ack),
@@ -672,7 +619,6 @@ s32_core core (
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
-    .fb_rd_blend_buf(fbr_blend_buf), .fb_rd_blend(fbr_blend),
     .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
@@ -684,10 +630,8 @@ s32_core core (
     .in_p1b(8'hff), .in_p2b(8'hff), .in_portc_b(8'hff),
     .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adc_a),
-    .trk_dv(tdv_a), .trk_dx(tdx_a), .trk_dy(tdy_a),
-    .trk_btn(tbt_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
-    .rgb_a(rgb_a), .rgb_b(), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
+    .rgb_a(rgb_a), .rgb_b(), .vs_phase(2'b00), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(audio_l), .audio_r(audio_r), .out_lamps()
 );
 
@@ -1202,7 +1146,7 @@ always @(posedge clk_ram) begin
     if (core.sprite.fb_wr_valid) spr_px_cnt <= spr_px_cnt + 1'd1;
     if (core.sprite.fb_wr_start) spr_draw_seen <= spr_draw_seen + 1'd1;
 end
-// Scoped, one-off diagnostic for the SegaSonic floor-palette write-both
+// Scoped, one-off diagnostic for palette write-both
 // investigation: n_pal_wr/n_vram_wr are running totals (never reset), so
 // print their per-frame delta alongside mixer $4E only across the narrow
 // window the level-load burst falls in.  Safe to leave in: dead weight
@@ -2152,21 +2096,7 @@ initial begin
             // tap Attack (Button1) every 25 frames during gameplay to engage them
             if (f >= 700 && (f % 25) < 5) in_p1a_r[0] = 1'b0;           // Button1 attack
         end
-        // Apply one immutable relative-motion packet at the start of each
-        // selected native frame. Holding delta_valid for the full frame would
-        // incorrectly add the same trackball delta on every system clock.
-        if (trk_at >= 0 && trk_len > 0 && f >= trk_at && f < trk_at + trk_len) begin
-            trk0_dx = trk_dx_arg;
-            trk0_dy = trk_dy_arg;
-            trk0_dv = 1'b1;
-            if (f == trk_at)
-                $display("[input] frames %0d..%0d: P1 track delta dx=%0d dy=%0d",
-                    trk_at, trk_at + trk_len - 1, trk_dx_arg, trk_dy_arg);
-        end
         @(posedge clk_sys);
-        trk0_dv = 1'b0;
-        trk0_dx = 9'sd0;
-        trk0_dy = 9'sd0;
         repeat (803999) @(posedge clk_sys);
         // Synchronise to the game scene rather than an absolute emulator frame.
         // In the matched MAME replay, NBG1 is at 4.0x zoom and scroll X advances
@@ -2345,7 +2275,7 @@ initial begin
         $fatal(1, "GA2 framebuffer line service too sparse: acks=%0d frames=%0d",
                fb_line_acks, frames);
     // This is a Golden Axe-specific visual qualification.  b2 is the
-    // protection selector (Sonic uses 1), so it cannot identify GA2: several
+    // protection selector, so it cannot identify GA2: several
     // standard-profile games also have b2=0.  ga2_qualification is derived
     // from the raw descriptor's V25/table flags above.
     if (ga2_qualification && frames >= 70 && spr_px == 0)

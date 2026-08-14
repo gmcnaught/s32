@@ -99,8 +99,28 @@ reg signed [31:0] xstep; // MAME source coordinate/step, 12.20 modulo 2^32
 reg [15:0] name;
 reg [63:0] row;
 reg [15:0] rowscroll_add;
-reg [8:0]  rowselect_y;
-reg        use_rowsel;
+
+// Row-invariant tile-fetch operands, resolved once per layer row.
+//
+// MAME's update_tilemap_rowscroll (segas32_v.cpp) hoists exactly these out of
+// its inner loop: `xscroll`/`yscroll` and the flip flags are computed once for
+// the layer, and each row resolves its effective source Y and its pair of page
+// pixmaps (`src[2]`) before the per-pixel loop, which then does only
+// `srcx += srcxstep` and `src[(srcx >> 9) & 1]`.  The previous form re-derived
+// all of it inside T_NAME for every tile, so `lay` fanned out through the
+// scrollx/offsx/scrolly array muxes, a three-operand adder and the page-word
+// select within one 96.6 MHz cycle -- the design's worst setup path.
+//
+// These are written only at the states that lead into T_NAME, never inside the
+// T_EMIT->T_NAME tile loop, because none of their inputs may change within a
+// row: rowscroll_add and srcy are set during layer setup,
+// and latching the CPU-written scroll/page inputs per row (rather than per
+// tile) is what the reference model does.
+reg [9:0]  sx_base;      // scrollx - offsx + rowscroll, NBG2/3 only
+reg [8:0]  sy_row;       // effective source Y for this row
+reg [2:0]  pg_idx;       // {lay[1:0], sy_row[8]} latched for this row
+reg        flipx_row;    // tile_flipx latched for this row
+reg [1:0]  tilebank_row; // tilebank_of(lay) latched for this row
 
 // Bitmap VRAM is word-wide while the renderer consumes one pixel per cycle.
 // Retain an explicitly tagged word for its two 8bpp or four 4bpp lanes rather
@@ -161,12 +181,13 @@ wire [8:0] text_srcx = r1ff00[9] ? (9'd511 - x[8:0]) : x[8:0];
 wire [7:0] text_srcy = r1ff00[9] ? (8'd255 - line[7:0]) : line[7:0];
 
 
-// page select for current layer/srcx/srcy: 2x2 pages of 512x256
-function automatic [6:0] page_of(input [2:0] l, input [9:0] sx, input [8:0] sy);
-    logic [15:0] w;
-    w = pages[{l[1:0], sy[8]}];       // word: {upper/lower}
-    page_of = sx[9] ? w[14:8] : w[6:0];
-endfunction
+// Page select is now split across the row boundary: the row latches only the
+// 3-bit page index (2x2 pages of 512x256), a single read port expands it, and
+// just the sx[9] half-select remains in the per-tile path.  Latching the index
+// rather than the word keeps this to one 8:1 mux on the 128-bit `pages` bus
+// instead of one per write site, and pg_idx is registered so the mux sits off
+// the T_NAME critical path.
+wire [15:0] pg_word = pages[pg_idx];
 
 // tile name address within VRAM: page*0x200 + row*32 + col
 function automatic [15:0] name_addr(input [6:0] pg, input [9:0] sx, input [8:0] sy);
@@ -296,7 +317,6 @@ always @(posedge clk) begin
                         scale_start <= 1'b1;
                     end
                     x <= 0;
-                    use_rowsel <= 0;
                     rowscroll_add <= 0;
                     tst <= T_SCALE;
                 end
@@ -310,8 +330,15 @@ always @(posedge clk) begin
                     xstep <= 32'sh0010_0000; // unused for NBG2/3
                     srcy <= sy;
                     x <= 0;
-                    use_rowsel <= 0;
                     rowscroll_add <= 0;
+                    // Row invariants for the direct T_NAME entry below.  The
+                    // T_ROWTAB1 path recomputes them once its table words
+                    // arrive, so setting them unconditionally here is safe.
+                    sx_base   <= scrollx[lay][9:0] - {1'b0, offsx[lay][8:0]};
+                    sy_row    <= sy;
+                    pg_idx    <= {lay[1:0], sy[8]};
+                    flipx_row <= tile_flipx;
+                    tilebank_row <= tilebank_of(lay);
                     // rowscroll/rowselect fetch for NBG2/3
                     if (!r1ff04[lay_idx+4'd2] &&
                         (r1ff04[lay_idx-4'd2] | r1ff04[lay_idx])) begin
@@ -374,6 +401,14 @@ always @(posedge clk) begin
             ycoord = scale_yorigin + scale_yprod[31:0];
             srcy <= ycoord[28:20];
             xacc <= scale_xorigin + scale_xprod[31:0];
+            // NBG0/1 take their source X from xacc, so sx_base is unused here
+            // and is deliberately left alone.  NBG0/1 never take the row
+            // scroll/select path, so the row's effective Y is simply the
+            // freshly computed srcy.
+            sy_row    <= ycoord[28:20];
+            pg_idx    <= {lay[1:0], ycoord[28]};
+            flipx_row <= tile_flipx;
+            tilebank_row <= tilebank_of(lay);
             tst <= T_NAME;
         end
 
@@ -383,6 +418,22 @@ always @(posedge clk) begin
             tst <= T_ROWTAB2;
         end
         T_ROWTAB2: begin
+            // Row invariants, using this cycle's incoming row-scroll word and
+            // row-select value rather than their not-yet-registered forms.
+            logic [9:0] rsa_c;
+            logic [8:0] syc;
+            rsa_c = (r1ff04[lay_idx-4'd2] && !r1ff04[lay_idx+4'd2])
+                  ? vram_rdata[9:0] : rowscroll_add[9:0];
+            // Row select applies only on the inner else branch below (row
+            // select enabled without row scroll); every other exit keeps the
+            // layer-setup srcy.
+            syc = (r1ff04[lay_idx] && !r1ff04[lay_idx+4'd2] &&
+                   !r1ff04[lay_idx-4'd2])
+                ? (scrolly[lay][8:0] + vram_rdata[8:0]) : srcy;
+            sx_base <= scrollx[lay][9:0] - {1'b0, offsx[lay][8:0]} + rsa_c;
+            sy_row  <= syc;
+            pg_idx  <= {lay[1:0], syc[8]};
+
             if (r1ff04[lay_idx-4'd2] && !r1ff04[lay_idx+4'd2])
                 rowscroll_add <= vram_rdata & 16'h3ff;
             if (r1ff04[lay_idx] && !r1ff04[lay_idx+4'd2]) begin
@@ -393,8 +444,7 @@ always @(posedge clk) begin
                     tst <= T_ROWSEL1;
                 end
                 else begin
-                    use_rowsel <= 1'b1;
-                    rowselect_y <= vram_rdata[8:0];
+                    // Row select is folded into sy_row/pg_word above.
                     tst <= T_NAME;
                 end
             end
@@ -402,21 +452,31 @@ always @(posedge clk) begin
         end
         T_ROWSEL1: tst <= T_ROWSEL2;
         T_ROWSEL2: begin
-                use_rowsel <= 1'b1;
-                rowselect_y <= vram_rdata[8:0];
+            // This path always enables row select, so the row's effective Y is
+            // the row-select table word.  rowscroll_add was already latched in
+            // T_ROWTAB2 and is reused here.
+            logic [8:0] syc;
+            syc = scrolly[lay][8:0] + vram_rdata[8:0];
+            sx_base <= scrollx[lay][9:0] - {1'b0, offsx[lay][8:0]} +
+                       rowscroll_add[9:0];
+            sy_row  <= syc;
+            pg_idx  <= {lay[1:0], syc[8]};
             tst <= T_NAME;
         end
 
         // fetch tile name for current x
         T_NAME: begin
+            // Only the x-dependent term is computed here now; the layer/row
+            // operands were resolved by the states above.  All arithmetic is
+            // mod 2^10 as before, so splitting the sum is bit-exact.
             logic [9:0] sx;
+            logic [6:0] pg;
             if (lay < 2) sx = xacc[29:20];
-            else         sx = scrollx[lay][9:0] - {1'b0, offsx[lay][8:0]} +
-                              rowscroll_add[9:0] +
-                              (tile_flipx ? (hpix - 1'b1 - x[8:0]) : x);
+            else         sx = sx_base +
+                              (flipx_row ? (hpix - 1'b1 - x[8:0]) : x);
+            pg = sx[9] ? pg_word[14:8] : pg_word[6:0];
             srcx <= sx;
-            vram_addr <= name_addr(page_of(lay, sx, use_rowsel ? (scrolly[lay][8:0]+rowselect_y) : srcy), sx,
-                                   use_rowsel ? (scrolly[lay][8:0]+rowselect_y) : srcy);
+            vram_addr <= name_addr(pg, sx, sy_row);
             tst <= T_NAMEW;
         end
         T_NAMEW: begin
@@ -435,8 +495,8 @@ always @(posedge clk) begin
             logic [14:0] code;
             logic [3:0]  trow;
             logic [8:0] eff_y;
-            code = {tilebank_of(lay), name[12:0]};
-            eff_y = use_rowsel ? (scrolly[lay][8:0]+rowselect_y) : srcy;
+            code = {tilebank_row, name[12:0]};
+            eff_y = sy_row;   // same row-invariant value, resolved once above
             trow = eff_y[3:0] ^ {4{name[15]}};
             tile_addr <= {code, trow};   // 15+4 = 19 bits of 8-byte rows
             tile_req  <= 1'b1;
@@ -493,9 +553,13 @@ always @(posedge clk) begin
                     else srcx <= nsx_zoom;
                 end
                 else begin
-                    if ((!tile_flipx && srcx[3:0] == 4'hf) ||
-                        ( tile_flipx && srcx[3:0] == 4'h0)) tst <= T_NAME;
-                    else srcx <= tile_flipx ? (srcx - 1'd1) : (srcx + 1'd1);
+                    // Advance with the same row-latched flip that T_NAME used
+                    // to address the tile.  Using the live wire here while
+                    // T_NAME uses flipx_row would tear a row's addressing if
+                    // the CPU wrote $1FF00 mid-scanline.
+                    if ((!flipx_row && srcx[3:0] == 4'hf) ||
+                        ( flipx_row && srcx[3:0] == 4'h0)) tst <= T_NAME;
+                    else srcx <= flipx_row ? (srcx - 1'd1) : (srcx + 1'd1);
                 end
             end
         end

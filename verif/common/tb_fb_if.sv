@@ -7,7 +7,6 @@
 //  4. line read-back through the rd port matches DDR contents
 //  5. display read wins over a simultaneous deferred sprite flush, and the
 //     sprite write remains queued and completes afterward
-//  6. Alien 3 flicker blend falls back to the hidden A/B buffer across the
 //     complete line, retaining shadow pixels as authoritative
 //  7. fetching the next line never overwrites the line still being scanned;
 //     the completed replacement becomes visible only at a raster boundary
@@ -37,8 +36,6 @@ reg  [7:0]  er_y = 0;
 wire        er_ack;
 reg         rd_req = 0;
 reg  [1:0]  rd_buf = 0;
-reg  [1:0]  rd_blend_buf = 0;
-reg         rd_blend = 0;
 reg  [7:0]  rd_y = 0;
 wire        rd_ack;
 reg  [8:0]  rd_x = 0;
@@ -63,8 +60,7 @@ s32_fb_if #(.FB_BASE(32'h3000_0000)) dut (
     .wr_valid(wr_valid), .wr_pix(wr_pix), .wr_end(wr_end),
     .wr_shadow(wr_shadow), .wr_busy(wr_busy),
     .er_req(er_req), .er_buf(er_buf), .er_y(er_y), .er_ack(er_ack),
-    .rd_req(rd_req), .rd_buf(rd_buf), .rd_blend_buf(rd_blend_buf),
-    .rd_blend(rd_blend), .rd_y(rd_y), .rd_ack(rd_ack),
+    .rd_req(rd_req), .rd_buf(rd_buf), .rd_y(rd_y), .rd_ack(rd_ack),
     .rd_x(rd_x), .rd_pix(rd_pix)
 );
 
@@ -212,7 +208,6 @@ integer erase_write_start;
 integer line_read_start;
 integer arb_read_start;
 integer arb_write_start;
-integer blend_read_start;
 integer stable_read_start;
 integer sparse_write_start;
 integer sparse_shadow_read_start;
@@ -379,39 +374,6 @@ initial begin
                  write_accepts - arb_write_start);
     end
     check(ddr_pix(6, 30), 16'hABCD, 30);
-
-    // 6: composite the ordinary A/B buffers across an Alien 3 scanline. The
-    // displayed field wins where populated; erased pixels fall back to the
-    // hidden field. A
-    // transparent 0x7fff shadow pixel retains the prior pixel with bit 15
-    // cleared, matching the mixer shadow-RMW convention. Word 0 proves the
-    // same transparent fallback covers both the fixed HUD and movable sight.
-    ddr[7 * 128] = 64'hffff_ffff_ffff_ffff;
-    ddr[32768 + 7 * 128] = {16'hb003, 16'hb002, 16'hb001, 16'hb000};
-    ddr[7 * 128 + 4] = {16'hffff, 16'h7fff, 16'hffff, 16'h9001};
-    ddr[32768 + 7 * 128 + 4] = {16'hffff, 16'ha003, 16'ha002, 16'ha001};
-    ddr[7 * 128 + 44] = {16'hffff, 16'h7fff, 16'hffff, 16'h9101};
-    ddr[32768 + 7 * 128 + 44] = {16'hffff, 16'ha103, 16'ha102, 16'ha101};
-    blend_read_start = read_accepts;
-    rd_y <= 8'd7; rd_buf <= 2'd0; rd_blend_buf <= 2'd1;
-    rd_blend <= 1'b1; rd_req <= 1'b1;
-    @(posedge rd_ack); rd_req <= 1'b0;
-    wait (!rd_ack); repeat (2) @(posedge clk);
-    if ((read_accepts - blend_read_start) != 2) begin
-        errors = errors + 1;
-        $display("  FAIL flicker blend read accepted %0d bursts, expected 2",
-                 read_accepts - blend_read_start);
-    end
-    rd_x = 9'd0;  @(posedge clk); #1; check(rd_pix, 16'hb000, 0);
-    rd_x = 9'd16; @(posedge clk); #1; check(rd_pix, 16'h9001, 16);
-    rd_x = 9'd17; @(posedge clk); #1; check(rd_pix, 16'ha002, 17);
-    rd_x = 9'd18; @(posedge clk); #1; check(rd_pix, 16'h2003, 18);
-    rd_x = 9'd19; @(posedge clk); #1; check(rd_pix, 16'hffff, 19);
-    rd_x = 9'd176; @(posedge clk); #1; check(rd_pix, 16'h9101, 176);
-    rd_x = 9'd177; @(posedge clk); #1; check(rd_pix, 16'ha102, 177);
-    rd_x = 9'd178; @(posedge clk); #1; check(rd_pix, 16'h2103, 178);
-    rd_x = 9'd179; @(posedge clk); #1; check(rd_pix, 16'hffff, 179);
-    rd_blend <= 1'b0;
 
     // 7: keep line 8 displayed while line 9 is fetched. The next-line DDR
     // burst completes while rd_x remains in the middle of the current raster;
