@@ -107,7 +107,7 @@ s32_sprite #(.POST_VBLANK_CYCLES(4), .FAST_1X(DUT_FAST_1X)) dut (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(fbw_pix), .fb_wr_end(fbw_end),
     .fb_wr_shadow(fbw_shadow), .fb_busy(1'b0),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
-    .disp_buf(), .scan_buf(), .scan_buf_prev()
+    .disp_buf(), .scan_buf()
 );
 assign rendering = dut.rs != 0;
 

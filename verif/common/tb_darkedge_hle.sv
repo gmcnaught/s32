@@ -2,18 +2,14 @@
 module tb_darkedge_hle;
 import s32_pkg::*;
 reg clk=0,rst=1,vblank=0;
-reg [6:0] prot_sel=PROT_DARKEDGE;
 always #5 clk=~clk;
 wire req,we; wire [15:0] addr,wdata; wire [1:0] be;
 wire ack=req;
 wire [15:0] rdata=(addr==(16'hA12C>>1))?16'h0001:16'h0000;
 integer step=0,errors=0;
-s32_prot_hle dut(.clk(clk),.rst(rst),.prot_sel(prot_sel),
- .cpu_wr(1'b0),.cpu_addr(24'b0),.cpu_wdata(16'b0),.cpu_be(2'b0),
- .cpu_pre_wram_data(16'b0),.vblank(vblank),
+s32_prot_darkedge dut(.clk(clk),.rst(rst),.enable(1'b1),.vblank(vblank),
  .wram_req(req),.wram_we(we),.wram_addr(addr),.wram_wdata(wdata),
- .wram_be(be),.wram_rdata(rdata),.wram_ack(ack),
- .rom_req(),.rom_addr(),.rom_data(16'b0),.rom_ack(1'b0));
+ .wram_be(be),.wram_rdata(rdata),.wram_ack(ack));
 task check(input ok); if(!ok) begin errors=errors+1;$display("FAIL step=%0d addr=%04x we=%b data=%04x be=%b",step,addr,we,wdata,be);end endtask
 always @(negedge clk) if(!rst&&req) begin
  case(step)

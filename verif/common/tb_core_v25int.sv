@@ -106,7 +106,7 @@ always @(posedge clk_sys) begin
 end
 
 // -------------------------------------------------------------------------
-// sprite ROM p2 idle ack; unused analog/trackball tie-offs.
+// sprite ROM p2 idle ack; unused analog tie-offs.
 // -------------------------------------------------------------------------
 wire p2_req; reg p2_ack;
 always @(posedge clk_ram) p2_ack <= p2_req;
@@ -129,8 +129,7 @@ always @(posedge clk_ram) fbe_ack <= fbe_req;
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram), .clk_v25(clk_v25),
     .rst(rst), .video_rst(rst), .board(board),
-    .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(1'b0),
-    .alien3_hud_blend(1'b0),
+    .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(), .sdr_p1_addr(), .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b1),
@@ -142,7 +141,7 @@ s32_core core (
     .fb_wr_valid(fbw_valid), .fb_wr_pix(), .fb_wr_end(),
     .fb_wr_shadow(), .fb_wr_busy(1'b0),
     .fb_er_req(fbe_req), .fb_er_buf(), .fb_er_y(), .fb_er_ack(fbe_ack),
-    .fb_rd_req(fbr_req), .fb_rd_buf(), .fb_rd_blend_buf(), .fb_rd_blend(),
+    .fb_rd_req(fbr_req), .fb_rd_buf(),
     .fb_rd_y(), .fb_rd_ack(1'b1),
     .fb_rd_x(), .fb_rd_pix(16'hffff),
     .v25_prg_wr(1'b0), .v25_prg_waddr(16'h0), .v25_prg_wdata(8'h0),
@@ -152,9 +151,9 @@ s32_core core (
     .in_svc12(8'hff), .in_svc34(8'hff),
     .in_p1b(8'hff), .in_p2b(8'hff), .in_portc_b(8'hff),
     .in_svc12_b(8'hff), .in_svc34_b(8'hff),
-    .adc_ch(adc_a), .trk_dv(tdv_a), .trk_dx(tdx_a), .trk_dy(tdy_a), .trk_btn(tbt_a),
+    .adc_ch(adc_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
-    .rgb_a(), .rgb_b(), .ce_pix(), .hs(), .vs(), .hb(), .vb(),
+    .rgb_a(), .rgb_b(), .vs_phase(2'b00), .ce_pix(), .hs(), .vs(), .hb(), .vb(),
     .audio_l(), .audio_r(), .out_lamps()
 );
 

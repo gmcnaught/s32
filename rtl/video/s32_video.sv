@@ -8,6 +8,7 @@ module s32_video (
     input             clk,          // clk_sys (48.3 MHz)
     input             rst,
     input             mode_416,
+    input       [1:0] vs_phase,     // VSync placement in vblank: 0 early, 1 mid, 2 late
 
     output reg        ce_pix,
     output reg        mode_active,
@@ -46,9 +47,22 @@ reg vb_start_r, vb_end_r;
 assign vblank_start = vb_start_r;
 assign vblank_end   = vb_end_r;
 
+// VSync pulse start line within vblank (lines after VDISP).  0 keeps the
+// historical pulse at lines 234-236; 1/2 move it toward the end of vblank
+// (244-246 / 254-256) so the HDMI low-latency scaler, which phase-locks its
+// output frame to this pulse, starts reading the frame later relative to the
+// core's line writes.  Applied only between frames, like mode_active, so a
+// live OSD change cannot deform the current frame's pulse.  Vertical refresh
+// and every game-visible signal (vblank, IRQs) are unchanged.
+wire [8:0] vs_off_sel = (vs_phase == 2'd2) ? 9'd30 :
+                        (vs_phase == 2'd1) ? 9'd20 : 9'd10;
+reg [8:0] vs_off;
+initial vs_off = 9'd10;
+
 always @(posedge clk) begin
     if (rst) begin
         mode_active <= mode_416;
+        vs_off <= vs_off_sel;
         hcnt <= 0; vcnt <= 0;
         hblank <= 0; vblank <= 0; hsync <= 0; vsync <= 0;
         vb_start_r <= 0; vb_end_r <= 0;
@@ -68,6 +82,7 @@ always @(posedge clk) begin
                     // it only between complete frames so a live register
                     // write cannot truncate or stretch the current line.
                     mode_active <= mode_416;
+                    vs_off <= vs_off_sel;
                 end
                 else begin
                     vcnt <= vcnt + 1'd1;
@@ -83,7 +98,7 @@ always @(posedge clk) begin
             end
             // syncs in blanking region
             hsync <= (hcnt >= hdisp + 9'd24) && (hcnt < hdisp + 9'd56);
-            vsync <= (vcnt >= VDISP  + 9'd10) && (vcnt < VDISP + 9'd13);
+            vsync <= (vcnt >= VDISP + vs_off) && (vcnt < VDISP + vs_off + 9'd3);
         end
     end
 end

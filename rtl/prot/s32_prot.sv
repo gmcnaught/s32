@@ -1,289 +1,99 @@
+
 //============================================================================
-//  System 32 protection & per-game custom hardware (DESIGN.md §8)
-//  All modules sit on the V60 bus as snoopers/responders enabled by the
-//  board descriptor's prot_sel / flags.
+//  System 32 protection hardware retained by the production profile.
 //============================================================================
 
 import s32_pkg::*;
 
-// ---------------------------------------------------------------------------
-//  s32_prot_hle: the write-triggered work-RAM protections
-//  (supported production parents: Sonic §8.2 and Dark Edge §8.4)
-//  Watches CPU writes; issues its own work-RAM writes via a dedicated port
-//  (arbitration handled by the bus controller: prot port wins, CPU stalls).
-// ---------------------------------------------------------------------------
-module s32_prot_hle #(
+module s32_prot_darkedge #(
     parameter ENABLE = 1'b1
 ) (
     input             clk,
     input             rst,
-    input       [6:0] prot_sel,
-
-    // CPU bus snoop (writes to work RAM window 0x200000+)
-    input             cpu_wr,
-    input      [23:0] cpu_addr,
-    input      [15:0] cpu_wdata,
-    input       [1:0] cpu_be,
-    // Port-A RAM read value primed by the held CPU bus address.  On a write
-    // cycle this is the pre-write word used by COMBINE_DATA semantics.
-    input      [15:0] cpu_pre_wram_data,
-
-    // vblank strobe (darkedge/f1lap FD1149 behaviour)
+    input             enable,
     input             vblank,
-
-    // work RAM second port
     output reg        wram_req,
     output reg        wram_we,
-    output reg [15:0] wram_addr,    // word address within 128KB window
+    output reg [15:0] wram_addr,
     output reg [15:0] wram_wdata,
     output reg  [1:0] wram_be,
     input      [15:0] wram_rdata,
-    input             wram_ack,
-
-    // program ROM read port (through SDRAM arbiter, shared with CPU port)
-    output reg        rom_req,
-    output reg [23:0] rom_addr,
-    input      [15:0] rom_data,
-    input             rom_ack
+    input             wram_ack
 );
 
-typedef enum logic [3:0] {
-    P_IDLE,
-    // sonic: on write to 0x20E5C4 -> read level table, update 0xF06E/F0BC
-    SON_RD0, SON_RD1, SON_WR0, SON_WR1, SON_WR2,
-    // darkedge vblank writes
-    DKE_W0, DKE_R0, DKE_W1, DKE_W2
-} pst_t;
-pst_t ps;
+typedef enum logic [2:0] { DKE_IDLE, DKE_W0, DKE_R0, DKE_W1, DKE_W2 } dke_state_t;
+dke_state_t state;
+reg [7:0] tmp;
 
-reg [15:0] level;
-reg [7:0]  tmp;
-wire [15:0] sonic_merged = {
-    cpu_be[1] ? cpu_wdata[15:8] : cpu_pre_wram_data[15:8],
-    cpu_be[0] ? cpu_wdata[7:0]  : cpu_pre_wram_data[7:0]
-};
-
-generate
-if (ENABLE) begin : g_enabled
 always @(posedge clk) begin
-    if (rst) begin
-        ps <= P_IDLE;
-        wram_req <= 0; rom_req <= 0;
+    if (rst || !ENABLE || !enable) begin
+        state      <= DKE_IDLE;
+        wram_req   <= 1'b0;
+        wram_we    <= 1'b0;
+        wram_addr  <= 16'h0000;
+        wram_wdata <= 16'h0000;
+        wram_be    <= 2'b00;
+        tmp        <= 8'h00;
     end
     else begin
-        case (ps)
-        P_IDLE: begin
-            wram_req <= 0; rom_req <= 0;
-            case (prot_sel)
-            PROT_SONIC:
-                if (cpu_wr && cpu_addr == 24'h20E5C4) begin
-                    if (sonic_merged == 0) begin
-                        level <= 16'h0007;
-                        ps <= SON_WR0;
-                    end
-                    else begin
-                        // level = ROM[base + cleared*2 - 2] << 8 |
-                        //         ROM[base + cleared*2 - 1]
-                        rom_req  <= 1'b1;
-                        rom_addr <= 24'h00263A + {sonic_merged[14:0], 1'b0} - 24'd2;
-                        ps <= SON_RD0;
-                    end
-                end
-            PROT_DARKEDGE:
-                if (vblank) begin
-                    wram_req <= 1'b1; wram_we <= 1'b1;
-                    wram_addr <= 16'hF072 >> 1;
-                    wram_wdata <= 16'h0000; wram_be <= 2'b11;
-                    ps <= DKE_W0;
-                end
-            default: ;
-            endcase
-        end
-
-        // ---- sonic ----
-        SON_RD0: if (rom_ack) begin
-            rom_req <= 0;
-            // SDRAM packs the lower-address ROM byte in rom_data[7:0].
-            // MAME's protection builds the game value as ROM[a] << 8 |
-            // ROM[a+1], so swap the little-endian storage word here.
-            level <= {rom_data[7:0], rom_data[15:8]};
-            ps <= SON_WR0;
-        end
-        SON_WR0: begin
-            wram_req <= 1'b1; wram_we <= 1'b1;
-            wram_addr <= 16'hF06E >> 1;
-            wram_wdata <= level; wram_be <= 2'b11;
-            ps <= SON_WR1;
-        end
-        SON_WR1: if (wram_ack) begin
-            wram_req <= 1'b1; wram_we <= 1'b1;
-            wram_addr <= 16'hF0BC >> 1;
-            wram_wdata <= 16'h0000; wram_be <= 2'b11;
-            ps <= SON_WR2;
-        end
-        SON_WR2: if (wram_ack) begin
-            // second status word for sonic; harmless elsewhere
-            if (prot_sel == PROT_SONIC) begin
-                wram_req <= 1'b1; wram_we <= 1'b1;
-                wram_addr <= (16'hF0BC + 16'h2) >> 1;
-                wram_wdata <= 16'h0000; wram_be <= 2'b11;
+        case (state)
+        DKE_IDLE: begin
+            wram_req <= 1'b0;
+            if (vblank) begin
+                wram_req   <= 1'b1;
+                wram_we    <= 1'b1;
+                wram_addr  <= 16'hF072 >> 1;
+                wram_wdata <= 16'h0000;
+                wram_be    <= 2'b11;
+                state      <= DKE_W0;
             end
-            else wram_req <= 0;
-            ps <= P_IDLE;
         end
-        // ---- darkedge vblank sequence ----
         DKE_W0: if (wram_ack) begin
-            wram_req <= 1'b1; wram_we <= 1'b1;
-            wram_addr <= 16'hF082 >> 1;
-            wram_wdata <= 16'h0000; wram_be <= 2'b11;
-            ps <= DKE_R0;
+            wram_req   <= 1'b1;
+            wram_we    <= 1'b1;
+            wram_addr  <= 16'hF082 >> 1;
+            wram_wdata <= 16'h0000;
+            wram_be    <= 2'b11;
+            state      <= DKE_R0;
         end
         DKE_R0: if (wram_ack) begin
-            wram_req <= 1'b1; wram_we <= 1'b0;
+            wram_req  <= 1'b1;
+            wram_we   <= 1'b0;
             wram_addr <= 16'hA12C >> 1;
-            ps <= DKE_W1;
+            state     <= DKE_W1;
         end
         DKE_W1: if (wram_ack) begin
             tmp <= wram_rdata[7:0];
             if (wram_rdata[7:0] != 0) begin
-                wram_req <= 1'b1; wram_we <= 1'b1;
-                wram_addr <= 16'hA12C >> 1;
+                wram_req   <= 1'b1;
+                wram_we    <= 1'b1;
+                wram_addr  <= 16'hA12C >> 1;
                 wram_wdata <= {8'h00, wram_rdata[7:0] - 8'h01};
-                wram_be <= 2'b01;
-                ps <= DKE_W2;
+                wram_be    <= 2'b01;
+                state      <= DKE_W2;
             end
-            else begin wram_req <= 0; ps <= P_IDLE; end
+            else begin
+                wram_req <= 1'b0;
+                state    <= DKE_IDLE;
+            end
         end
         DKE_W2: if (wram_ack) begin
             if (tmp == 8'h01) begin
-                wram_req <= 1'b1; wram_we <= 1'b1;
-                wram_addr <= 16'hA12E >> 1;
-                wram_wdata <= {8'h00, 8'h01};
-                wram_be <= 2'b01;
+                wram_req   <= 1'b1;
+                wram_we    <= 1'b1;
+                wram_addr  <= 16'hA12E >> 1;
+                wram_wdata <= 16'h0001;
+                wram_be    <= 2'b01;
             end
-            else wram_req <= 0;
-            ps <= P_IDLE;
-        end
-
-        default: ps <= P_IDLE;
-        endcase
-    end
-end
-end
-else begin : g_disabled
-always @(posedge clk) begin
-    if (rst) begin
-        wram_req <= 1'b0;
-        wram_we <= 1'b0;
-        wram_addr <= 16'h0000;
-        wram_wdata <= 16'h0000;
-        wram_be <= 2'b00;
-        rom_req <= 1'b0;
-        rom_addr <= 24'h000000;
-    end
-    else begin
-        wram_req <= 1'b0;
-        wram_we <= 1'b0;
-        rom_req <= 1'b0;
-    end
-end
-end
-endgenerate
-
-endmodule
-
-// ---------------------------------------------------------------------------
-//  s32_prot_brival: protection RAM string responder (§8.3)
-//  Reads 0x20BA00-07 trapped; writes 0xA00800-80A trigger 16-byte ROM copies.
-// ---------------------------------------------------------------------------
-module s32_prot_brival (
-    input             clk,
-    input             rst,
-    input             enable,
-
-    input             cpu_wr,
-    input      [23:0] cpu_addr,
-    input      [15:0] cpu_wdata,
-
-    // read trap: asserted when CPU reads 0x20BA00-07 word-wide
-    input             cpu_rd,
-    input       [1:0] cpu_be,           // audit R20 IO-9: MAME traps word reads only
-    output reg        trap_active,
-    output reg [15:0] trap_data,
-
-    // protection RAM (256 bytes) CPU-visible via workram overlay
-    output reg        pram_we,
-    output reg  [7:0] pram_addr,
-    output reg  [7:0] pram_wdata,
-
-    // ROM port
-    output reg        rom_req,
-    output reg [23:0] rom_addr,
-    input      [15:0] rom_data,
-    input             rom_ack
-);
-
-// slot -> ROM source address (MAME prot_address table)
-function automatic [23:0] slot_rom(input [2:0] s);
-    case (s)
-        3'd0: slot_rom = 24'h109517;
-        3'd5: slot_rom = 24'h109617;
-        default: slot_rom = 24'h109597;
-    endcase
-endfunction
-
-reg [2:0] slot;
-reg [3:0] cnt;
-typedef enum logic [2:0] { B_IDLE, B_RD, B_GAP, B_WR } bst_t;
-bst_t bs;
-
-always @(posedge clk) begin
-    if (rst) begin bs <= B_IDLE; rom_req <= 0; pram_we <= 0; end
-    else begin
-        pram_we <= 0;
-        // MAME's brival read handler is installed word-wide (mem_mask 0xffff);
-        // byte reads fall through to work RAM, so only trap full-word accesses
-        // (audit R20 IO-9).
-        trap_active <= enable && cpu_rd && (cpu_be == 2'b11) &&
-                       (cpu_addr[23:4] == 20'h20BA0) &&
-                       (cpu_addr[3:1] == 3'd0 || cpu_addr[3:1] == 3'd2 || cpu_addr[3:1] == 3'd3);
-        trap_data <= 16'h0000;
-
-        case (bs)
-        B_IDLE: if (enable && cpu_wr && cpu_addr[23:12] == 12'hA00 &&
-                    cpu_addr[11:4] == 8'h80 && cpu_addr[3:1] <= 3'd5) begin
-            slot <= cpu_addr[3:1];
-            cnt <= 0;
-            rom_req <= 1'b1;
-            rom_addr <= slot_rom(cpu_addr[3:1]);
-            bs <= B_RD;
-        end
-        B_RD: if (rom_ack) begin
-            rom_req <= 0;
-            pram_we <= 1'b1;
-            pram_addr <= {slot, 4'b0} + {3'b0, cnt};
-            // The SDRAM protection port is word addressed, with the lower
-            // ROM byte in D[7:0] and the following byte in D[15:8]. MAME's
-            // memcpy() copies consecutive bytes, so odd source addresses
-            // must select the upper lane of the fetched word.
-            pram_wdata <= rom_addr[0] ? rom_data[15:8] : rom_data[7:0];
-            // bytes fetched one at a time (low byte of word reads)
-            if (cnt == 4'd15) bs <= B_IDLE;
             else begin
-                cnt <= cnt + 1'd1;
-                // SDRAM accepts a new transaction only on a request rising
-                // edge. Drop the request for a complete clock before issuing
-                // the next byte; assigning 0 and 1 in the same clock leaves
-                // a held level and stalls after the first response.
-                bs <= B_GAP;
+                wram_req <= 1'b0;
             end
+            state <= DKE_IDLE;
         end
-        B_GAP: begin
-            rom_req <= 1'b1;
-            rom_addr <= slot_rom(slot) + {19'b0, cnt};
-            bs <= B_RD;
+        default: begin
+            wram_req <= 1'b0;
+            state    <= DKE_IDLE;
         end
-        default: bs <= B_IDLE;
         endcase
     end
 end

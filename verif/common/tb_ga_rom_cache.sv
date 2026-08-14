@@ -24,7 +24,6 @@ wire        rom_burst;
 wire [23:1] rom_addr;
 reg  [63:0] rom_data = 64'd0;
 reg         rom_ack = 1'b0;
-wire        cache_busy;
 
 `ifdef S32_TEST_CACHE32
 localparam integer CACHE_INDEX_BITS = 5;
@@ -59,9 +58,7 @@ s32_ga_rom_cache #(.INDEX_BITS(CACHE_INDEX_BITS)) dut (
     .rom_burst(rom_burst),
     .rom_addr(rom_addr),
     .rom_data(rom_data),
-    .rom_ack(rom_ack),
-    .stall(1'b0),
-    .busy(cache_busy)
+    .rom_ack(rom_ack)
 );
 
 function automatic [15:0] reference_word(input [22:0] word_addr);

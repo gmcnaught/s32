@@ -20,9 +20,9 @@ echo Working directory: "%CD%"
 REM The repository has one universal production profile. Runtime descriptors
 REM select the standard-board or real V25 hardware path; use the single
 REM build-segas32.bat wrapper for source/build workflows.
-if not defined S32_PROJECT set S32_PROJECT=segas32
-if not defined S32_REVISION set S32_REVISION=segas32
-if not defined S32_RELEASE_NAME set S32_RELEASE_NAME=segas32
+if not defined S32_PROJECT set S32_PROJECT=Arcade-SegaSystem32
+if not defined S32_REVISION set S32_REVISION=Arcade-SegaSystem32
+if not defined S32_RELEASE_NAME set S32_RELEASE_NAME=Arcade-SegaSystem32
 if not defined S32_RESUME_FIT set S32_RESUME_FIT=0
 if not defined S32_MAP_RETRIES set S32_MAP_RETRIES=2
 if not defined S32_FIT_RETRIES set S32_FIT_RETRIES=2

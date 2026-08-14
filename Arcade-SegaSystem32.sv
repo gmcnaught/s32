@@ -116,10 +116,8 @@ wire        eep_upload, eep_modified;
 wire  [5:0] eep_rd_addr;
 wire [15:0] eep_rd_data;
 wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick_5;
-wire [15:0] joystick_l_analog_0, joystick_l_analog_1, joystick_l_analog_2;
+wire [15:0] joystick_l_analog_0;
 wire [15:0] joystick_r_analog_0;
-wire  [7:0] paddle_0, paddle_1;
-wire [24:0] ps2_mouse;
 wire        core_vs;
 // The single universal RBF accepts every supported single-screen System 32
 // descriptor. Runtime fields select the real V25 path for GA2/Arabian Fight;
@@ -166,11 +164,21 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
 `endif
     "O[7],Service Mode,Off,On;",
-    // h0 hides this line unless menumask[0] identifies Alien 3.
-    "h0O[8],Alien 3 Flicker Blend,Off,On;",
-    "O[29],V60 Fetch,Fast,PCB (Reset);",
+    // status[29] is RESERVED and intentionally unused.  It used to select
+    // "V60 Fetch,Fast,PCB (Reset)"; the Fast instruction-fetch transport has
+    // been removed and the core always uses the PCB fetch path.  The bit is
+    // left allocated rather than reclaimed so every later option
+    // (Scale = status[28:27], etc.) keeps its existing meaning for users with
+    // saved settings.
     "-;",
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
+    // VSync phase within vblank, for the HDMI low-latency scaler
+    // (vsync_adjust=2) phase lock.  Early = historical pulse at lines
+    // 234-236; Mid/Late move the pulse toward the end of vblank, delaying
+    // the scaler's output frame start relative to the core's line writes so
+    // the read beam cannot overtake the freshly written top lines.  Display
+    // plumbing only: no game logic consumes VSync, refresh rate unchanged.
+    "O[31:30],VSync Phase,Early,Mid,Late;",
     "-;",
     "R[0],Reset;",
     "J1,B1,B2,B3,B4,B5,B6,Start,Coin,Test,Service;",
@@ -199,15 +207,6 @@ assign CLK_VIDEO = clk_sys;
 wire video_reset = RESET | status[0] | buttons[1] | ~pll_locked;
 wire reset = video_reset | ioctl_download | ~rom_loaded | ~sdram_ready_sys;
 
-// Optional throughput aid: latch only while the core is reset so an in-flight
-// prefetch can never change transport underneath the V60. This selects the
-// existing wide ROM-cache instruction port; the physical 16.108 MHz data/I/O
-// bus and every other subsystem retain their PCB cadence.
-reg fast_v60_fetch;
-always @(posedge clk_sys) begin
-    if (reset) fast_v60_fetch <= ~status[29];
-end
-
 // Synchronise the controller-ready level from clk_ram before it gates the
 // loader and the game logic in clk_sys.
 always @(posedge clk_sys) begin
@@ -231,14 +230,35 @@ wire is_multi32 = active_board.multi32;
 // relaxation is only sound with fixed, single-cycle-safe CE spacing (no
 // back-to-back clk_sys edges) for every game, not just the two V25 titles --
 // see s32.sdc's s32_game_fixed_ce comment. Every board therefore runs at a
-// fixed per-board cadence: arabfgt/ga2 keep the exact measured constants
-// carried over from the earlier V25-only experiment (real-hardware
-// timing, including Arabian Fight's clk_sys/2 cadence for its 12.49
-// clocks/instruction non-pipelined V60 attract-loop overrun); every other
-// board keeps its existing base rate with the multiplier locked at 1x.
-wire [15:0] cpu_ce_inc = active_board.has_v25
-                         ? (active_board.v25_table ? 16'd32768 : 16'd21848)
-                         : (is_multi32 ? 16'd27127 : 16'd21848);
+// fixed cadence with no runtime multiplier; see the derivation below for why
+// that cadence is now clk_sys/2 on every System 32 board rather than only on
+// arabfgt/ga2.
+// 2026-08-14: the bus cadence now tracks the execute cadence on every System 32
+// board, not just the two V25 titles.
+//
+// s32_v60_exec_cadence (rtl/s32_core.sv:7-28) deliberately advances the V60
+// microsequencer at clk_sys/2 = 24.159 MHz to model the overlap of the real
+// V60's decode/EA/execute units, because the RTL sequencer is serial where the
+// silicon is pipelined.  The external bus adapter, however, was left at the
+// PCB's literal 16.108 MHz.  That pairing is not self-consistent: every memory
+// access then costs 1.5x more relative to execution than it does on real
+// hardware, and ~38% of V60 cycles are operand-memory cycles.  Dark Edge is the
+// worst case precisely because it took the 21848 branch, while arabfgt/ga2 have
+// shipped the consistent 32768 pairing all along (originally added to fix
+// Arabian Fight's attract-loop overrun -- the same underlying deficit).
+//
+// 32768/65536 * 48.317307 MHz = exactly clk_sys/2, so the bus advances in step
+// with the sequencer.  This is a model-consistency fix, not a turbo: the
+// alternative consistent choice (both sides at 16.108 MHz) was measured to make
+// Dark Edge's gameplay countdown advance every 70 frames against MAME's 35.
+//
+// Multi 32's V70 keeps its own 20 MHz constant; it is out of production scope.
+//
+// SDC note: s32.sdc's V60 register-to-register -setup 2 exception depends on
+// v60_exec_ce alternating clk_sys phases, NOT on cpu_ce_inc.  32768 also yields
+// a strictly alternating enable, so no back-to-back clk_sys edge is created on
+// either the exec or the bus side and the exception remains sound.
+wire [15:0] cpu_ce_inc = is_multi32 ? 16'd27127 : 16'd32768;
 always @(posedge clk_sys) begin
     logic [16:0] s;
     if (reset) begin
@@ -246,7 +266,8 @@ always @(posedge clk_sys) begin
         acc_cpu <= 16'd0;
     end
     else begin
-        // cpu: 16.10795/48.317307 (V60); 20/48.317307 (V70)
+        // cpu: 24.158654/48.317307 (V60, = clk_sys/2, tracks v60_exec_ce);
+        //      20/48.317307 (V70, Multi 32 only)
         s = acc_cpu + {1'b0, cpu_ce_inc};  // base increment * turbo mult (capped)
         ce_cpu <= s[16];
         acc_cpu <= s[15:0];
@@ -266,7 +287,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
 
     .buttons(buttons),
     .status(status),
-    .status_menumask({15'd0, active_board.gun_aim && active_board.coin_swap}),
+    .status_menumask(16'd0),
 
     .ioctl_download(ioctl_download),
     .ioctl_upload(ioctl_upload),
@@ -287,12 +308,12 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_4(joystick_4),
     .joystick_5(joystick_5),
     .joystick_l_analog_0(joystick_l_analog_0),
-    .joystick_l_analog_1(joystick_l_analog_1),
-    .joystick_l_analog_2(joystick_l_analog_2),
+    .joystick_l_analog_1(),
+    .joystick_l_analog_2(),
     .joystick_r_analog_0(joystick_r_analog_0),
-    .paddle_0(paddle_0),
-    .paddle_1(paddle_1),
-    .ps2_mouse(ps2_mouse)
+    .paddle_0(),
+    .paddle_1(),
+    .ps2_mouse()
 );
 
 // MiSTer MRA NVRAM is a byte stream at index 3. Convert the EEPROM's
@@ -383,8 +404,8 @@ sdram sdram (
 
 ////////////////////////////   FRAMEBUFFER   //////////////////////////////////
 wire        fbw_start, fbw_valid, fbw_end, fbw_shadow, fbw_busy;
-wire        fbe_req, fbe_ack, fbr_req, fbr_ack, fbr_blend;
-wire  [1:0] fbw_buf, fbe_buf, fbr_buf, fbr_blend_buf;
+wire        fbe_req, fbe_ack, fbr_req, fbr_ack;
+wire  [1:0] fbw_buf, fbe_buf, fbr_buf;
 wire  [8:0] fbw_x, fbr_x;
 wire  [7:0] fbw_y, fbe_y, fbr_y;
 wire [15:0] fbw_pix, fbr_pix;
@@ -398,8 +419,7 @@ s32_fb_if fb (
     .wr_valid(fbw_valid), .wr_pix(fbw_pix), .wr_end(fbw_end),
     .wr_shadow(fbw_shadow), .wr_busy(fbw_busy),
     .er_req(fbe_req), .er_buf(fbe_buf), .er_y(fbe_y), .er_ack(fbe_ack),
-    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_blend_buf(fbr_blend_buf),
-    .rd_blend(fbr_blend), .rd_y(fbr_y), .rd_ack(fbr_ack),
+    .rd_req(fbr_req), .rd_buf(fbr_buf), .rd_y(fbr_y), .rd_ack(fbr_ack),
     .rd_x(fbr_x), .rd_pix(fbr_pix)
 );
 
@@ -413,12 +433,7 @@ endfunction
 wire [7:0] p1a_dig = p_dig(joystick_0);
 wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[5],
                         ~joystick_0[4], 1'b1};
-// SegaSonic action buttons: P1=P1_A[0], P2=P2_A[0], P3=P1_A[2].
-// Every other player-port bit is physically unused on the trackball cabinet.
-wire [7:0] sonic_p1a = {5'b11111, ~joystick_2[4], 1'b1, ~joystick_0[4]};
 wire [7:0] p2a_dig = p_dig(joystick_1);
-wire [7:0] sonic_p2a = {7'b1111111, ~joystick_1[4]};
-wire sonic_controls = active_board.has_track;
 // Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
 // momentary switch or four-position encoding.  Keep this semantic independent
 // from Rad Rally's separate EPR-14084 communication-board selector.
@@ -442,101 +457,49 @@ wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
 // this remains a shared universal-profile implementation, not a game build.
 wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
                            ~joystick_0[5], ~joystick_0[4], 1'b1};
-wire gun_aim_active = active_board.gun_aim;
-wire alien3_controls = active_board.gun_aim && active_board.coin_swap;
-// Alien 3 has no cabinet Start inputs.  MAME's alien3 port map leaves
-// SERVICE12 bit 5 unused and repurposes generic Start 1 (bit 4) as Service 2;
-// starting a side is done with its gun trigger.  Keep MiSTer's Start buttons
-// as convenient trigger aliases without asserting either service-credit line.
-wire [7:0] alien3_p1a = p1a_dig & {7'h7f, ~joystick_0[10]};
-wire [7:0] alien3_p2a = p2a_dig & {7'h7f, ~joystick_1[10]};
-wire [7:0] core_p1a = sonic_controls ? sonic_p1a :
-                       alien3_controls ? alien3_p1a :
-                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
+wire [7:0] core_p1a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
                        active_board.gear_toggle ? gear_toggle_p1a :
                        (active_board.digital_profile == DIGITAL_RADM) ? radm_p1a :
                        p1a_dig;
 wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
                            ~joystick_1[5], ~joystick_1[4], 1'b1};
-wire [7:0] core_p2a = sonic_controls ? sonic_p2a :
-                       alien3_controls ? alien3_p2a :
-                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
+wire [7:0] core_p2a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
                        p2a_dig;
 
-// --- Analog-stick positional-gun aiming ------------------------------------
-// The gun channels are MAME IPT_AD_STICK_X/Y: absolute, offset-binary, resting
-// at 0x80 (full left/up=0x00, full right/down=0xff).  MiSTer's left analog
-// stick feeds them directly (P1 = stick 0, P2 = stick 1). Positional-gun
-// inputs use a radial inner deadzone, 95%-throw outer saturation, progressive
-// response, and error-sensitive smoothing in s32_gun_aim. Other analog titles
-// retain the proven per-axis conditioning below. Alien 3 and Jurassic Park
-// use natural stick directions: left/up decrease the cabinet ADC coordinate,
-// while right/down increase it.
-wire aim_inv_x = 1'b0;
-wire aim_inv_y = 1'b0;
-localparam signed [8:0] AIM_DZ = 9'sd6;
-
-// signed stick -> offset binary (center 0x80), with centred optional inversion
-function automatic [7:0] aim_axis(input [7:0] raw, input inv);
+// The retained analog titles are driving cabinets. Convert MiSTer's signed
+// left-stick X axis to the MSM6253 wheel coordinate, preserve the established
+// centered deadzone, and smooth it at the existing low-rate update cadence.
+localparam signed [8:0] WHEEL_DZ = 9'sd6;
+function automatic [7:0] wheel_deadzone(input [7:0] raw);
     logic [7:0] v;
-    v = raw ^ 8'h80;
-    aim_axis = inv ? (8'h00 - v) : v;     // mirror about 0x80 (0x80 stays 0x80)
-endfunction
-
-// continuous (subtractive) deadzone about center 0x80
-function automatic [7:0] aim_deadzone(input [7:0] v);
     logic signed [8:0] d;
-    d = $signed({1'b0, v}) - 9'sd128;
-    if (d <= AIM_DZ && d >= -AIM_DZ) aim_deadzone = 8'h80;
-    else if (d > 0)                  aim_deadzone = 8'd128 + (d - AIM_DZ);
-    else                             aim_deadzone = 8'd128 + (d + AIM_DZ);
+    begin
+        v = raw ^ 8'h80;
+        d = $signed({1'b0, v}) - 9'sd128;
+        if (d <= WHEEL_DZ && d >= -WHEEL_DZ) wheel_deadzone = 8'h80;
+        else if (d > 0)                      wheel_deadzone = 8'd128 + (d - WHEEL_DZ);
+        else                                 wheel_deadzone = 8'd128 + (d + WHEEL_DZ);
+    end
 endfunction
 
-wire [7:0] aim_in [0:3];
-assign aim_in[0] = aim_axis(joystick_l_analog_0[7:0],  aim_inv_x); // P1 gun X
-assign aim_in[1] = aim_axis(joystick_l_analog_0[15:8], aim_inv_y); // P1 gun Y
-assign aim_in[2] = aim_axis(joystick_l_analog_1[7:0],  aim_inv_x); // P2 gun X
-assign aim_in[3] = aim_axis(joystick_l_analog_1[15:8], aim_inv_y); // P2 gun Y
-
-wire [7:0] gun_aim_x [0:1];
-wire [7:0] gun_aim_y [0:1];
-s32_gun_aim gun_aim_conditioner (
-    .clk(clk_sys), .rst(reset), .enable(gun_aim_active),
-    .p1_raw_x(joystick_l_analog_0[7:0]),
-    .p1_raw_y(joystick_l_analog_0[15:8]),
-    .p2_raw_x(joystick_l_analog_1[7:0]),
-    .p2_raw_y(joystick_l_analog_1[15:8]),
-    .invert_x(aim_inv_x), .invert_y(aim_inv_y),
-    .p1_aim_x(gun_aim_x[0]), .p1_aim_y(gun_aim_y[0]),
-    .p2_aim_x(gun_aim_x[1]), .p2_aim_y(gun_aim_y[1])
-);
-
-// ~1 kHz IIR smoothing tick (48.317307 MHz / 2^16 ~ 737 Hz)
-reg  [7:0] aim_sm [0:3];
-reg [15:0] aim_div = 16'd0;
-wire       aim_tick = (aim_div == 16'd0);
-integer    aim_i;
+reg [7:0] wheel_sm = 8'h80;
+reg [15:0] wheel_div = 16'd0;
+wire wheel_tick = (wheel_div == 16'd0);
 always @(posedge clk_sys) begin
-    aim_div <= aim_div + 1'b1;
-    for (aim_i = 0; aim_i < 4; aim_i = aim_i + 1) begin
-        logic [7:0]        tgt;
-        logic signed [9:0] err;
-        tgt = aim_deadzone(aim_in[aim_i]);
-        if (reset)          aim_sm[aim_i] <= 8'h80;
-        else if (aim_tick) begin
-            err = $signed({2'b00, tgt}) - $signed({2'b00, aim_sm[aim_i]});
-            // Snap the final few LSB to the target. A plain err>>>2 floors on
-            // negative errors, so approaching from a deflected value stalls a
-            // few codes short and the aim never re-centres exactly on 0x80.
-            if (err >= -10'sd3 && err <= 10'sd3) aim_sm[aim_i] <= tgt;
-            else                                 aim_sm[aim_i] <= aim_sm[aim_i] + (err >>> 2);
-        end
+    logic [7:0] tgt;
+    logic signed [9:0] err;
+    wheel_div <= wheel_div + 1'b1;
+    tgt = wheel_deadzone(joystick_l_analog_0[7:0]);
+    if (reset)
+        wheel_sm <= 8'h80;
+    else if (wheel_tick) begin
+        err = $signed({2'b00, tgt}) - $signed({2'b00, wheel_sm});
+        if (err >= -10'sd3 && err <= 10'sd3) wheel_sm <= tgt;
+        else                                  wheel_sm <= wheel_sm + (err >>> 2);
     end
 end
 
 wire [7:0] adc_ch [0:7];
-wire driving_analog = (active_board.analog_profile == ANALOG_DRIVING);
-wire pulled_up_adc  = (active_board.analog_profile == ANALOG_ALL_FF);
 // MiSTer reports each analog-stick axis as signed -128..+127. Split the right
 // stick's vertical axis into independent, released-at-zero pedals: up is
 // accelerator and down is brake. Saturating magnitude 127/128 to 255 lets
@@ -553,65 +516,14 @@ s32_driving_controls driving_controls (
 // Driving cabinets wire the wheel, accelerator, and brake to the first three
 // MSM6253 channels. MiSTer's left-stick X is the wheel; right-stick up/down
 // are the analog pedals, with A/B as full-scale digital fallbacks.
-assign adc_ch[0] = pulled_up_adc ? 8'hff :
-                   gun_aim_active ? gun_aim_x[0] : aim_sm[0]; // ANALOG1
-assign adc_ch[1] = pulled_up_adc ? 8'hff :
-                   driving_analog ? driving_accel :
-                   gun_aim_active ? gun_aim_y[0] : aim_sm[1]; // ANALOG2
-assign adc_ch[2] = pulled_up_adc ? 8'hff :
-                   driving_analog ? driving_brake :
-                   gun_aim_active ? gun_aim_x[1] : aim_sm[2]; // ANALOG3
-assign adc_ch[3] = pulled_up_adc ? 8'hff :
-                   driving_analog ? 8'hff :
-                   gun_aim_active ? gun_aim_y[1] : aim_sm[3]; // ANALOG4
-assign adc_ch[4] = pulled_up_adc ? 8'hff : driving_analog ? 8'h80 : paddle_0;
-assign adc_ch[5] = pulled_up_adc ? 8'hff : driving_analog ? 8'h80 : paddle_1;
-assign adc_ch[6] = pulled_up_adc ? 8'hff : 8'h80;
-assign adc_ch[7] = pulled_up_adc ? 8'hff : 8'h80;
-
-// Each controller's left stick is trackball velocity, not position. One
-// signed delta is injected per video frame. The shared VS edge detector
-// replaces the former 16-bit timer; the three converters use a small banded
-// nonlinear LUT with no state, RAM, DSP, multiplier or divider.
-reg core_vs_d = 1'b0;
-always @(posedge clk_sys) begin
-    if (reset) core_vs_d <= 1'b0;
-    else       core_vs_d <= core_vs;
-end
-wire trk_tick = core_vs & ~core_vs_d;
-
-wire [7:0] trk_btn [0:2];
-assign trk_btn[0] = {4'b0, ~joystick_0[4], 3'b0};
-assign trk_btn[1] = {4'b0, ~joystick_1[4], 3'b0};
-assign trk_btn[2] = {4'b0, ~joystick_2[4], 3'b0};
-
-wire signed [8:0] trk_velx [0:2];
-wire signed [8:0] trk_vely [0:2];
-s32_trackball_stick trk_stick0 (
-    .analog(joystick_l_analog_0), .dx(trk_velx[0]), .dy(trk_vely[0])
-);
-s32_trackball_stick trk_stick1 (
-    .analog(joystick_l_analog_1), .dx(trk_velx[1]), .dy(trk_vely[1])
-);
-s32_trackball_stick trk_stick2 (
-    .analog(joystick_l_analog_2), .dx(trk_velx[2]), .dy(trk_vely[2])
-);
-
-wire trk_dv_a [0:2];
-assign trk_dv_a[0] = sonic_controls & trk_tick &
-                     ((trk_velx[0] != 9'sd0) | (trk_vely[0] != 9'sd0));
-assign trk_dv_a[1] = sonic_controls & trk_tick &
-                     ((trk_velx[1] != 9'sd0) | (trk_vely[1] != 9'sd0));
-assign trk_dv_a[2] = sonic_controls & trk_tick &
-                     ((trk_velx[2] != 9'sd0) | (trk_vely[2] != 9'sd0));
-wire signed [8:0] trk_dx_a [0:2];
-wire signed [8:0] trk_dy_a [0:2];
-assign trk_dx_a[0] = trk_velx[0];
-assign trk_dy_a[0] = trk_vely[0];
-assign trk_dx_a[1] = trk_velx[1];
-assign trk_dy_a[1] = trk_vely[1];
-assign trk_dx_a[2] = trk_velx[2];
-assign trk_dy_a[2] = trk_vely[2];
+assign adc_ch[0] = wheel_sm;
+assign adc_ch[1] = driving_accel;
+assign adc_ch[2] = driving_brake;
+assign adc_ch[3] = 8'hff;
+assign adc_ch[4] = 8'h80;
+assign adc_ch[5] = 8'h80;
+assign adc_ch[6] = 8'h80;
+assign adc_ch[7] = 8'h80;
 // MAME system32_generic: port C is unused; port E/SERVICE12 is
 // {unknown[7:6], start2, start1, coin2, coin1, test, service}, active low.
 // Test = the OSD "Service Mode" toggle OR the mappable Test button (j12);
@@ -619,20 +531,10 @@ assign trk_dy_a[2] = trk_vely[2];
 wire [7:0] portc = 8'hff;
 wire test_btn = status[7] | joystick_0[12] | joystick_1[12];
 wire svc_btn  = joystick_0[13] | joystick_1[13];
-// SegaSonic maps Coin 3 and Start 3 to the upper service bits.  Keep them on
-// the third MiSTer player: mirroring P1 here would assert Start1+Start3 and
-// Coin1+Coin3 together.
-wire [7:0] svc12_generic = ~{
-                     sonic_controls ? joystick_2[10] : 1'b0,
-                     sonic_controls ? joystick_2[11] : 1'b0,
+wire [7:0] svc12 = ~{
+                     2'b00,
                      joystick_1[10], joystick_0[10],
                      joystick_1[11], joystick_0[11], test_btn, svc_btn};
-// Alien 3 swaps the two coin assignments relative to system32_generic:
-// bit3=Coin 1, bit2=Coin 2.  Bits 5/4 must remain released so Start cannot
-// become the game's right-side service credit.
-wire [7:0] svc12_alien3 = ~{2'b00, 2'b00, joystick_0[11],
-                             joystick_1[11], test_btn, svc_btn};
-wire [7:0] svc12 = alien3_controls ? svc12_alien3 : svc12_generic;
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
 // EEPROM DO line inside s32_core.  Some games poll the PCB push switches
@@ -651,22 +553,16 @@ wire [7:0] svc34 = ~{2'b00, test_btn, svc_btn, 4'b0000};
 // eliminating that needs a board-descriptor US flag, deferred by choice.
 wire [7:0] ga2_ppi_pc = ~{4'b0, joystick_0[11], joystick_1[11],
                           joystick_3[10], joystick_2[10]};
-// Burning Rival and Dark Edge use the same physical i8255 differently from
-// GA2: A/C are pulled high and B carries the upper action buttons.  This costs
-// only descriptor-selected wiring and preserves the single Standard image.
-wire [7:0] brival_ppi_pb = {~joystick_0[9], 1'b1,
-                            ~joystick_0[7], ~joystick_0[8], 1'b1,
-                            ~joystick_1[9], ~joystick_1[8], ~joystick_1[7]};
+// Dark Edge uses the physical i8255 differently from GA2: A/C are pulled high
+// and B carries the upper action buttons.
 wire [7:0] darkedge_ppi_pb = {~joystick_0[8], 1'b1,
                               ~joystick_0[6], ~joystick_0[7], 1'b1,
                               ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]};
-wire brival_inputs = active_board.prot_sel == PROT_BRIVAL;
 wire darkedge_inputs = active_board.prot_sel == PROT_DARKEDGE;
-wire [7:0] core_ppi_pa = (brival_inputs || darkedge_inputs) ? 8'hff :
+wire [7:0] core_ppi_pa = darkedge_inputs ? 8'hff :
                           p_dig(joystick_2);
-wire [7:0] core_ppi_pb = brival_inputs ? brival_ppi_pb :
-                          darkedge_inputs ? darkedge_ppi_pb : p_dig(joystick_3);
-wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
+wire [7:0] core_ppi_pb = darkedge_inputs ? darkedge_ppi_pb : p_dig(joystick_3);
+wire [7:0] core_ppi_pc = darkedge_inputs ? 8'hff :
                           ga2_ppi_pc;
 
 //////////////////////////////   CORE   ///////////////////////////////////////
@@ -684,8 +580,7 @@ s32_core core (
     // The production profile has no debug/screenshot pause control. Keep the
     // core port constant so standalone verification benches can still test
     // V25 pause semantics without carrying the menu logic into an RBF.
-    .pause(1'b0), .fast_v60(fast_v60_fetch),
-    .alien3_hud_blend(alien3_controls && status[8]),
+    .pause(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
@@ -703,7 +598,6 @@ s32_core core (
     .fb_wr_shadow(fbw_shadow), .fb_wr_busy(fbw_busy),
     .fb_er_req(fbe_req), .fb_er_buf(fbe_buf), .fb_er_y(fbe_y), .fb_er_ack(fbe_ack),
     .fb_rd_req(fbr_req), .fb_rd_buf(fbr_buf),
-    .fb_rd_blend_buf(fbr_blend_buf), .fb_rd_blend(fbr_blend),
     .fb_rd_y(fbr_y), .fb_rd_ack(fbr_ack),
     .fb_rd_x(fbr_x), .fb_rd_pix(fbr_pix),
     .v25_prg_wr(v25_wr), .v25_prg_waddr(v25_waddr), .v25_prg_wdata(v25_wdata),
@@ -715,9 +609,9 @@ s32_core core (
     .in_p1b(p_dig(joystick_2)), .in_p2b(p_dig(joystick_3)),
     .in_portc_b(8'hff), .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adc_ch),
-    .trk_dv(trk_dv_a), .trk_dx(trk_dx_a), .trk_dy(trk_dy_a), .trk_btn(trk_btn),
     .ppi_pa(core_ppi_pa), .ppi_pb(core_ppi_pb), .ppi_pc(core_ppi_pc),
     .rgb_a(rgb_a), .rgb_b(rgb_b),
+    .vs_phase(status[31:30]),
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
     .mode_416_active(mode_416_active),

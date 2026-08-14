@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
+qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
 assert 'VERILOG_MACRO "S32_SYSTEM32_ONLY=1"' in qsf, "release is not System 32-only"
 assert 'VERILOG_MACRO "S32_PROFILE_STANDARD=1"' in qsf
 assert 'VERILOG_MACRO "S32_UNIVERSAL=1"' in qsf
@@ -26,7 +26,7 @@ for path in (ROOT / "mra").glob("*.mra"):
 assert len(matches) == 1, f"expected exactly one Holo MRA, found {len(matches)}"
 path, tree = matches[0]
 root = tree.getroot()
-assert root.findtext("rbf") == "segas32"
+assert root.findtext("rbf") == "Arcade-SegaSystem32"
 assert root.findtext("name") == "Holosseum (US, Rev A)"
 rom = root.find("rom[@index='0']")
 assert rom is not None and rom.get("zip") is None

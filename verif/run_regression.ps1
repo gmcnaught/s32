@@ -346,7 +346,7 @@ function Assert-V25SourceClosure {
             throw "Production V25 QIP is missing $source."
         }
     }
-    $profile = Get-Content -Raw -LiteralPath (Join-Path $Root "segas32.qsf")
+    $profile = Get-Content -Raw -LiteralPath (Join-Path $Root "Arcade-SegaSystem32.qsf")
     foreach ($contract in ('QIP_FILE rtl/cpu/v25/v25.qip',
                            'VERILOG_MACRO "S32_UNIVERSAL=1"',
                            'VERILOG_MACRO "S32_V25_HW=1"')) {
@@ -466,12 +466,6 @@ try {
     Write-Tier 3 "V60 directed suite"
     Run-HdlTest "t03_v60_directed" "tb_v60_directed" ($V60Sources + "verif/v60/tb_v60_directed.sv") "DIRECTED PASS"
 
-    Write-Tier 3 "Sonic name-table decompressor primitive"
-    Run-HdlTest "t03b_v60_sonic_decompress" "tb_v60_sonic_decompress" ($V60Sources + "verif/v60/tb_v60_sonic_decompress.sv") "SONIC DECOMPRESS PASS"
-
-    Write-Tier 3 "Sonic MOVCFU/RSR/dispatcher continuation"
-    Run-HdlTest "t03c_v60_sonic_dispatch" "tb_v60_sonic_dispatch" ($V60Sources + "verif/v60/tb_v60_sonic_dispatch.sv") "SONIC DISPATCH PASS"
-
     Write-Tier 4 "ModelSim full-core integration boot (compatible HLE shape)"
     Run-HdlTest "t04_boot_standard" "tb_core_boot" ($FullCoreSources + "verif/common/tb_core_boot.sv") "CORE BOOT PASS" @("SIMULATION", "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_GAME_ONLY_STD", "S32_PCB_TIMING") @("-novopt")
     Write-RunLine "CORE MODELSIM STANDARD BOOT: PASS"
@@ -530,8 +524,7 @@ try {
     Write-Tier 10 "mixer directed + pixel latency + 512-case independent differential test"
     Run-HdlTest "t10_mixer" "tb_mixer" @("rtl/video/s32_linebuf.sv", "rtl/video/s32_mixer.sv", "rtl/video/s32_palette.sv", "verif/common/tb_mixer.sv") "MIXER PASS"
     # The mixer must finish a pixel inside one 416-wide pixel period (12
-    # clk_ram edges).  At 13 the picture is displayed one column right of
-    # MAME in 416-wide mode only; see docs/segasonic-bringup.md.
+    # clk_ram edges). At 13 the picture is displayed one column late.
     Run-HdlTest "t10_mixer_latency" "tb_mixer_pixel_latency" @("rtl/video/s32_linebuf.sv", "rtl/video/s32_mixer.sv", "rtl/video/s32_palette.sv", "verif/common/tb_mixer_pixel_latency.sv") "MIXER PIXEL LATENCY PASS"
     $mixerDiffOutput = @(Invoke-NativeCapture $PythonExe @(
         "-m", "verif.mixer_diff.run",
@@ -559,8 +552,9 @@ try {
 
     Write-Tier 16 "V60 short backward-branch fetch performance"
     Run-HdlTest "t16_v60_fetch" "tb_v60_fetch" ($V60Sources + "verif/v60/tb_v60_fetch.sv") "FETCH PERF PASS"
-    Run-HdlTest "t16_v60_fetch_mode" "tb_v60_fetch_wide" ($V60Sources + "verif/v60/tb_v60_fetch_wide.sv") "V60 FETCH WIDE PASS"
-    Run-HdlTest "t16_v60_fetch_ram" "tb_v60_fetch_ram" ($V60Sources + "verif/v60/tb_v60_fetch_ram.sv") "V60 FETCH RAM PASS"
+    # tb_v60_fetch_wide / tb_v60_fetch_ram were removed together with the
+    # optional fast instruction-fetch transport (the core always uses the PCB
+    # fetch path now); their manifest entries go with them.
     Run-HdlTest "t16_v60_ea_overlap" "tb_v60_ea_overlap_disp" ($V60Sources + "verif/v60/tb_v60_ea_overlap_disp.sv") "V60 EA_OVERLAP DISP PASS"
 
     Write-Tier 17 "ROM loader reset / mapping / completion gating"
@@ -571,9 +565,8 @@ try {
         "verif/common/tb_rom_loader_wave_clear.sv"
     ) "ROM LOADER WAVE CLEAR PASS"
 
-    Write-Tier 18 "EEPROM persistence + radial analog-gun response + MAME 8255 direction/latch contract"
+    Write-Tier 18 "EEPROM persistence + MAME 8255 direction/latch contract"
     Run-HdlTest "t18_eeprom" "tb_eeprom_nvram" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_eeprom_nvram.sv") "EEPROM NVRAM PASS"
-    Run-HdlTest "t18_gun_aim" "tb_gun_aim" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_gun_aim.sv") "GUN AIM PASS"
     Run-HdlTest "t18_i8255" "tb_i8255" @("rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_i8255.sv") "I8255 MAME PASS"
     Run-HdlTest "t18_i8255_conformance" "tb_i8255_conformance" @(
         "rtl/s32_pkg.sv", "rtl/io/s32_io.sv",
@@ -696,10 +689,6 @@ try {
     Run-HdlTest "t33_v60_exec_cadence_universal" "tb_v60_exec_cadence" $execCadenceSources "V60 EXEC CADENCE PASS" @(
         "S32_SYSTEM32_ONLY", "S32_PROFILE_STANDARD", "S32_UNIVERSAL", "S32_V25_HW", "S32_GAME_ONLY_STD", "S32_PCB_TIMING"
     )
-    Run-HdlTest "t33_v60_sonic_burst_timing" "tb_v60_sonic_burst_timing" @(
-        "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
-        "verif/v60/tb_v60_sonic_burst_timing.sv"
-    ) "SONIC BURST TIMING PASS"
     Run-HdlTest "t33_v60_exec_retire" "tb_v60_exec_retire" @(
         "rtl/cpu/v60/s32_v60.sv", "rtl/cpu/v60/s32_v60_bus.sv",
         "verif/common/tb_v60_exec_retire.sv"
@@ -708,26 +697,12 @@ try {
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")
 
-    Write-Tier 35 "three-player left-stick to trackball velocity"
-    Run-HdlTest "t35_trackball_stick" "tb_trackball_stick" @(
-        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv",
-        "verif/common/tb_trackball_stick.sv"
-    ) "TRACKBALL STICK PASS"
-
     Write-Tier 35 "Slip Stream right-stick pedals and digital fallbacks"
     Run-HdlTest "t35_driving_controls" "tb_driving_controls" @(
         "rtl/io/s32_driving_controls.sv", "verif/common/tb_driving_controls.sv"
     ) "PASS: Slip Stream driving controls"
 
-    Write-Tier 35 "MAME-backed uPD4701 trackball origin and per-byte latch semantics"
-    Run-HdlTest "t35_upd4701_mame" "tb_upd4701_mame" @(
-        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_upd4701_mame.sv"
-    ) "UPD4701 MAME PASS"
-
-    Write-Tier 36 "MAME-backed Burning Rival protection contract"
-    Run-HdlTest "t36_brival_protection" "tb_brival_protection" @(
-        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_brival_protection.sv"
-    ) "BRIVAL PROTECTION PASS"
+    Write-Tier 36 "Dark Edge protection contract"
     Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"
     ) "DARK EDGE HLE PASS"

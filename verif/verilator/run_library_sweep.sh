@@ -5,8 +5,8 @@
 # sets boot, which fault, which render nothing, and whether the SDRAM/DDR paths
 # meet their per-scanline deadlines.
 #
-#   ./verif/verilator/run_library_sweep.sh                 # all 7 active standard parents
-#   SETS="radm radr" ./verif/verilator/run_library_sweep.sh
+#   ./verif/verilator/run_library_sweep.sh                 # active standard parents
+#   SETS="radr slipstrm" ./verif/verilator/run_library_sweep.sh
 #   FRAMES=420 DUMPAT=200 ./verif/verilator/run_library_sweep.sh
 #   ATTRACT=1 ./verif/verilator/run_library_sweep.sh  # Verilator screenshot gate
 #   REPARSE=1 ./verif/verilator/run_library_sweep.sh        # re-tabulate, no sim
@@ -47,8 +47,7 @@ DUMPAT="${DUMPAT:-80}"
 DUMPN="${DUMPN:-1}"
 if [[ "${ATTRACT:-0}" == "1" ]]; then
   # The MAME-derived landmark windows are applied per parent below.  A single
-  # 420-frame default is too short for Jurassic Park, Rad Mobile, Sonic, and
-  # Spider-Man. Review the retained frame; this
+  # Spider-Man needs a longer title window. Review the retained frame; this
   # runner still reports diagnostics, it does not infer game semantics.
   FRAMES="${FRAMES_ATTRACT:-420}"
   DUMPAT="${DUMPAT_ATTRACT:-360}"
@@ -57,10 +56,10 @@ REPARSE="${REPARSE:-0}"
 OUT="${OUT:-scratch/library-sweep}"
 # Every active standard-profile parent in the current user-directed acceptance
 # scope. Multi 32 left this repo in a7e280f; AS-1 is out of scope (laserdisc).
-# ga2 and arabfgt remain
-# production-supported by s32v25, but are explicitly excluded from this goal's
+# ga2 and arabfgt remain production-supported by the real V25 path but are
+# explicitly excluded from this goal's
 # sweep because they are V25 games.
-SETS="${SETS:-holo jpark radm radr slipstrm sonic spidman}"
+SETS="${SETS:-darkedge holo radr slipstrm spidman}"
 
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.md"
@@ -77,18 +76,16 @@ attract_frames_for() {
   case "$1" in
     # Leave one video interval after the requested capture so the PPM closes
     # before the harness reaches ROMBOOT DONE.
-    jpark|sonic|spidman)   echo 1260 ;;
+    spidman)               echo 1260 ;;
     slipstrm)              echo 660 ;;
-    radm)                  echo 660 ;;
     *)                     echo "$FRAMES" ;;
   esac
 }
 
 attract_dump_for() {
   case "$1" in
-    jpark|sonic|spidman)   echo 1200 ;;
+    spidman)               echo 1200 ;;
     slipstrm)              echo 600 ;;
-    radm)                  echo 600 ;;
     *)                     echo "$DUMPAT" ;;
   esac
 }

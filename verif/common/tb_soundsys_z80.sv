@@ -102,8 +102,14 @@ module tb_soundsys_z80;
             $fatal(1, "T80 did not configure the RF5C68");
 
         // Physical RAM is inverted so zero-filled M10Ks represent logical ff.
-        if (wave_mem.backing[0] !== 16'h7e7e ||
-            wave_mem.backing[1][7:0] !== 8'h00)
+        // The external-aperture backing peek applies only when the RF5C68 is
+        // built with EXTERNAL_WAVE_RAM (the reverted SDRAM path); with the
+        // internal M10K wave RAM the storage lives inside a vendor altsyncram
+        // and the tone check below already proves the written samples were
+        // stored and played back through the internal RAM.
+        if (dut.rf5c68.EXTERNAL_WAVE_RAM &&
+            (wave_mem.backing[0] !== 16'h7e7e ||
+             wave_mem.backing[1][7:0] !== 8'h00))
             $fatal(1, "T80 wave-RAM writes did not traverse the PCM bus");
 
         timeout = 0;

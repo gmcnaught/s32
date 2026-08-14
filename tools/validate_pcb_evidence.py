@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -75,15 +76,22 @@ def validate(check_rtl: bool = False) -> list[str]:
         # One universal profile contains both standard-board peripherals and
         # the real V25 implementation; descriptors select the active path.
         for qsf, profile, needs_real_v25 in (
-            (ROOT / "segas32.qsf", "S32_PROFILE_STANDARD=1", True),
+            (ROOT / "Arcade-SegaSystem32.qsf", "S32_PROFILE_STANDARD=1", True),
         ):
             text = qsf.read_text(encoding="utf-8")
             if profile not in text:
                 errors.append(f"{qsf.name}: missing {profile}")
             if 'VERILOG_MACRO "S32_PCB_TIMING=1"' not in text:
                 errors.append(f"{qsf.name}: missing S32_PCB_TIMING=1")
-            if "NUM_PARALLEL_PROCESSORS 8" not in text:
-                errors.append(f"{qsf.name}: must use eight Quartus workers")
+            # Worker count is a build-host setting, not PCB evidence. It was
+            # pinned at 8 until 2026-08-14, when quartus_map and quartus_fit
+            # both died with Access Violations inside Quartus's own parallel
+            # delay annotation (TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree
+            # under parallel_annotate_re_netlist_by_self_scheduling). Processor
+            # count does not affect fit or timing results, only wall-clock, so
+            # require only that the project states one explicitly.
+            if not re.search(r"NUM_PARALLEL_PROCESSORS [1-9]\d*", text):
+                errors.append(f"{qsf.name}: must set NUM_PARALLEL_PROCESSORS explicitly")
             has_real_v25 = 'VERILOG_MACRO "S32_V25_HW=1"' in text
             if needs_real_v25 and not has_real_v25:
                 errors.append(f"{qsf.name}: missing S32_V25_HW=1 (universal V25 requirement)")
@@ -91,12 +99,12 @@ def validate(check_rtl: bool = False) -> list[str]:
                 errors.append(f"{qsf.name}: must not compile the real V25 core (no game here has V25 hardware)")
         core_text = (ROOT / "rtl" / "s32_core.sv").read_text(encoding="utf-8")
         cpu_text = (ROOT / "rtl" / "cpu" / "v60" / "s32_v60.sv").read_text(encoding="utf-8")
-        if "`define FAST_IFETCH_EN 1'b1" not in core_text or ".fast_ifetch(fast_v60)" not in core_text:
-            errors.append("s32_core.sv: reset-latched optional fetch transport is missing")
+        if "FAST_IFETCH" in core_text or "fast_v60" in core_text:
+            errors.append("s32_core.sv: the removed fast instruction-fetch transport is back")
         if "s32_v60_bus vbus" not in core_text or ".ce(ce_cpu)" not in core_text:
             errors.append("s32_core.sv: fixed physical V60 bus cadence is missing")
-        if "FAST_IFETCH && fast_ifetch && fetch_is_rom" not in cpu_text:
-            errors.append("s32_v60.sv: fast fetch must remain restricted to ROM windows")
+        if "FAST_IFETCH" in cpu_text or "fast_ifetch" in cpu_text:
+            errors.append("s32_v60.sv: every instruction fetch must use the shared PCB bus")
 
     return errors
 

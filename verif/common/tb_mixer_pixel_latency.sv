@@ -6,7 +6,7 @@
 //  is 15).  The display samples `rgb` on the edge that starts the next pixel.
 //  If the mixer needs all 12 edges, the sample lands on the same edge the
 //  register updates and the whole 416-mode picture is displayed one column to
-//  the right of where it belongs — which is exactly what SegaSonic's WARNING
+//  the right of where it belongs in 416-wide mode
 //  screen did against MAME before the P3 bubble was removed (that frame then
 //  matched MAME with zero differing pixels).  320-wide games never showed it
 //  because they had three edges of slack.
@@ -22,7 +22,7 @@ module tb_mixer_pixel_latency;
 
 // One 416-wide pixel is 12 clk_ram edges, so the mixer has to produce its
 // pixel inside one pixel period.  Calibrated against the picture, not
-// assumed: the pre-fix pipeline measured 13 edges here and SegaSonic's
+// assumed: the pre-fix pipeline measured 13 edges here and the
 // 416-wide WARNING screen sat one column right of MAME (6,662 / 93,184
 // differing pixels, exact after shifting MAME right by one).  The fixed
 // pipeline measures 12 and that frame matches MAME with zero differing

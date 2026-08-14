@@ -30,12 +30,7 @@ endmodule
 // The universal production revision uses the single-port synchronous V60
 // cache. Keep this preprocessing choice local to this compilation unit.
 // Fixed CE spacing (no CPU Turbo in any supported game) is common to all
-// boards, and the arbiter feeding this cache's SDRAM p0
-// port grants a real protection-ROM-read request instead of the old
-// hardwired prot_rom_grant=0 (2026-08-06, see the s32_ga_rom_cache
-// instantiation below) -- the structural blocker that used to make this
-// cache unsafe under a game like Sonic (PROT_SONIC does drive
-// prot_rom_grant) is fixed, not just avoided by scope.
+// boards.
 // Keep the V25 implementation internally selectable while exposing only one
 // production profile.
 `ifdef S32_UNIVERSAL
@@ -80,13 +75,6 @@ module s32_core #(
     // its own clk_v25-domain CE generator, so it must be told separately or
     // it keeps running against a frozen V60 (mailbox tear on ga2/arabfgt).
     input             pause,
-    // Reset-latched optional instruction-fetch accelerator. This selects the
-    // wide ROM-cache port only; the physical V60 bus remains on ce_cpu.
-    input             fast_v60,
-    // Alien 3-only display option. The top-level gates this with the exact
-    // cabinet descriptor before it reaches the shared System 32 core.
-    input             alien3_hud_blend,
-
     // SDRAM ports (to sdram.sv in emu top)
     output            sdr_p0_req,
     output            sdr_p0_burst,
@@ -137,8 +125,6 @@ module s32_core #(
     input             fb_er_ack,
     output            fb_rd_req,
     output      [1:0] fb_rd_buf,
-    output      [1:0] fb_rd_blend_buf,
-    output            fb_rd_blend,
     output      [7:0] fb_rd_y,
     input             fb_rd_ack,
     output      [8:0] fb_rd_x,
@@ -162,15 +148,14 @@ module s32_core #(
     input       [7:0] in_p1a, in_p2a, in_portc, in_svc12, in_svc34,
     input       [7:0] in_p1b, in_p2b, in_portc_b, in_svc12_b, in_svc34_b,
     input       [7:0] adc_ch [0:7],
-    input             trk_dv [0:2],
-    input signed [8:0] trk_dx [0:2],
-    input signed [8:0] trk_dy [0:2],
-    input       [7:0] trk_btn [0:2],
     input       [7:0] ppi_pa, ppi_pb, ppi_pc,
 
     // video out (screen A; screen B via second mixer on M32)
     output     [23:0] rgb_a,
     output     [23:0] rgb_b,
+    // VSync pulse placement inside vblank (0=early/historical, 1=mid,
+    // 2=late).  Only the display/scaler interface observes VSync.
+    input       [1:0] vs_phase,
     output            ce_pix,
     output            hs, vs, hb, vb,
     output            mode_416_active,
@@ -204,7 +189,6 @@ wire       cfg_multi32           = 1'b0;
 wire       cfg_has_v25           = board.has_v25;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
-wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
 wire [6:0] cfg_prot_sel          = board.prot_sel;
@@ -216,7 +200,6 @@ wire       cfg_multi32           = board.multi32;
 wire       cfg_has_v25           = board.has_v25;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
-wire       cfg_has_track         = board.has_track;
 wire       cfg_has_ppi           = board.has_ppi;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
 wire [6:0] cfg_prot_sel          = board.prot_sel;
@@ -230,7 +213,7 @@ wire       cfg_flip_y            = board.flip_y;
 // the production profile is a dedicated single-screen System 32 build by definition, so it
 // force the System 32 configuration even if a QSF sets a game macro without
 // S32_SYSTEM32_ONLY (previously that mismatch left is_multi32 following the
-// descriptor while the analog/trackball hardware it implies was compiled out).
+// descriptor while optional hardware it implies was compiled out).
 wire is_multi32 = (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
 
 // ---------------------------------------------------------------------------
@@ -248,30 +231,11 @@ wire        wr_stb;
 wire        irq_n;
 wire [7:0]  irq_vector;
 
-// dedicated wide instruction-fetch port (FAST_IFETCH): the prefetch reads whole
-// 8-byte ROM icache lines here at clk_sys latency, bypassing the ce-gated 16-bit
-// data adapter that otherwise bottlenecks fetch bandwidth.
-wire        if_req;
-wire [23:0] if_addr;                 // frontier byte address (low 3 bits = intra-line
-                                    // offset used to pre-align the returned line)
-`ifdef S32_AREA_ROM_CACHE
-wire [63:0] if_data;
-wire        if_served;
-`else
-reg  [63:0] if_data;
-reg         if_served;
-`endif
-                                    // held while a fetch result is presented
-wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU never
-                                    // misses it between its enable ticks
-
-// Compile the optional wide-fetch transport into production. fast_v60 selects
-// it at runtime only after reset; PCB mode still routes instruction prefetches
-// through the ce-gated 16-bit adapter. FAST_IFETCH_EN remains a build-time
-// capability override for focused A/B or resource experiments.
-`ifndef FAST_IFETCH_EN
- `define FAST_IFETCH_EN 1'b1
-`endif
+// Instruction fetch always uses the PCB path: prefetches share the ce-gated
+// 16-bit bus adapter with data accesses, exactly as the real 315-5325 bus
+// controller sequences them.  The dedicated wide instruction-fetch transport
+// that used to be selectable here ("V60 Fetch: Fast") has been removed.
+//
 // The PCB clocks the V60 at 16.108 MHz, but the processor overlaps its
 // decode/EA/execute units while the external BCU continues to issue minimum
 // three-clock bus cycles.  Our single-FSM implementation has no independent
@@ -284,10 +248,8 @@ s32_v60_exec_cadence v60_cadence (
     .clk(clk_sys), .rst(rst), .pause(pause), .ce(v60_exec_ce)
 );
 
-s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
+s32_v60 #(.START_PC(32'hFFFFFFF0)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
-    .fast_ifetch(fast_v60),
-    .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
@@ -362,22 +324,7 @@ wire [15:0] pr_wdata;
 wire [1:0]  pr_be;
 wire [15:0] pr_q;
 reg         pr_ack;
-wire        br_pram_we;
-wire [7:0]  br_pram_addr;
-wire [7:0]  br_pram_wdata;
 wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
-wire        work_pr_we = (pr_req && pr_we) || br_pram_we;
-wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
-                                          ? {{(WRAM_ADDR_WIDTH-7){1'b0}},
-                                             br_pram_addr[7:1]}
-                                          : pr_wram_a;
-wire [15:0] work_pr_wdata = br_pram_we
-                             ? (br_pram_addr[0] ? {br_pram_wdata, 8'h00}
-                                                : {8'h00, br_pram_wdata})
-                             : pr_wdata;
-wire [1:0] work_pr_be = br_pram_we
-                        ? (br_pram_addr[0] ? 2'b10 : 2'b01)
-                        : pr_be;
 
 s32_big_dpram #(
     .ADDR_WIDTH(WRAM_ADDR_WIDTH), .NUM_WORDS(WRAM_WORDS)
@@ -385,9 +332,9 @@ s32_big_dpram #(
     .clock_a(clk_sys), .address_a(wram_a),
     .data_a(m_wdata), .byteena_a(m_be),
     .wren_a(m_req && m_we && sel_wram), .q_a(wram_q),
-    .clock_b(clk_sys), .address_b(work_pr_addr),
-    .data_b(work_pr_wdata), .byteena_b(work_pr_be),
-    .wren_b(work_pr_we), .q_b(pr_q)
+    .clock_b(clk_sys), .address_b(pr_wram_a),
+    .data_b(pr_wdata), .byteena_b(pr_be),
+    .wren_b(pr_req && pr_we), .q_b(pr_q)
 );
 
 always @(posedge clk_sys)
@@ -453,6 +400,7 @@ wire vbl_start, vbl_end;
 wire [8:0] hcnt, vcnt;
 s32_video crt (
     .clk(clk_sys), .rst(video_rst), .mode_416(mode_416),
+    .vs_phase(vs_phase),
     .mode_active(mode_416_active),
     .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt),
     .hblank(hb), .vblank(vb), .hsync(hs), .vsync(vs),
@@ -643,7 +591,6 @@ assign sdr_p1_addr = SDR_TILES_BASE[24:3] + {3'b000, tile_rom_addr};
 wire [7:0] sprctl_q;
 wire [1:0] disp_buf;
 wire [1:0] spr_scan_buf;
-wire [1:0] spr_scan_buf_prev;
 s32_sprite #(
 `ifdef S32_V25_HW
     .VERIFY_SROM(1'b1)
@@ -671,8 +618,7 @@ s32_sprite #(
     .fb_wr_shadow(fb_wr_shadow), .fb_busy(fb_wr_busy),
     .fb_er_req(fb_er_req), .fb_er_buf(fb_er_buf), .fb_er_y(fb_er_y),
     .fb_er_ack(fb_er_ack),
-    .disp_buf(disp_buf), .scan_buf(spr_scan_buf),
-    .scan_buf_prev(spr_scan_buf_prev)
+    .disp_buf(disp_buf), .scan_buf(spr_scan_buf)
 );
 assign sdr_p2_addr[24] = 1'b1;   // sprites region base 0x1000000
 
@@ -691,8 +637,6 @@ assign mode_416 = r1ff00[15];
 // preceding line and give the line-buffer fetch almost a whole scanline.
 reg       fb_rd_req_r;
 reg [1:0] fb_rd_buf_r;
-reg [1:0] fb_rd_blend_buf_r;
-reg       fb_rd_blend_r;
 reg [7:0] fb_rd_y_r;
 // Prefetch only lines that will actually display: kicks during vcnt 0-222
 // fetch lines 1-223 and vcnt 261 fetches next frame's line 0.  The former
@@ -708,8 +652,6 @@ always @(posedge clk_ram) begin
     if (rst) begin
         fb_rd_req_r <= 1'b0;
         fb_rd_buf_r <= 2'd0;
-        fb_rd_blend_buf_r <= 2'd0;
-        fb_rd_blend_r <= 1'b0;
         fb_rd_y_r   <= 8'd0;
     end
     else begin
@@ -718,16 +660,10 @@ always @(posedge clk_ram) begin
         end
         else if (!fb_rd_ack && fb_rd_kick) begin
             fb_rd_req_r <= 1'b1;
-            // Ordinary System 32 A/B scanout. Alien 3 deliberately draws its
-            // HUD and movable gun sight in alternating sprite fields.  The
-            // optional flicker blend therefore fetches the hidden A/B buffer
-            // for every visible line; limiting this to the bottom HUD rows
-            // cannot cover the position-independent sight.
-            // Physical selectors change only when a complete field is
-            // published, so neither fetch can observe an in-flight render.
+            // Ordinary System 32 A/B scanout. Physical selectors change only
+            // when a complete field is published, so the fetch cannot observe
+            // an in-flight render.
             fb_rd_buf_r <= spr_scan_buf;
-            fb_rd_blend_buf_r <= spr_scan_buf_prev;
-            fb_rd_blend_r <= alien3_hud_blend;
             // CRT lines are 0..261. Truncating line 261 before adding produced
             // line 6 instead of the next frame's line 0.
             if (vcnt == 9'd261)
@@ -741,8 +677,6 @@ always @(posedge clk_ram) begin
 end
 assign fb_rd_req = fb_rd_req_r;
 assign fb_rd_buf = fb_rd_buf_r;
-assign fb_rd_blend_buf = fb_rd_blend_buf_r;
-assign fb_rd_blend = fb_rd_blend_r;
 assign fb_rd_y   = fb_rd_y_r;
 assign fb_rd_x   = hcnt;
 
@@ -1068,35 +1002,10 @@ s32_eeprom93c46 eeprom (
     .upload(eep_upload), .modified(eep_modified)
 );
 
-// extended IO: ADC / trackballs / PPI
+// extended IO: ADC / PPI
 wire adc_bit;
-wire [7:0] trk_q [0:2];
 wire sel_adc   = sel_ioex && (A[5:3] == 3'b010) && cfg_has_adc;
-wire sel_track = sel_ioex && (A[5:3] <= 3'b010) && cfg_has_track;
 wire sel_ppi   = sel_ioex && (A[5:3] == 3'b100) && cfg_has_ppi;
-genvar t;                         // declare outside the generate-for (Quartus 17.0)
-generate
-`ifdef S32_UNIVERSAL_DISABLED
-begin : g_no_v25_trackball
-    assign trk_q[0] = 8'hff;
-    assign trk_q[1] = 8'hff;
-    assign trk_q[2] = 8'hff;
-end
-`else
-begin : g_trackball
-    for (t = 0; t < 3; t = t + 1) begin : tracks
-        s32_upd4701 upd (
-            .clk(clk_sys), .rst(rst),
-            .delta_valid(trk_dv[t]), .dx(trk_dx[t]), .dy(trk_dy[t]),
-            .cs(m_req && sel_ioex && m_be[0] &&
-                cfg_has_track && A[5:3] == t[2:0]), // B4: 0x40/48/50
-            .we(m_we), .addr(A[2:1]),
-            .rdata(trk_q[t]), .buttons(trk_btn[t])
-        );
-    end
-end
-`endif
-endgenerate
 generate
     if (GAME_ONLY && !GAME_ONLY_STD) begin : g_no_adc
         // Only the real-V25 dedicated shape has no ADC board. The standard
@@ -1156,18 +1065,9 @@ s32_intc intc (
 // ---------------------------------------------------------------------------
 // protection
 // ---------------------------------------------------------------------------
-wire        br_trap;
-wire [15:0] br_trap_q;
-wire        prot_rom_req;
-wire [23:0] prot_rom_addr;
-wire        prot_rom_ack;
-wire [15:0] prot_rom_data = sdr_p0_dout[15:0];
 wire [7:0]  v25_q;
-wire        br_rom_req;
-wire [23:0] br_rom_addr;
-// Generic protection HLE for the supported production parents: Sonic's rev-C
-// level loader and Dark Edge's VBlank work-RAM sequence. Dormant responders
-// for excluded titles are deliberately absent from the universal image.
+// Dark Edge's VBlank work-RAM protection sequence. Responders for excluded
+// titles are deliberately absent from the universal image.
 generate
 `ifdef S32_UNIVERSAL_DISABLED
     begin : g_no_generic_prot
@@ -1176,53 +1076,19 @@ generate
         assign pr_addr      = 16'h0000;
         assign pr_wdata     = 16'h0000;
         assign pr_be        = 2'b00;
-        assign prot_rom_req = 1'b0;
-        assign prot_rom_addr = 24'h000000;
     end
 `else
     begin : g_generic_prot
-        s32_prot_hle #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) prot (
-            .clk(clk_sys), .rst(rst), .prot_sel(cfg_prot_sel),
-            .cpu_wr(m_req && m_we && (sel_wram || sel_prot_a)),
-            .cpu_addr(A), .cpu_wdata(m_wdata),
-            .cpu_be(m_be),
-            .cpu_pre_wram_data(wram_q),
+        s32_prot_darkedge #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) prot (
+            .clk(clk_sys), .rst(rst),
+            .enable(cfg_prot_sel == PROT_DARKEDGE),
             .vblank(vbl_start),
             .wram_req(pr_req), .wram_we(pr_we), .wram_addr(pr_addr),
             .wram_wdata(pr_wdata), .wram_be(pr_be),
-            .wram_rdata(pr_q), .wram_ack(pr_ack),
-            .rom_req(prot_rom_req), .rom_addr(prot_rom_addr),
-            .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
+            .wram_rdata(pr_q), .wram_ack(pr_ack)
         );
     end
 `endif
-endgenerate
-
-// Burning Rival string-copy responder: retained by the universal profile and
-// selected only by PROT_BRIVAL.
-generate
-    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_game_no_brival
-        assign br_trap = 1'b0;
-        assign br_trap_q = 16'hffff;
-        assign br_rom_req = 1'b0;
-        assign br_rom_addr = 24'h000000;
-        assign br_pram_we = 1'b0;
-        assign br_pram_addr = 8'h00;
-        assign br_pram_wdata = 8'h00;
-    end
-    else begin : g_brival
-        s32_prot_brival brival (
-            .clk(clk_sys), .rst(rst), .enable(cfg_prot_sel == PROT_BRIVAL),
-            .cpu_wr(m_req && m_we && sel_prot_a),
-            .cpu_addr(A), .cpu_wdata(m_wdata),
-            .cpu_rd(m_req && !m_we && sel_wram), .cpu_be(m_be),
-            .trap_active(br_trap), .trap_data(br_trap_q),
-            .pram_we(br_pram_we), .pram_addr(br_pram_addr),
-            .pram_wdata(br_pram_wdata),
-            .rom_req(br_rom_req), .rom_addr(br_rom_addr),
-            .rom_data(prot_rom_data), .rom_ack(prot_rom_ack)
-        );
-    end
 endgenerate
 
 `ifdef S32_V25_HW
@@ -1287,23 +1153,9 @@ reg [23:1] rom_addr_r;
 // here so the icache lookup can suppress re-arming a completed ROM read while
 // the V60 bus still holds m_req; the driving logic lives in the read-mux block.
 reg        ack_r;
-// Both cache implementations arbitrate SDRAM p0 between the V60 ROM path and
-// the protection clients (e.g. PROT_SONIC's level-loader) with a registered
-// grant -- one FSM below drives it per implementation (S32_AREA_ROM_CACHE's
-// s32_ga_rom_cache instantiation, or the generic icache further down).
-reg        prot_rom_grant;
-// The protection clients issue an exact byte address for a 16-bit ROM read.
-// Preserve every word-address bit: Sonic's level-order table begins at 0x263a,
-// which is not 8-byte aligned.  Aligning this path like an instruction-cache
-// line fetch silently returned the word at 0x2638 instead.
-wire [23:1] prot_p0_addr = {2'b00, prot_rom_addr[21:1]};
-wire        prot_any_rom_req = prot_rom_req | br_rom_req;
-wire [23:0] prot_any_rom_addr = br_rom_req ? br_rom_addr : prot_rom_addr;
-assign prot_rom_ack = prot_rom_grant && sdr_p0_ack;
-assign sdr_p0_req  = prot_rom_grant ? prot_any_rom_req : rom_req_r;
-assign sdr_p0_burst = prot_rom_grant ? 1'b0 : rom_burst_r;
-assign sdr_p0_addr = prot_rom_grant ? {2'b00, prot_any_rom_addr[21:1]} :
-                                        {2'b00, rom_addr_r[21:1]};
+assign sdr_p0_req   = rom_req_r;
+assign sdr_p0_burst = rom_burst_r;
+assign sdr_p0_addr  = {2'b00, rom_addr_r[21:1]};
 
 `ifdef S32_AREA_ROM_CACHE
 // Dedicated-game area cache. The generic asynchronous cache below provides a
@@ -1313,17 +1165,17 @@ assign sdr_p0_addr = prot_rom_grant ? {2'b00, prot_any_rom_addr[21:1]} :
 // extra raw clock of lookup latency remains inside the fixed V60 CE interval.
 wire        rom_ready;
 wire [15:0] rom_word_r;
-wire        ga_cache_busy;
 s32_ga_rom_cache ga_rom_cache (
     .clk(clk_sys),
     .rst(rst),
     .invalidate(1'b0),
-    .if_req(if_req),
-    .if_line_addr((if_addr[23:20] == 4'hf)
-                  ? {1'b0, if_addr[19:3]} : if_addr[20:3]),
-    .if_offset(if_addr[2:0]),
-    .if_data(if_data),
-    .if_ack(if_served),
+    // The wide instruction-fetch port is unused: every V60 fetch goes through the
+    // shared PCB bus (data_*).  The module keeps the port for its own unit tests.
+    .if_req(1'b0),
+    .if_line_addr(18'd0),
+    .if_offset(3'd0),
+    .if_data(),
+    .if_ack(),
     .data_req(m_req && !m_we && (sel_rom || sel_romhi) && !ack_r),
     .data_addr(sel_romhi ? {1'b0, A[19:0]} : A[20:0]),
     .data_data(rom_word_r),
@@ -1332,31 +1184,8 @@ s32_ga_rom_cache ga_rom_cache (
     .rom_burst(rom_burst_r),
     .rom_addr(rom_addr_r),
     .rom_data(sdr_p0_dout),
-    .rom_ack(sdr_p0_ack),
-    .busy(ga_cache_busy),
-    .stall(prot_rom_grant)
+    .rom_ack(sdr_p0_ack)
 );
-
-// Arbitrate the cache's exclusive p0 access against a protection client.
-// ga2/arabfgt are both PROT_NONE, so prot_any_rom_req is permanently 0 for
-// them and this FSM is behavior-inert; a game that does drive protection ROM
-// reads through this profile (e.g. Sonic's rev.C level-loader) gets a real
-// grant instead of the old hardwired prot_rom_grant=0. Start a grant only
-// when the cache has nothing in flight (busy = filling || lookup_pending),
-// then hold it until the protection transaction acks. `stall` freezes the
-// cache's lookup-resolution while granted, closing the one-cycle race where
-// a lookup that was already pending when the grant started could otherwise
-// still land a rom_req on the bus mid-grant (see s32_ga_rom_cache's stall
-// port for the full argument).
-always @(posedge clk_sys) begin
-    if (rst)
-        prot_rom_grant <= 1'b0;
-    else if (prot_rom_grant) begin
-        if (sdr_p0_ack) prot_rom_grant <= 1'b0;
-    end
-    else if (prot_any_rom_req && !ga_cache_busy)
-        prot_rom_grant <= 1'b1;
-end
 `else
 // Non-production/general fallback.  Its original 32-line geometry is retained
 // deliberately: every production profile selects s32_ga_rom_cache above, and
@@ -1379,56 +1208,27 @@ wire        ic_hit     = icache_valid[ic_line] && (icache_tag[ic_line] == ic_tag
 wire [63:0] ic_ldata   = icache_data[ic_line];
 wire [15:0] ic_word    = ic_ldata[{rom_byte_a[2:1], 4'b0000} +: 16];
 
-// Instruction-fetch lookup (whole 8-byte line).  Same romhi mirroring as data.
-wire        if_romhi   = (if_addr[23:20] == 4'hF);
-wire [20:0] if_byte_a  = if_romhi ? {1'b0, if_addr[19:3], 3'b000} : {if_addr[20:3], 3'b000};
-wire [4:0]  if_line_ix = if_byte_a[7:3];
-wire [12:0] if_tag_ix  = if_byte_a[20:8];
-wire        if_hit     = icache_valid[if_line_ix] && (icache_tag[if_line_ix] == if_tag_ix);
-// Pre-align the fetched line so byte 0 is the frontier byte (if_addr[2:0] = offset
-// within the 8-byte line).  Doing the >>foff barrel shift HERE, on the icache read
-// path, keeps it off the V60's tight execution clock domain (timing-closure guard).
-wire [63:0] if_hit_data = icache_data[if_line_ix] >> {if_addr[2:0], 3'b000};
+// There is no separate instruction-fetch client: V60 prefetches arrive here as
+// ordinary ROM reads on the shared bus, through the same ic_hit lookup as data.
 
 reg         rom_filling;
 reg         rom_ready;               // pulses when requested word available
 reg  [15:0] rom_word_r;
-// latched fill target: with two clients (data ROM read + instruction fetch) the
-// live A/if_addr can change mid-fill, so the fill FSM uses its own latched line.
+// latched fill target: the live A can change mid-fill, so the fill FSM uses its
+// own latched line rather than the current bus address.
 reg  [4:0]  fill_line;
 reg  [12:0] fill_tag;
-reg         fill_isfetch;
 reg  [1:0]  fill_dsel;               // data-read word select (byte_a[2:1])
-reg  [2:0]  fill_foff;               // fetch intra-line offset (if_addr[2:0]) to align
-
-// The rev. C Sonic protection responder is a second architectural client of
-// the single main-ROM port.  Do not mux it by the live request level: a CPU
-// line fill may already own p0, and SDRAM services each request only once per
-// rising edge.  Wait for the CPU fill/request to become idle, latch the
-// protection address through prot_p0_addr, and hold the grant until p0 ack.
-always @(posedge clk_sys) begin
-    if (rst)
-        prot_rom_grant <= 1'b0;
-    else if (prot_rom_grant) begin
-        if (sdr_p0_ack) prot_rom_grant <= 1'b0;
-    end
-    else if (prot_any_rom_req && !rom_filling && !rom_req_r && !if_req &&
-             !sdr_p0_ack)
-        prot_rom_grant <= 1'b1;
-end
 
 always @(posedge clk_sys) begin
     if (rst) begin
         rom_req_r <= 0; rom_burst_r <= 0; rom_filling <= 0; rom_ready <= 0;
         icache_valid <= 32'h0;
-        if_served <= 1'b0;
     end
     else begin
         rom_req_r <= 0;
         rom_burst_r <= 0;
         rom_ready <= 0;
-        // re-arm the fetch port once the CPU drops if_req (having consumed if_ack)
-        if (!if_req) if_served <= 1'b0;
 
         if (rom_filling) begin
             if (sdr_p0_ack) begin
@@ -1439,39 +1239,16 @@ always @(posedge clk_sys) begin
                 rom_filling             <= 1'b0;
                 icache_tag[fill_line]   <= fill_tag;
                 icache_valid[fill_line] <= 1'b1;
-                if (fill_isfetch) begin
-                    if_data   <= sdr_p0_dout >> {fill_foff, 3'b000};
-                    if_served <= 1'b1;
-                end
-                else begin
-                    case (fill_dsel)
-                        2'd0: rom_word_r <= sdr_p0_dout[15:0];
-                        2'd1: rom_word_r <= sdr_p0_dout[31:16];
-                        2'd2: rom_word_r <= sdr_p0_dout[47:32];
-                        default: rom_word_r <= sdr_p0_dout[63:48];
-                    endcase
-                    rom_ready <= 1'b1;
-                end
+                case (fill_dsel)
+                    2'd0: rom_word_r <= sdr_p0_dout[15:0];
+                    2'd1: rom_word_r <= sdr_p0_dout[31:16];
+                    2'd2: rom_word_r <= sdr_p0_dout[47:32];
+                    default: rom_word_r <= sdr_p0_dout[63:48];
+                endcase
+                rom_ready <= 1'b1;
             end
         end
-        // instruction fetch has priority (it is the common ROM access)
-        else if (if_req && !if_served) begin
-            if (if_hit) begin
-                if_data   <= if_hit_data;      // already aligned to the frontier byte
-                if_served <= 1'b1;
-            end
-            else begin
-                rom_filling  <= 1'b1;
-                fill_isfetch <= 1'b1;
-                fill_foff    <= if_addr[2:0];  // remember offset to align on completion
-                fill_line    <= if_line_ix;
-                fill_tag     <= if_tag_ix;
-                rom_req_r    <= 1'b1;
-                rom_burst_r  <= 1'b1;
-                rom_addr_r   <= {3'b000, if_byte_a[20:3], 2'b00};
-            end
-        end
-        // data ROM read (rare: constants/tables in ROM).  See !ack_r note above.
+        // ROM read (rare: constants/tables in ROM).  See !ack_r note above.
         else if (m_req && !m_we && (sel_rom || sel_romhi) && !rom_ready && !ack_r) begin
             if (ic_hit) begin
                 rom_word_r <= ic_word;
@@ -1479,7 +1256,6 @@ always @(posedge clk_sys) begin
             end
             else begin
                 rom_filling  <= 1'b1;
-                fill_isfetch <= 1'b0;
                 fill_line    <= ic_line;
                 fill_tag     <= ic_tag;
                 fill_dsel    <= rom_byte_a[2:1];
@@ -1531,7 +1307,6 @@ always @(posedge clk_sys) begin
             rd_wait <= 1'b0;
             ack_r <= 1'b1;   // BRAM/regs
             casez (1'b1)
-                br_trap:     rmux <= br_trap_q;
                 sel_wram:    rmux <= wram_q;
                 sel_vram:    rmux <= vram_cpu_q;
                 sel_sprram:  rmux <= sprram_q;
@@ -1571,20 +1346,9 @@ always @(posedge clk_sys) begin
                 sel_io0:     rmux <= {8'hff, io0_q};
                 sel_io1:     rmux <= {8'hff, io1_q};
                 // MSM6253 serial output is wired to D7, not D0 (MAME
-                // msm6253 d7_r); audit R20 IO-3. sel_track is already
-                // cfg_has_track-gated at its own declaration (0 whenever a
-                // descriptor has no trackball, e.g. every V25-selected game),
-                // so a single branch is correct for every profile -- the
-                // former `if (GAME_ONLY)` special case here dated from when
-                // GAME_ONLY meant "no trackball board at all" (the old
-                // Holosseum-only scope) and never gained a sel_track arm.
-                // 2026-08-06: GAME_ONLY_STD (segas32/Sonic) inherited that
-                // stale branch via GAME_ONLY, silently returning 0xFFFF for
-                // every trackball counter read -- fixed by removing the
-                // dead special case instead of adding a third copy of it.
-                sel_ioex:    rmux <= sel_adc   ? {8'hff, adc_bit, 7'h7f} :
-                                     sel_track ? {8'hff, trk_q[A[4]?2:(A[3]?1:0)]} :
-                                     sel_ppi   ? {8'hff, ppi_q} : 16'hffff;
+                // msm6253 d7_r); audit R20 IO-3.
+                sel_ioex:    rmux <= sel_adc ? {8'hff, adc_bit, 7'h7f} :
+                                     sel_ppi ? {8'hff, ppi_q} : 16'hffff;
                 sel_intc:    rmux <= {8'hff, intc_q};
                 sel_rand:    rmux <= rng_read;
                 default:     rmux <= 16'hffff;
@@ -1632,17 +1396,7 @@ module s32_ga_rom_cache #(
     output reg         rom_burst,
     output reg  [23:1] rom_addr,
     input       [63:0] rom_data,
-    input              rom_ack,
-
-    // Held high by an external SDRAM-p0 arbiter while a competing client
-    // (a protection responder) owns the shared bus. Freezes lookup
-    // resolution only -- a cache HIT never touches rom_req/rom_ack so it is
-    // unaffected, and a pending MISS simply waits an extra cycle before
-    // issuing its first rom_req once stall drops. `busy` reports whether
-    // this cache has anything in flight (safe to start a new grant only
-    // when it does not).
-    input              stall,
-    output             busy
+    input              rom_ack
 );
 
 localparam integer LINE_COUNT = 1 << INDEX_BITS;
@@ -1681,12 +1435,6 @@ wire [INDEX_BITS-1:0] lookup_mem_addr = lookup_pending ? lookup_index :
 wire [63:0] completed_line = rom_data;
 wire cache_commit = filling && rom_ack &&
                     !fill_discard && !invalidate && !rst;
-// Nothing in flight here means it is safe for an external arbiter to steal
-// the shared p0 bus: a cache HIT resolves without ever touching rom_req, so
-// only an in-progress fill or a not-yet-resolved lookup (which might turn
-// out to be a miss) count as busy.
-assign busy = filling || lookup_pending;
-
 function automatic [15:0] select_word(
     input [63:0] line,
     input  [1:0] word_sel
@@ -1781,7 +1529,7 @@ always @(posedge clk) begin
                 end
             end
         end
-        else if (lookup_pending && !stall) begin
+        else if (lookup_pending) begin
             lookup_pending <= 1'b0;
             if (cache_valid[lookup_index] &&
                 cache_q[CACHE_WIDTH-1:64] == lookup_tag) begin

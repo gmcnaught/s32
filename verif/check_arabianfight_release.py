@@ -6,39 +6,39 @@ import xml.etree.ElementTree as ET
 
 
 ROOT = Path(__file__).resolve().parents[1]
-standard_qsf = (ROOT / "segas32.qsf").read_text(encoding="utf-8")
+standard_qsf = (ROOT / "Arcade-SegaSystem32.qsf").read_text(encoding="utf-8")
 for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
-    'FITTER_EFFORT "FAST FIT"',
-    "SEED 2",
+    'FITTER_EFFORT "STANDARD FIT"',
+    "SEED 4",
     "ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF",
     "PHYSICAL_SYNTHESIS_REGISTER_DUPLICATION OFF",
-    "NUM_PARALLEL_PROCESSORS 8",
+    "NUM_PARALLEL_PROCESSORS 2",
 ):
     assert f"set_global_assignment -name {assignment}" in standard_qsf, \
-        f"segas32.qsf is missing required Quartus setting {assignment}"
+        f"Arcade-SegaSystem32.qsf is missing required Quartus setting {assignment}"
 for macro in ("S32_PROFILE_STANDARD=1", "S32_UNIVERSAL=1", "S32_V25_HW=1",
               "S32_GAME_ONLY_STD=1", "S32_V60_NO_FP=1"):
     assert f'VERILOG_MACRO "{macro}"' in standard_qsf, \
-        f"segas32.qsf is missing {macro}"
+        f"Arcade-SegaSystem32.qsf is missing {macro}"
 for macro in ("S32_V25_MLAB_FIFO=1", "S32_V25_MLAB_EEPROM=1",
               "S32_JT12_MLAB_SHIFTS=1"):
     assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
-        f"segas32.qsf must not force {macro}"
+        f"Arcade-SegaSystem32.qsf must not force {macro}"
 for macro in ("S32_PROFILE_V25=1", "S32_REAL_V25=1"):
     assert f'VERILOG_MACRO "{macro}"' not in standard_qsf, \
-        f"segas32.qsf unexpectedly defines obsolete {macro}"
+        f"Arcade-SegaSystem32.qsf unexpectedly defines obsolete {macro}"
 assert 'VERILOG_MACRO "MISTER_DISABLE_SHADOWMASK=1"' in standard_qsf, \
-    "segas32.qsf must compile out the optional HDMI shadow-mask stage"
+    "Arcade-SegaSystem32.qsf must compile out the optional HDMI shadow-mask stage"
 assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \
-    "segas32.qsf must not retain the retired debug/release macro"
+    "Arcade-SegaSystem32.qsf must not retain the retired debug/release macro"
 
 top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
-assert "active_board.v25_table ? 16'd32768 : 16'd21848" in top, \
-    "descriptor-selected V25 game cadence is missing"
+assert "is_multi32 ? 16'd27127 : 16'd32768" in top, \
+    "uniform System 32 clk_sys/2 game cadence is missing"
 assert '"O[16:15],CPU Turbo' not in top, \
     "CPU Turbo must not be offered in the merged profile (V60 timing relies on fixed CE)"
 
@@ -49,8 +49,8 @@ for path in (ROOT / "mra").glob("Arabian Fight (*.mra"):
 
 assert len(matches) == 3, f"expected three Arabian Fight MRAs, found {len(matches)}"
 for path, root in matches:
-    assert root.findtext("rbf") == "segas32", \
-        f"{path.name} must load segas32.rbf"
+    assert root.findtext("rbf") == "Arcade-SegaSystem32", \
+        f"{path.name} must load Arcade-SegaSystem32.rbf"
 
     rom = root.find("rom[@index='0']")
     assert rom is not None and rom.get("zip") is None

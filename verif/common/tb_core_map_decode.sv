@@ -21,8 +21,7 @@ module tb_core_map_decode;
 
     s32_core core (
         .clk_sys(clk), .clk_ram(clk), .rst(core_rst), .video_rst(core_rst), .board(bd),
-        .ce_cpu(1'b0), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(1'b0),
-        .alien3_hud_blend(1'b0),
+        .ce_cpu(1'b0), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0),
         .sdr_p0_dout(64'h0), .sdr_p0_ack(1'b0),
         .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b0),
         .sdr_p2_dout(128'h0), .sdr_p2_ack(1'b0),
@@ -38,7 +37,7 @@ module tb_core_map_decode;
         .in_svc12(8'hff), .in_svc34(8'hff),
         .in_p1b(8'hff), .in_p2b(8'hff), .in_portc_b(8'hff),
         .in_svc12_b(8'hff), .in_svc34_b(8'hff),
-        .adc_ch(adc), .trk_dv(dv), .trk_dx(dx), .trk_dy(dy), .trk_btn(tb),
+        .adc_ch(adc), .vs_phase(2'b00),
         .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff)
     );
 
@@ -86,7 +85,7 @@ module tb_core_map_decode;
         expect_decode(24'hc00068, 0,0,0,1,0,0);
 
         // Exercise the real V60-side PPI bus seam at 0xc00060.  The
-        // descriptor gate is the same bit emitted for arabfgt, brival,
+        // descriptor gate is the same bit emitted for arabfgt,
         // darkedge, ga2, and spidman; the Python descriptor test keeps that
         // parent set complete while this transaction proves the integrated
         // request/read-mux path.
@@ -229,21 +228,6 @@ module tb_core_map_decode;
         end
         core_rst = 1'b1;
         @(posedge clk); #1;
-
-        // Sonic protection reads an exact word from the level-order table.
-        // 0x263a is deliberately not 8-byte aligned; the ROM arbiter must not
-        // turn it into the instruction-cache line base at 0x2638.
-        force core.prot_rom_grant = 1'b1;
-        force core.prot_rom_addr = 24'h00263a;
-        #1;
-        if (core.sdr_p0_addr !== (24'h00263a >> 1) ||
-            core.sdr_p0_burst !== 1'b0) begin
-            $display("FAIL Sonic protection ROM transaction address=%06x burst=%b expected=00131d/0",
-                core.sdr_p0_addr, core.sdr_p0_burst);
-            errors = errors + 1;
-        end
-        release core.prot_rom_addr;
-        release core.prot_rom_grant;
 
         if (errors == 0) $display("CORE MAP DECODE PASS");
         else $fatal(1, "CORE MAP DECODE FAIL (%0d errors)", errors);

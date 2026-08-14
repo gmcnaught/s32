@@ -39,7 +39,16 @@ set_global_assignment -name POWER_BOARD_THERMAL_MODEL "NONE (CONSERVATIVE)"
 set_global_assignment -name TIMEQUEST_MULTICORNER_ANALYSIS ON
 set_global_assignment -name OPTIMIZE_POWER_DURING_FITTING OFF
 set_global_assignment -name FINAL_PLACEMENT_OPTIMIZATION ALWAYS
-set_global_assignment -name FITTER_EFFORT "FAST FIT"
+# 2026-08-14: raised from "FAST FIT" to "STANDARD FIT". Removing the V60 fast
+# instruction-fetch transport freed ~580 ALMs, which re-floorplanned the design
+# and exposed a previously-passing path inside the vendored sys/ascal.vhd
+# horizontal polyphase (o_h_poly_t.g0[11] -> o_h_poly_pix.g[*], 1-2 logic
+# levels, i.e. placement-bound rather than logic-bound). A full seed sweep
+# (2/3/4/1) improved it from -0.687 to -0.136 ns but did not close it, and
+# ascal.vhd is vendored framework code that must not be edited. Standard Fit is
+# the sanctioned optimization lever for a residual placement miss; it costs
+# compile wall-clock only and changes no hardware behaviour.
+set_global_assignment -name FITTER_EFFORT "STANDARD FIT"
 # The latest recorded standard-profile fit used 74% ALMs and 91% M10Ks, with
 # only marginal setup failures after dead logic was removed. The subsequent
 # universal merge adds the real V25, while the RF5C68 external-wave change is
@@ -86,7 +95,7 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # Seed 3: -1.019/-0.942 ns worst setup (marginally better worst-number than
 # seed 2's -0.903/-1.157, worse on the other corner). Still deeply violated.
 # Seed 4 was stopped mid-fit, no result. 2026-08-06 (later same night): two
-# real correctness bugs fixed (trackball read-mux, analog velocity sign) and
+# real correctness bugs fixed (analog input sign) and
 # two resource exclusions added (S32_V60_NO_FP, s32_v25 HLE mailbox tie-off)
 # -- the resource/placement shape has genuinely changed since the numbers
 # above, so resetting to seed 2 as the starting point for a fresh clean
@@ -100,8 +109,18 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # Both worse than seed 2's -0.083/-0.115 ns. Seed 1: -0.278/-0.151 ns, also
 # worse. Seed 2 wins the full 3-additional-seed exploration on this netlist
 # too. Reverting to seed 2.
-set_global_assignment -name SEED 2
-set_global_assignment -name NUM_PARALLEL_PROCESSORS 8
+set_global_assignment -name SEED 4
+# 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
+# with `*** Fatal Error: Access Violation` on this host; the fitter's stack
+# trace named deeply recursive TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree
+# frames under parallel_annotate_re_netlist_by_self_scheduling / thr_thread_begin
+# -- Quartus's own multi-threaded delay annotation, not the design netlist.  The
+# failure was intermittent (one clean compile, then repeated crashes at varying
+# addresses in different executables), which is the signature of a worker-thread
+# fault rather than a source defect.  Processor count does not affect fit or
+# timing results, only compile wall-clock, so this is a host-stability setting
+# and not a hardware change.
+set_global_assignment -name NUM_PARALLEL_PROCESSORS 2
 
 # This repository is single-screen Sega System 32 only; Multi 32 is not a
 # supported target here.  The macro compiles out the second palette / mixer and
@@ -115,13 +134,9 @@ set_global_assignment -name VERILOG_MACRO "S32_PROFILE_STANDARD=1"
 set_global_assignment -name VERILOG_MACRO "S32_PCB_TIMING=1"
 set_global_assignment -name VERILOG_MACRO "S32_UNIVERSAL=1"
 set_global_assignment -name VERILOG_MACRO "S32_V25_HW=1"
-# Universal-profile trim keeps hardware needed by supported descriptors such as
-# trackball games, descriptor-gated ADC, and the Sonic/Dark Edge/Burning Rival
-# protection responders, but no dual-PCB or excluded-title responders. See
-# rtl/s32_core.sv's GAME_ONLY_STD localparam and the
-# g_game_trackball / g_game_std_protection generate blocks it selects.
-# Do NOT rename this to reference a specific game (PROFILE_CONTRACT.md's
-# routing rule): it describes a hardware-capability shape, not "Sonic".
+# Universal-profile trim keeps descriptor-gated driving ADC, PPI, Dark Edge
+# protection, and the real V25 path, but no excluded-title peripherals or
+# responders. See rtl/s32_core.sv's GAME_ONLY_STD localparam.
 set_global_assignment -name VERILOG_MACRO "S32_GAME_ONLY_STD=1"
 # 2026-08-06: two independent audits confirmed fp_valid() (rtl/cpu/v60/
 # s32_v60.sv) exactly mirrors MAME's s_Op5CTable/s_Op5FTable dispatch

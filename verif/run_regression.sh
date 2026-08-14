@@ -98,7 +98,7 @@ iverilog -g2012 -o /tmp/s32_mix rtl/video/s32_linebuf.sv rtl/video/s32_mixer.sv 
 vvp /tmp/s32_mix | grep -q "MIXER PASS" && echo "MIXER: PASS" || { echo "MIXER: FAIL"; exit 1; }
 # The mixer must finish a pixel inside one 416-wide pixel period (12 clk_ram
 # edges).  At 13 the picture is displayed one column right of MAME in
-# 416-wide mode only; see docs/segasonic-bringup.md.
+# 416-wide mode only.
 iverilog -g2012 -o /tmp/s32_mixlat rtl/video/s32_linebuf.sv rtl/video/s32_mixer.sv \
   rtl/video/s32_palette.sv verif/common/tb_mixer_pixel_latency.sv
 vvp /tmp/s32_mixlat | grep -q "MIXER PIXEL LATENCY PASS" && echo "MIXER PIXEL LATENCY: PASS" || { echo "MIXER PIXEL LATENCY: FAIL"; exit 1; }
@@ -145,13 +145,10 @@ vvp /tmp/s32_rom_loader | grep -q "ROM LOADER PASS" && echo "ROM LOADER: PASS" |
 iverilog -g2012 -s tb_rom_loader_wave_clear -o /tmp/s32_rom_loader_wave_clear \
   rtl/s32_pkg.sv rtl/mem/s32_rom_loader.sv verif/common/tb_rom_loader_wave_clear.sv
 vvp /tmp/s32_rom_loader_wave_clear | grep -q "ROM LOADER WAVE CLEAR PASS" && echo "ROM LOADER WAVE CLEAR: PASS" || { echo "ROM LOADER WAVE CLEAR: FAIL"; exit 1; }
-echo "[18/35] EEPROM persistence + radial analog-gun response + MAME 8255 direction/latch contract"
+echo "[18/35] EEPROM persistence + MAME 8255 direction/latch contract"
 iverilog -g2012 -o /tmp/s32_eeprom_nvram \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_eeprom_nvram.sv
 vvp /tmp/s32_eeprom_nvram | grep -q "EEPROM NVRAM PASS" && echo "EEPROM NVRAM: PASS" || { echo "EEPROM NVRAM: FAIL"; exit 1; }
-iverilog -g2012 -o /tmp/s32_gun_aim \
-  rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_gun_aim.sv
-vvp /tmp/s32_gun_aim | grep -q "GUN AIM PASS" && echo "GUN AIM: PASS" || { echo "GUN AIM: FAIL"; exit 1; }
 iverilog -g2012 -o /tmp/s32_i8255 \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_i8255.sv
 vvp /tmp/s32_i8255 | grep -q "I8255 MAME PASS" && echo "I8255 MAME: PASS" || { echo "I8255 MAME: FAIL"; exit 1; }
@@ -165,9 +162,6 @@ vvp /tmp/s32_epr14084_bus | grep -q "PASS epr14084 bus" && echo "EPR-14084 BUS: 
 iverilog -g2012 -DSIMULATION -s tb_epr14084_shadow -o /tmp/s32_epr14084_shadow \
   rtl/comm/epr14084/s32_epr14084_shadow.sv verif/common/tb_epr14084_shadow.sv
 vvp /tmp/s32_epr14084_shadow | grep -q "EPR14084 SHADOW PASS" && echo "EPR-14084 SHADOW: PASS" || { echo "EPR-14084 SHADOW: FAIL"; exit 1; }
-iverilog -g2012 -s tb_brival_protection -o /tmp/s32_brival_protection \
-  rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_brival_protection.sv
-vvp /tmp/s32_brival_protection | grep -q "BRIVAL PROTECTION PASS" && echo "BRIVAL PROTECTION: PASS" || { echo "BRIVAL PROTECTION: FAIL"; exit 1; }
 echo "[19/35] V60 20-byte F1 / high fetch-buffer offset regression"
 iverilog -g2012 -o /tmp/s32_v60_long_ea \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_long_ea.sv
@@ -179,6 +173,14 @@ vvp /tmp/s32_rf5c68 | grep -q "RF5C68 PASS" && echo "RF5C68: PASS" || { echo "RF
 iverilog -g2012 -s tb_rf5c68_external -o /tmp/s32_rf5c68_external \
   rtl/video/s32_big_dpram.sv rtl/audio/s32_rf5c68.sv verif/common/tb_rf5c68_external.sv
 vvp /tmp/s32_rf5c68_external | grep -q "RF5C68 EXTERNAL PASS" && echo "RF5C68 EXTERNAL: PASS" || { echo "RF5C68 EXTERNAL: FAIL"; exit 1; }
+# Closed-loop external-wave VOICE path: real SDRAM controller + protocol-level
+# SDR chip model (raw storage, DQM-honouring) + real write serializer + the
+# production address/inversion arithmetic, with CPU/voice contention, variable
+# grant latency and the 0xff end-marker loop.
+iverilog -g2012 -DSIMULATION -s tb_rf5c68_voice_external -o /tmp/s32_rf5c68_voice_external \
+  rtl/audio/s32_rf5c68.sv rtl/mem/sdram.sv rtl/mem/s32_sdram_write_mux2.sv \
+  verif/common/s32_sdr_chip_model.sv verif/common/tb_rf5c68_voice_external.sv
+vvp /tmp/s32_rf5c68_voice_external | grep -q "RF5C68 VOICE EXTERNAL PASS" && echo "RF5C68 VOICE EXTERNAL: PASS" || { echo "RF5C68 VOICE EXTERNAL: FAIL"; exit 1; }
 echo "[21/35] palette RAM alias / byte-enable / write-both / dual-port timing"
 iverilog -g2012 -o /tmp/s32_palette \
   rtl/video/s32_palette.sv verif/common/tb_palette.sv
@@ -309,21 +311,11 @@ iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_map_decode.sv
 vvp /tmp/s32_core_map | grep -q "CORE MAP DECODE PASS" && echo "CORE MAP DECODE: PASS" || { echo "CORE MAP DECODE: FAIL"; exit 1; }
-echo "[35a/37] Three-player left-stick to trackball velocity"
-iverilog -g2012 -s tb_trackball_stick -o /tmp/s32_trackball_stick \
-  rtl/io/s32_io.sv verif/common/tb_trackball_stick.sv
-vvp /tmp/s32_trackball_stick | grep -q "TRACKBALL STICK PASS" && \
-  echo "TRACKBALL STICK: PASS" || { echo "TRACKBALL STICK: FAIL"; exit 1; }
 echo "[35b/37] Slip Stream right-stick pedals and digital fallbacks"
 iverilog -g2012 -s tb_driving_controls -o /tmp/s32_driving_controls \
   rtl/io/s32_driving_controls.sv verif/common/tb_driving_controls.sv
 vvp /tmp/s32_driving_controls | grep -q "PASS: Slip Stream driving controls" && \
   echo "SLIP STREAM DRIVING CONTROLS: PASS" || { echo "SLIP STREAM DRIVING CONTROLS: FAIL"; exit 1; }
-echo "[35/37] MAME-backed uPD4701 trackball origin and per-byte latch semantics"
-iverilog -g2012 -s tb_upd4701_mame -o /tmp/s32_upd4701_mame \
-  rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_upd4701_mame.sv
-vvp /tmp/s32_upd4701_mame | grep -q "UPD4701 MAME PASS" && \
-  echo "UPD4701 MAME: PASS" || { echo "UPD4701 MAME: FAIL"; exit 1; }
 echo "[36/37] MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
 iverilog -g2012 -s tb_radm_msm6253 -o /tmp/s32_radm_msm6253 \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_radm_msm6253.sv

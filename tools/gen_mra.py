@@ -39,25 +39,24 @@ STREAM_ORDER = ["maincpu", "soundcpu", "tiles", "sega", "mcu", "sprites"]
 REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 
 # board descriptor per parent (DESIGN.md §3.4):
-#   b0: flags {multi32,v25,v25table,adc,track,ppi,dsp_hle}
+#   b0: flags {multi32,v25,v25table,adc,reserved,ppi,dsp_hle}
 #       multi32 is retained because the RTL still parses the bit, but it is
 #       always 0 here: this repository emits no Multi 32 set.
-#   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional-gun
-#       conditioner (alien3/jpark), bit3=Alien3 cabinet wiring,
+#   b1: bit0=dual_pcb, bit1=vertical orientation flip, bits3:2=reserved,
 #       bits5:4=analog profile;
 #       bit6=dual-PCB comm RAM reset-to-FF
 #   b2: bits6:0=prot_sel; bit7=descriptor-selected EPR-14084 link HLE
 #   b3: bit7=physical sprite-bank metadata valid; bits1:0=bank mask
-PROT = dict(NONE=0, SONIC=1, BRIVAL=2, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
+PROT = dict(NONE=0, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
 ANALOG = dict(CENTERED=0, DRIVING=1, ALL_FF=2)
 DIGITAL = dict(GENERIC=0, RADM=1)
-def desc(multi32=0, v25=0, v25table=0, adc=0, track=0, ppi=0,
-         dual=0, flip_y=0, prot=0, gun=0, analog=0, dual_ff=0,
-         comm_hle=0, gear_toggle=0, digital=0, dsp=0, coin_swap=0):
-    b0 = (multi32 | v25 << 1 | v25table << 2 | adc << 3 | track << 4 |
+def desc(multi32=0, v25=0, v25table=0, adc=0, ppi=0,
+         dual=0, flip_y=0, prot=0, analog=0, dual_ff=0,
+         comm_hle=0, gear_toggle=0, digital=0, dsp=0):
+    b0 = (multi32 | v25 << 1 | v25table << 2 | adc << 3 |
           ppi << 5 | dsp << 6)
-    b1 = (dual | (flip_y << 1) | (gun << 2) | (coin_swap << 3) |
-          (analog << 4) | (dual_ff << 6) | (gear_toggle << 7))
+    b1 = (dual | (flip_y << 1) | (analog << 4) |
+          (dual_ff << 6) | (gear_toggle << 7))
     b2 = prot | (comm_hle << 7)
     # Byte 3 is populated from the physical sprite region by gen(); byte 4 is
     # the semantic player-port layout.  Remaining bytes stay reserved/zero.
@@ -69,22 +68,12 @@ GAMES = {
     # One universal production profile contains both standard-board
     # peripherals and the real V25 implementation. Runtime descriptor fields
     # select the hardware used by each supported parent.
-    # game: the resource blocker that dropped it (the V60 ROM cache's
-    # prot_rom_grant tie-off assumed no game needed the generic protection
-    # ROM-read arbitration Sonic's PROT_SONIC responder uses) is fixed --
-    # s32_ga_rom_cache's arbiter now grants a real protection-ROM request
-    # instead of hardwiring it to 0 (rtl/s32_core.sv). Other dropped games
-    # return one at a time; see PROFILE_CONTRACT.md for routing.
-    "alien3":   desc(adc=1, gun=1, coin_swap=1),
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
-    "brival":   desc(ppi=1, prot=PROT["BRIVAL"]),
     "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
     "holo":     desc(flip_y=1),
-    "jpark":    desc(adc=1, gun=1),
     "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1,
                      gear_toggle=1),
-    "sonic":    desc(track=1, prot=PROT["SONIC"]),
     "spidman":  desc(ppi=1),
     # Slip Stream's analog driving board is the MSM6253 at 0xC00050. The
     # gear-change input is a latched toggle on P1_A bit 0; both are selected
@@ -103,11 +92,8 @@ GAMES = {
 # Keep the exclusion explicit so a future source refresh cannot re-emit them by
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
-    "arescue", "dbzvrvs", "f1en", "f1lap", "svf", "jleague",
-    # 2026-08-07: Holo and Spider-Man are restored to the standard HLE
-    # profile. Other non-V25 games remain intentionally staged for later
-    # one-at-a-time promotion.
-    "radm",
+    "alien3", "arescue", "brival", "dbzvrvs", "f1en", "f1lap",
+    "jleague", "jpark", "radm", "sonic", "svf",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -128,14 +114,6 @@ BUTTONS = {
         "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,Start,Select,R,L,Y",
     ),
-    "alien3": (
-        "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
-    ),
-    "brival": (
-        "Button 1,Button 2,Button 3,Button 4,Button 5,Button 6,Start,Coin,Test,Service",
-        "A,B,X,Y,R,L,Start,Select",
-    ),
     "darkedge": (
         "Light Punch,Heavy Punch,Jump,Light Kick,Heavy Kick,-,Start,Coin,Test,Service",
         "A,B,R,X,Y,Start,Select,L",
@@ -144,18 +122,8 @@ BUTTONS = {
         "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
     ),
-    "jpark": (
-        "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
     "radr": (
         "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
-    ),
-    # Restored from the pre-2026-08-05 tracked sonic MRA (git ddfdffc^) --
-    # single action button plus the rev.C trackball.
-    "sonic": (
-        "Action,-,-,-,-,-,Start,Coin,Test,Service",
         "A,Start,Select,R,L",
     ),
     "spidman": (
@@ -169,30 +137,22 @@ BUTTONS = {
 }
 
 BUTTON_COUNTS = {
-    "alien3": 2,
     "arabfgt": 2,
-    "brival": 6,
     "darkedge": 5,
     "ga2": 2,
     "holo": 2,
-    "jpark": 1,
     "radr": 1,
-    "sonic": 1,
     "spidman": 2,
     "slipstrm": 3,
 }
 # All supported parents use the one universal production image.
-RBF_BY_PARENT = {parent: "segas32" for parent in GAMES}
+RBF_BY_PARENT = {parent: "Arcade-SegaSystem32" for parent in GAMES}
 
 UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
 
 # MAME init_* ROM pokes the hardware cannot supply, keyed by parent and applied
 # to every set of that parent. Offsets are local to the maincpu index-4 stream.
-# Jurassic Park's drive-board Z80 is not implemented. This is MAME's
-# init_jpark compatibility patch, applied little-endian to the V60 ROM stream.
-PATCHES = {
-    "jpark": [(0xC15A8, "70 CD CD D8")],
-}
+PATCHES = {}
 
 def parse(src):
     """Return {setname: {'regions': [(region, size, loads)], 'title', 'parent'}}"""
@@ -363,7 +323,7 @@ def gen(setname, data, outdir):
         lines.append(f'  <parent>{parent}</parent>')
     lines.append(f'  <year>{data.get("year", "")}</year>')
     lines.append(f'  <manufacturer>{escape(data.get("manu", "Sega"))}</manufacturer>')
-    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "segas32")}</rbf>')
+    lines.append(f'  <rbf>{RBF_BY_PARENT.get(parent, "Arcade-SegaSystem32")}</rbf>')
     button_meta = BUTTONS.get(parent)
     if button_meta:
         names, defaults = button_meta
