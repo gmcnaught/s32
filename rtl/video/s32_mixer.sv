@@ -35,6 +35,7 @@ module s32_mixer (
     input       [8:0] disp_x,
     input       [8:0] disp_y,
     input             disp_active,
+    input             frame_latch,   // pulse at vblank start: snapshot color regs
     input             display_en,    // 315-5296 CNT1
     input             flip_y,        // cabinet ORIENTATION_FLIP_Y (backdrop line)
     input       [5:0] layer_off,     // per-layer disable (TEXT,NBG0-3,BITMAP)
@@ -377,10 +378,37 @@ wire [5:0] layer_color_flags = {mreg[6'h1d][14], mreg[6'h1c][14],
 reg [15:0] r3e_s;
 reg        r4c15_s;
 reg  [5:0] layer_color_flags_s;
-wire [17:0] coloroffs_bank0 = {mreg[6'h22][5:0], mreg[6'h21][5:0],
-                               mreg[6'h20][5:0]};
-wire [17:0] coloroffs_bank1 = {mreg[6'h25][5:0], mreg[6'h24][5:0],
-                               mreg[6'h23][5:0]};
+wire [17:0] coloroffs_bank0_live = {mreg[6'h22][5:0], mreg[6'h21][5:0],
+                                    mreg[6'h20][5:0]};
+wire [17:0] coloroffs_bank1_live = {mreg[6'h25][5:0], mreg[6'h24][5:0],
+                                    mreg[6'h23][5:0]};
+
+// Color offset select ($3E), the per-layer offset flags and both offset banks
+// are whole-frame quantities.  Reading them live let a mid-frame CPU write
+// change the offset applied partway down the screen, splitting the picture
+// into horizontal bands of differently-tinted output; games toggle the $3E
+// bank select every frame to dither between two shades on a CRT, so the split
+// was visible constantly (arabfgt ocean, cutscene sky).  MAME reads mixer
+// control once per frame, after the frame is complete.  Snapshot at vblank.
+reg [15:0] r3e_f;
+reg        r4c15_f;
+reg  [5:0] layer_color_flags_f;
+reg [17:0] coloroffs_bank0;
+reg [17:0] coloroffs_bank1;
+initial begin
+    r3e_f = 16'hFFFF;
+    r4c15_f = 1'b1;
+    layer_color_flags_f = 6'h3F;
+    coloroffs_bank0 = 18'h3FFFF;
+    coloroffs_bank1 = 18'h3FFFF;
+end
+always @(posedge clk) if (frame_latch) begin
+    r3e_f               <= r3e;
+    r4c15_f             <= r4c[15];
+    layer_color_flags_f <= layer_color_flags;
+    coloroffs_bank0     <= coloroffs_bank0_live;
+    coloroffs_bank1     <= coloroffs_bank1_live;
+end
 
 // All dependencies are explicit function arguments.  Quartus 17 can omit
 // global signals referenced only from inside an automatic function (it
@@ -557,9 +585,9 @@ always @(posedge clk) begin
         spr_shadow_src_s <= spr_shadow_src;
         blendenable_s <= r4e[11];
         blendfactor_s <= r4e[10:8];
-        r3e_s <= r3e;
-        r4c15_s <= r4c[15];
-        layer_color_flags_s <= layer_color_flags;
+        r3e_s <= r3e_f;
+        r4c15_s <= r4c15_f;
+        layer_color_flags_s <= layer_color_flags_f;
         act_hold <= disp_active & display_en;
         winner_pending <= 1'b1;
         second_pending <= 1'b0;

@@ -579,22 +579,33 @@ always @(posedge clk_ram) begin
             r1ff02[0] | r1ff8e[1],
             r1ff02[4] | r1ff8e[0]
             };
+        for (tm_cap_i = 0; tm_cap_i < 8; tm_cap_i = tm_cap_i + 1)
+            tm_pages[tm_cap_i] <= w_pages[tm_cap_i];
+        for (tm_cap_i = 0; tm_cap_i < 20; tm_cap_i = tm_cap_i + 1)
+            tm_clips[tm_cap_i] <= tm_clips_cdc[tm_cap_i];
+    end
+
+    // Whole-layer scroll, zoom and centre are frame quantities, not per-line
+    // ones: the 315-5387 exposes rowscroll/rowselect tables ($1FF04) precisely
+    // so software can vary scroll per scanline, which would be redundant if
+    // the scroll registers themselves took effect mid-frame.  Capturing them
+    // per line let a mid-frame update land between the integer ($1FF16) and
+    // fractional ($1FF14) halves of one scroll value, so the scanlines drawn
+    // in between mixed an old fraction with a new integer and rendered the
+    // layer at the wrong source Y.  Snapshot once at vblank instead.
+    if (vbl_start) begin
         for (tm_cap_i = 0; tm_cap_i < 4; tm_cap_i = tm_cap_i + 1) begin
             tm_scrollx[tm_cap_i] <= w_scrollx[tm_cap_i];
             tm_scrolly[tm_cap_i] <= w_scrolly[tm_cap_i];
             tm_offsx[tm_cap_i] <= w_offsx[tm_cap_i];
             tm_offsy[tm_cap_i] <= w_offsy[tm_cap_i];
         end
-        for (tm_cap_i = 0; tm_cap_i < 8; tm_cap_i = tm_cap_i + 1)
-            tm_pages[tm_cap_i] <= w_pages[tm_cap_i];
         for (tm_cap_i = 0; tm_cap_i < 2; tm_cap_i = tm_cap_i + 1) begin
             tm_scrollfracx[tm_cap_i] <= w_scrollfracx[tm_cap_i];
             tm_scrollfracy[tm_cap_i] <= w_scrollfracy[tm_cap_i];
             tm_zoomx[tm_cap_i] <= w_zoomx[tm_cap_i];
             tm_zoomy[tm_cap_i] <= w_zoomy[tm_cap_i];
         end
-        for (tm_cap_i = 0; tm_cap_i < 20; tm_cap_i = tm_cap_i + 1)
-            tm_clips[tm_cap_i] <= tm_clips_cdc[tm_cap_i];
     end
 end
 
@@ -782,6 +793,7 @@ s32_mixer mix0 (
     .reg_addr(A[6:1]), .reg_wdata(m_wdata), .reg_be(m_be),
     .reg_rdata(mix0_q), .reg_raddr(A[6:1]), .reg_r4e(mix0_r4e),
     .disp_x(mix_disp_x), .disp_y(vcnt), .disp_active(~hb & ~vb),
+    .frame_latch(vbl_start),
     .display_en(io0_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off_disp), .bg_ctrl(mix_bg_ctrl),
     .px_text(mix_px_text), .px_nbg0(mix_px_nbg0),
     .px_nbg1(mix_px_nbg1), .px_nbg2(mix_px_nbg2),
@@ -820,6 +832,7 @@ generate
             .reg_addr(A[6:1]), .reg_wdata(m_wdata), .reg_be(m_be),
             .reg_rdata(mix1_q), .reg_raddr(A[6:1]), .reg_r4e(mix1_r4e),
             .disp_x(mix_disp_x), .disp_y(vcnt), .disp_active(~hb & ~vb),
+            .frame_latch(vbl_start),
             .display_en(io1_cnt1), .flip_y(cfg_flip_y), .layer_off(tm_layer_off_disp), .bg_ctrl(mix_bg_ctrl),
             .px_text(mix_px_text), .px_nbg0(mix_px_nbg0),
             .px_nbg1(mix_px_nbg1), .px_nbg2(mix_px_nbg2),

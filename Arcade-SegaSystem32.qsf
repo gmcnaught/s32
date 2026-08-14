@@ -111,7 +111,13 @@ set_global_assignment -name ALM_REGISTER_PACKING_EFFORT MEDIUM
 # too. Reverting to seed 2.
 # 2026-08-14: fixed a stale mismatch -- this line still read SEED 4 despite
 # the conclusion above; corrected to the documented winner, SEED 2.
-set_global_assignment -name SEED 2
+# 2026-08-14 (fetch-revert netlist): disabling the wide fetch reshuffled
+# placement and seed 2 now misses at -0.047/-0.036 ns on the pll_hdmi domain.
+# Re-running the seed exploration on this netlist. Seed 5: quartus_fit crashed
+# (exit -1, 0 errors, no stack trace, no Windows fault event) on 3/3 attempts,
+# each overlapping another unrelated Quartus job on this host; inconclusive on
+# cause, not scored as a seed result. Trying seed 6 next.
+set_global_assignment -name SEED 6
 # 2026-08-13: dropped from 8 to 2.  At 8, quartus_map and quartus_fit both died
 # with `*** Fatal Error: Access Violation` on this host; the fitter's stack
 # trace named deeply recursive TIS_ADVANCED_SPICE_RC_BODY::annotate_delay_tree
