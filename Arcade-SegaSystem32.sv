@@ -602,10 +602,18 @@ s32_core core (
     // core port constant so standalone verification benches can still test
     // V25 pause semantics without carrying the menu logic into an RBF.
     .pause(1'b0),
-    // Wide V60 instruction fetch, always on (the pre-merge default).  Constant,
-    // so the transport can never change under an in-flight prefetch; no OSD
-    // option is exposed (status bit 29 stays reserved).
-    .fast_v60(1'b1),
+    // Wide V60 instruction fetch, disabled 2026-08-14 at user request after the
+    // 1d56109 hardware build regressed.  Every prefetch goes back through the
+    // ce_cpu-gated 16-bit data path, which is the transport the core ran before
+    // that commit restored the wide port.  The per-board PCB bus cadence from
+    // 1d56109 is unchanged.  The transport itself stays compiled (constant, so
+    // it can never change under an in-flight prefetch); no OSD option is exposed
+    // (status bit 29 stays reserved).
+    //
+    // Known cost of this setting: 1d56109 measured arabfgt water lines 51-53
+    // showing the stale line buffer on 19/448 captured frames with the wide
+    // fetch off.
+    .fast_v60(1'b0),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
