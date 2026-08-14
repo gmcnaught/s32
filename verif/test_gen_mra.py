@@ -19,6 +19,13 @@ class BoardDescriptorTests(unittest.TestCase):
     def test_supported_standard_games_keep_their_board_features(self) -> None:
         self.assertEqual(GAMES["darkedge"][:3], bytes.fromhex("200003"))
         self.assertEqual(GAMES["radr"][:3], bytes.fromhex("089080"))
+        # Rad Mobile: MSM6253 ADC (b0 bit3) + DRIVING analog profile
+        # (b1[5:4]=1), no protection, no gear toggle and no comm link -- MAME's
+        # init_radm installs only the cabinet lamp/wiper switch outputs.
+        self.assertEqual(GAMES["radm"][:3], bytes.fromhex("081000"))
+        # Byte 4 is the semantic player-port layout: Rad Mobile leaves P1_A
+        # bit0 unused and puts Light/Wiper on bits 1/2 (DIGITAL_RADM = 1).
+        self.assertEqual(GAMES["radm"][4], 0x01)
 
     def test_every_supported_four_player_parent_selects_the_ppi(self) -> None:
         # b0[5] is the descriptor's i8255-present flag.  Keep this list
@@ -72,8 +79,35 @@ class ButtonMetadataTests(unittest.TestCase):
         self.assertEqual(defaults.split(","),
                          ["A", "B", "R", "X", "Y", "Start", "Select", "L"])
 
+    def test_rad_mobile_shares_the_driving_pedals_and_adds_light_and_wiper(self) -> None:
+        """Rad Mobile matches Rad Rally's pedal layout.
+
+        B1/B2 are the shared digital Accelerate/Brake fallbacks that drive the
+        MSM6253 channels; Rad Mobile's Light and Wiper cabinet switches sit on
+        B3/B4 so they cannot collide with them.  Rad Mobile has no gear
+        selector, which is the only difference from Rad Rally.
+        """
+        names, defaults = BUTTONS["radm"]
+        self.assertEqual(names.split(","),
+                         ["Accelerate", "Brake", "Light", "Wiper", "-", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "X", "Y", "Start", "Select", "R", "L"])
+
+    def test_rad_rally_names_its_pedals_and_puts_the_gear_toggle_on_b3(self) -> None:
+        """The gear toggle is joystick_0[6] = B3, matching Slip Stream.
+
+        This previously named B1 "Gear Change", but B1 is the accelerator.
+        """
+        names, defaults = BUTTONS["radr"]
+        self.assertEqual(names.split(","),
+                         ["Accelerate", "Brake", "Gear Change", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "X", "Start", "Select", "R", "L"])
+
     def test_promoted_games_keep_cabinet_button_counts(self) -> None:
-        expected = {"darkedge": 5, "holo": 2, "radr": 1}
+        expected = {"darkedge": 5, "holo": 2, "radm": 4, "radr": 3}
         for parent, count in expected.items():
             with self.subTest(parent=parent):
                 names, _ = BUTTONS[parent]
@@ -144,7 +178,7 @@ class OptimizedLayoutTests(unittest.TestCase):
         paths = sorted(mra_dir.glob("*.mra"))
         # Air Rescue is intentionally excluded because its second PCB is not
         # part of the production core.
-        self.assertEqual(len(paths), 17)
+        self.assertEqual(len(paths), 19)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
@@ -161,6 +195,25 @@ class OptimizedLayoutTests(unittest.TestCase):
     def test_air_rescue_is_not_emitted(self) -> None:
         names = {path.name for path in (Path(__file__).parents[1] / "mra").glob("*.mra")}
         self.assertFalse(any("Air Rescue" in name for name in names))
+
+    def test_rad_mobile_ships_both_regions_with_the_radm_port_layout(self) -> None:
+        mra_dir = Path(__file__).parents[1] / "mra"
+        paths = sorted(mra_dir.glob("Rad Mobile*.mra"))
+        self.assertEqual([path.name for path in paths],
+                         ["Rad Mobile (US).mra", "Rad Mobile (World).mra"])
+        for path in paths:
+            root = ElementTree.parse(path).getroot()
+            descriptor = bytes.fromhex(root.findall("rom")[-1].findtext("part", ""))
+            self.assertEqual(descriptor[0] & 0x08, 0x08, path.name)   # ADC
+            self.assertEqual((descriptor[1] >> 4) & 0x03, 0x01, path.name)
+            self.assertEqual(descriptor[2], 0x00, path.name)          # no prot
+            self.assertEqual(descriptor[4], 0x01, path.name)          # RADM
+            # Both sets ship the factory 93C46 image as the index-2 default.
+            eeprom = [rom for rom in root.findall("rom")
+                      if rom.attrib["index"] == "2"]
+            self.assertEqual(len(eeprom), 1, path.name)
+            self.assertEqual(eeprom[0].find("part").attrib["name"],
+                             "eeprom-radm.ic76", path.name)
 
     def test_rad_rally_uses_behavioral_link_without_diagnostic_firmware(self) -> None:
         for path in (Path(__file__).parents[1] / "mra").glob("Rad Rally*.mra"):

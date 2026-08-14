@@ -59,7 +59,7 @@ OUT="${OUT:-scratch/library-sweep}"
 # ga2 and arabfgt remain production-supported by the real V25 path but are
 # explicitly excluded from this goal's
 # sweep because they are V25 games.
-SETS="${SETS:-darkedge holo radr slipstrm spidman}"
+SETS="${SETS:-darkedge holo radm radr slipstrm spidman}"
 
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.md"

@@ -2,6 +2,29 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-14: Rad Mobile restored to the supported set
+
+Rad Mobile (`radm`, `radmu`) is a first-class System 32 analog driving board
+and is back in the production scope. It was dropped on 2026-08-05 while the
+profile was temporarily narrowed to `ga2`+`arabfgt`; the narrowing was
+explicitly temporary and the other standard parents have since been returned
+one at a time (`holo`, `radr`, `spidman`, `slipstrm`, `darkedge`).
+
+Restoring it required no RTL change: the universal profile compiled with
+`S32_GAME_ONLY_STD=1` already keeps the descriptor-gated MSM6253 driving ADC,
+the shared driving analog defaults, and the `DIGITAL_RADM` player-port layout
+in `Arcade-SegaSystem32.sv` (`radm_p1a`, `s32_pkg.sv:DIGITAL_RADM`). MAME's
+`init_radm` installs no protection handler, no ROM poke, and no communication
+link, so the descriptor asks for nothing the shipped image lacks.
+
+Descriptor: `08 10 00 81 01` — b0 bit3 = MSM6253 ADC; b1[5:4] = `ANALOG_DRIVING`;
+b2 = no protection and no EPR-14084 link; b3 = sprite metadata valid with a
+2-bank (`0x800000`) sprite region; byte 4 = `DIGITAL_RADM`.
+
+This restoration is a scope/packaging change. No RBF was built and no hardware
+run was performed, so Rad Mobile carries no attract/frame-diff acceptance
+evidence yet — see the acceptance matrix below.
+
 ## 2026-08-13: four game families removed
 
 Alien3: The Gun, Burning Rival, Jurassic Park, and SegaSonic The Hedgehog are
@@ -272,7 +295,9 @@ HLE titles).
 The current user-directed gameplay/attract acceptance matrix covers true parent
 sets only. Clone and regional revisions and all excluded or Multi 32 parents
 are outside this audit. The active parents are `arabfgt`, `darkedge`, `ga2`,
-`holo`, `radr`, `slipstrm`, and `spidman`.
+`holo`, `radm`, `radr`, `slipstrm`, and `spidman`.  (`radm` was added to this
+list on 2026-08-14 when it was restored to the supported set; it has no
+attract-gate evidence yet.)
 
 ## Universal-profile attract evidence (2026-08-01, in progress)
 
@@ -306,6 +331,7 @@ scene-matched MAME image comparison, but is outside the current audit.
 |---|---|---|---|
 | `holo` | standard | 85 frames; frame 80 shows the FBI anti-drug attract screen; `scratch/vromboot_out/holo_frame80.png`; exact MAME RGB match after documented crop and -1 scanline alignment | proven |
 | `radr` | standard | 420-frame full-core Verilator run; frame 360 retained PPM/PNG shows the Rad Rally `Free Play`/SEGA attract screen; `ROMBOOT DONE`, `VERILATOR SCREENSHOT PASS` with 71,680 non-black pixels, IRQ-only vectors 40/41, zero freeze/tile/FB overruns; `scratch/radr_attract_win_20260801p/dump360.ppm` | proven |
+| `radm` | standard | restored to scope 2026-08-14; descriptor and MRAs regenerated, no attract/frame-diff run performed yet | pending |
 | `ga2` | real V25 | staged parent image and MAME attract references; universal-profile attract/frame-diff gate pending | pending |
 | `arabfgt` | real V25 | staged parent image and MAME attract references; universal-profile attract/frame-diff gate pending | pending |
 | all other in-scope media-present parents | standard/HLE | staged sweep or media/structural triage exists, but the attract gate is not yet closed | pending |

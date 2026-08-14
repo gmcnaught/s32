@@ -99,12 +99,18 @@ def validate(check_rtl: bool = False) -> list[str]:
                 errors.append(f"{qsf.name}: must not compile the real V25 core (no game here has V25 hardware)")
         core_text = (ROOT / "rtl" / "s32_core.sv").read_text(encoding="utf-8")
         cpu_text = (ROOT / "rtl" / "cpu" / "v60" / "s32_v60.sv").read_text(encoding="utf-8")
-        if "FAST_IFETCH" in core_text or "fast_v60" in core_text:
-            errors.append("s32_core.sv: the removed fast instruction-fetch transport is back")
+        # 2026-08-14: the wide instruction-fetch transport is REQUIRED again.
+        # Its removal routed every V60 prefetch through the shared 16-bit bus,
+        # and the extra p0 SDRAM traffic starved the tile renderer's p1 port
+        # (measured: arabfgt water lines 51-53 showed the stale line buffer on
+        # 19/448 captured frames).  The physical bus cadence stays on ce_cpu;
+        # only the prefetch transport is widened.
+        if "FAST_IFETCH" not in core_text or "fast_v60" not in core_text:
+            errors.append("s32_core.sv: the wide instruction-fetch transport is missing")
         if "s32_v60_bus vbus" not in core_text or ".ce(ce_cpu)" not in core_text:
             errors.append("s32_core.sv: fixed physical V60 bus cadence is missing")
-        if "FAST_IFETCH" in cpu_text or "fast_ifetch" in cpu_text:
-            errors.append("s32_v60.sv: every instruction fetch must use the shared PCB bus")
+        if "use_fast_ifetch = FAST_IFETCH && fast_ifetch && fetch_is_rom" not in cpu_text:
+            errors.append("s32_v60.sv: ROM-gated wide-fetch selection is missing")
 
     return errors
 

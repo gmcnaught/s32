@@ -72,6 +72,14 @@ GAMES = {
     "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
     "holo":     desc(flip_y=1),
+    # Rad Mobile is a plain analog driving board: MAME's init_radm installs no
+    # protection handler, no ROM poke and no communication link -- only the two
+    # cabinet lamp/wiper switch outputs.  So it needs exactly the MSM6253 ADC
+    # (b0 bit3) plus the shared driving analog defaults (b1[5:4]=DRIVING) and
+    # the RADM player-port layout (byte 4), where P1_A bit0 is unused and
+    # Light/Wiper sit on bits 1/2 instead of the generic bits 0/1.
+    "radm":     desc(adc=1, analog=ANALOG["DRIVING"],
+                     digital=DIGITAL["RADM"]),
     "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1,
                      gear_toggle=1),
     "spidman":  desc(ppi=1),
@@ -93,7 +101,7 @@ GAMES = {
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
     "alien3", "arescue", "brival", "dbzvrvs", "f1en", "f1lap",
-    "jleague", "jpark", "radm", "sonic", "svf",
+    "jleague", "jpark", "sonic", "svf",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -122,9 +130,24 @@ BUTTONS = {
         "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
     ),
+    # Every driving cabinet gets the shared digital Accelerate/Brake fallbacks
+    # on B1/B2 -- they drive the MSM6253 accelerator and brake channels to full
+    # scale for players without analog pedals.  Naming them here is what makes
+    # them visible and assignable in the MiSTer input menu.
+    #
+    # Rad Mobile's two cabinet switches are the headlight and the wiper
+    # (segas32.cpp INPUT_PORTS_START(radm): BUTTON1 "Light", BUTTON2 "Wiper"),
+    # carried on player-port bits 1/2 and sourced from B3/B4 so they do not
+    # collide with the pedals.  Rad Mobile has no gear selector.
+    "radm": (
+        "Accelerate,Brake,Light,Wiper,-,-,Start,Coin,Test,Service",
+        "A,B,X,Y,Start,Select,R,L",
+    ),
+    # Rad Rally's gear toggle is on B3, matching Slip Stream; this previously
+    # named B1 "Gear Change", which was the accelerator button.
     "radr": (
-        "Gear Change,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
+        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
+        "A,B,X,Start,Select,R,L",
     ),
     "spidman": (
         "Attack,Jump,-,-,-,-,Start,Coin,Test,Service",
@@ -141,7 +164,8 @@ BUTTON_COUNTS = {
     "darkedge": 5,
     "ga2": 2,
     "holo": 2,
-    "radr": 1,
+    "radm": 4,
+    "radr": 3,
     "spidman": 2,
     "slipstrm": 3,
 }

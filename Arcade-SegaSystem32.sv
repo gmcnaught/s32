@@ -172,13 +172,6 @@ localparam CONF_STR = {
     // saved settings.
     "-;",
     "O[28:27],Scale,Normal,V-Integer,HV-Integer;",
-    // VSync phase within vblank, for the HDMI low-latency scaler
-    // (vsync_adjust=2) phase lock.  Early = historical pulse at lines
-    // 234-236; Mid/Late move the pulse toward the end of vblank, delaying
-    // the scaler's output frame start relative to the core's line writes so
-    // the read beam cannot overtake the freshly written top lines.  Display
-    // plumbing only: no game logic consumes VSync, refresh rate unchanged.
-    "O[31:30],VSync Phase,Early,Mid,Late;",
     "-;",
     "R[0],Reset;",
     "J1,B1,B2,B3,B4,B5,B6,Start,Coin,Test,Service;",
@@ -258,7 +251,27 @@ wire is_multi32 = active_board.multi32;
 // v60_exec_ce alternating clk_sys phases, NOT on cpu_ce_inc.  32768 also yields
 // a strictly alternating enable, so no back-to-back clk_sys edge is created on
 // either the exec or the bus side and the exception remains sound.
-wire [15:0] cpu_ce_inc = is_multi32 ? 16'd27127 : 16'd32768;
+//
+// 2026-08-14 -- REVERTED to the per-board rates above.  The uniform 32768
+// pairing argued for above is a source-level consistency argument; it was
+// contradicted by real hardware.  Raising the external bus to clk_sys/2 on the
+// boards that had been running the PCB's literal 16.108 MHz black-screened
+// Golden Axe: The Revenge of Death Adder, Spider-Man and Rad Rally, all three
+// of which ran correctly on the preceding RBF.  Arabian Fight, the one board
+// whose rate did NOT change, kept working; Dark Edge, Holosseum and Slip
+// Stream tolerated the higher rate, so the raise is necessary-but-not-
+// sufficient for the failure and the load-sensitive titles are the ones it
+// breaks (Rad Rally survives its attract loop and dies once gameplay starts).
+//
+// 21848 is the documented board fact (s32_pkg::PCB_V60_CE_INC, PCB_OSC_HZ/2 =
+// 16.108 MHz); 32768 overclocks the external bus by 50%.  Observed hardware
+// behaviour outranks the model-consistency argument, and preserving the
+// hardware-visible cadence is the standing rule.  The Dark Edge countdown
+// deficit that motivated the change is real but must be fixed without
+// overclocking the bus -- it is a separate, still-open item.
+wire [15:0] cpu_ce_inc = active_board.has_v25
+                         ? (active_board.v25_table ? 16'd32768 : 16'd21848)
+                         : (is_multi32 ? 16'd27127 : 16'd21848);
 always @(posedge clk_sys) begin
     logic [16:0] s;
     if (reset) begin
@@ -266,7 +279,9 @@ always @(posedge clk_sys) begin
         acc_cpu <= 16'd0;
     end
     else begin
-        // cpu: 24.158654/48.317307 (V60, = clk_sys/2, tracks v60_exec_ce);
+        // cpu: 16.107950/48.317307 (V60, the PCB's literal bus rate) on every
+        //      board except Arabian Fight, which keeps 24.158654/48.317307
+        //      (= clk_sys/2) for its attract-loop overrun;
         //      20/48.317307 (V70, Multi 32 only)
         s = acc_cpu + {1'b0, cpu_ce_inc};  // base increment * turbo mult (capped)
         ce_cpu <= s[16];
@@ -431,8 +446,14 @@ function automatic [7:0] p_dig(input [31:0] j);
     p_dig = ~{j[1], j[0], j[3], j[2], 1'b0, j[6], j[5], j[4]};
 endfunction
 wire [7:0] p1a_dig = p_dig(joystick_0);
-wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[5],
-                        ~joystick_0[4], 1'b1};
+// Rad Mobile leaves raw player-port bit 0 unused and places its two cabinet
+// switches, Light and Wiper, on bits 1/2.  Drive them from B3/B4 rather than
+// B1/B2: B1/B2 are the shared digital accelerator/brake fallbacks that feed
+// the MSM6253 channels for every driving cabinet, so sourcing Light/Wiper from
+// them made one button do two unrelated things at once.  Rad Mobile now offers
+// the same assignable Accelerate/Brake pair as Rad Rally and Slip Stream.
+wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[7],
+                        ~joystick_0[6], 1'b1};
 wire [7:0] p2a_dig = p_dig(joystick_1);
 // Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
 // momentary switch or four-position encoding.  Keep this semantic independent
@@ -581,6 +602,10 @@ s32_core core (
     // core port constant so standalone verification benches can still test
     // V25 pause semantics without carrying the menu logic into an RBF.
     .pause(1'b0),
+    // Wide V60 instruction fetch, always on (the pre-merge default).  Constant,
+    // so the transport can never change under an in-flight prefetch; no OSD
+    // option is exposed (status bit 29 stays reserved).
+    .fast_v60(1'b1),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(core_p1_req), .sdr_p1_addr(core_p1_addr), .sdr_p1_dout(p1_dout),
@@ -611,7 +636,6 @@ s32_core core (
     .adc_ch(adc_ch),
     .ppi_pa(core_ppi_pa), .ppi_pb(core_ppi_pb), .ppi_pc(core_ppi_pc),
     .rgb_a(rgb_a), .rgb_b(rgb_b),
-    .vs_phase(status[31:30]),
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
     .mode_416_active(mode_416_active),

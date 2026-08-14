@@ -11,7 +11,11 @@ for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
     'FITTER_EFFORT "STANDARD FIT"',
-    "SEED 4",
+    # 2026-08-14: measured on the current STANDARD FIT netlist -- seed 2 closes
+    # timing (worst setup +0.078 ns), seed 4 does not (-0.085 ns on a vendored
+    # sys/osd.v path at the Slow -40C corner).  This assertion previously read
+    # SEED 4, mirroring a stale QSF value rather than a measured result.
+    "SEED 2",
     "ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF",
@@ -37,8 +41,14 @@ assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \
     "Arcade-SegaSystem32.qsf must not retain the retired debug/release macro"
 
 top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
-assert "is_multi32 ? 16'd27127 : 16'd32768" in top, \
-    "uniform System 32 clk_sys/2 game cadence is missing"
+# Arabian Fight keeps the clk_sys/2 bus cadence that fixes its attract-loop
+# overrun, but every other board runs the PCB's literal 16.108 MHz bus rate.
+# The uniform clk_sys/2 cadence asserted here previously black-screened ga2,
+# spidman and radr on real hardware; see the rationale on cpu_ce_inc.
+assert "active_board.v25_table ? 16'd32768 : 16'd21848" in top, \
+    "Arabian Fight's clk_sys/2 cadence, and the PCB rate for other boards, is missing"
+assert "is_multi32 ? 16'd27127 : 16'd21848" in top, \
+    "non-V25 System 32 boards must run the PCB's literal 16.108 MHz bus cadence"
 assert '"O[16:15],CPU Turbo' not in top, \
     "CPU Turbo must not be offered in the merged profile (V60 timing relies on fixed CE)"
 

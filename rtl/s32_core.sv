@@ -75,6 +75,15 @@ module s32_core #(
     // its own clk_v25-domain CE generator, so it must be told separately or
     // it keeps running against a frozen V60 (mailbox tear on ga2/arabfgt).
     input             pause,
+    // Wide instruction-fetch enable, stable from reset in the production top.
+    // Selects the ROM icache's dedicated 8-byte fetch port for V60 prefetch;
+    // the physical V60 data/I-O bus remains on ce_cpu.  Removing this in the
+    // 2026-08-14 profile merge routed every prefetch through the shared
+    // ce-gated 16-bit adapter, multiplying V60 p0 SDRAM traffic and starving
+    // the tile renderer's p1 port on its ~10% scanline-budget margin
+    // (measured: arabfgt water rows 51-53 dropped to the stale line buffer on
+    // 19/448 captured frames).  Restored 2026-08-14.
+    input             fast_v60,
     // SDRAM ports (to sdram.sv in emu top)
     output            sdr_p0_req,
     output            sdr_p0_burst,
@@ -153,9 +162,6 @@ module s32_core #(
     // video out (screen A; screen B via second mixer on M32)
     output     [23:0] rgb_a,
     output     [23:0] rgb_b,
-    // VSync pulse placement inside vblank (0=early/historical, 1=mid,
-    // 2=late).  Only the display/scaler interface observes VSync.
-    input       [1:0] vs_phase,
     output            ce_pix,
     output            hs, vs, hb, vb,
     output            mode_416_active,
@@ -231,11 +237,39 @@ wire        wr_stb;
 wire        irq_n;
 wire [7:0]  irq_vector;
 
-// Instruction fetch always uses the PCB path: prefetches share the ce-gated
-// 16-bit bus adapter with data accesses, exactly as the real 315-5325 bus
-// controller sequences them.  The dedicated wide instruction-fetch transport
-// that used to be selectable here ("V60 Fetch: Fast") has been removed.
-//
+// dedicated wide instruction-fetch port (FAST_IFETCH): the prefetch reads whole
+// 8-byte ROM icache lines here at clk_sys latency, bypassing the ce-gated 16-bit
+// data adapter that otherwise bottlenecks fetch bandwidth.  RESTORED 2026-08-14:
+// the profile merge removed this transport, which multiplied V60 p0 SDRAM
+// transactions and starved the tile renderer's p1 port (see the fast_v60 port
+// comment above for the measured arabfgt evidence).
+wire        if_req;
+wire [23:0] if_addr;                 // frontier byte address (low 3 bits = intra-line
+                                    // offset used to pre-align the returned line)
+`ifdef S32_AREA_ROM_CACHE
+wire [63:0] if_data;
+wire        if_served;
+`else
+// The general fallback cache is data-only; without a wide-port server the
+// V60 must never issue if_ requests, so FAST_IFETCH is forced off below and
+// these are inert constants rather than undriven regs.
+wire [63:0] if_data   = 64'd0;
+wire        if_served = 1'b0;
+`endif
+                                    // held while a fetch result is presented
+wire        if_ack = if_served;     // held (not pulsed) so the ce-gated CPU never
+                                    // misses it between its enable ticks
+
+// Compile the wide-fetch transport into production. fast_v60 selects it at
+// runtime only after reset; the fallback (non-area-cache) configuration has no
+// wide-port server, so it hard-disables the capability.
+`ifndef FAST_IFETCH_EN
+ `ifdef S32_AREA_ROM_CACHE
+  `define FAST_IFETCH_EN 1'b1
+ `else
+  `define FAST_IFETCH_EN 1'b0
+ `endif
+`endif
 // The PCB clocks the V60 at 16.108 MHz, but the processor overlaps its
 // decode/EA/execute units while the external BCU continues to issue minimum
 // three-clock bus cycles.  Our single-FSM implementation has no independent
@@ -248,8 +282,10 @@ s32_v60_exec_cadence v60_cadence (
     .clk(clk_sys), .rst(rst), .pause(pause), .ce(v60_exec_ce)
 );
 
-s32_v60 #(.START_PC(32'hFFFFFFF0)) v60 (   // MAME reset PC (audit R20 V60-21)
+s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
+    .fast_ifetch(fast_v60),
+    .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
@@ -400,7 +436,6 @@ wire vbl_start, vbl_end;
 wire [8:0] hcnt, vcnt;
 s32_video crt (
     .clk(clk_sys), .rst(video_rst), .mode_416(mode_416),
-    .vs_phase(vs_phase),
     .mode_active(mode_416_active),
     .ce_pix(ce_pix), .hcnt(hcnt), .vcnt(vcnt),
     .hblank(hb), .vblank(vb), .hsync(hs), .vsync(vs),
@@ -1169,13 +1204,14 @@ s32_ga_rom_cache ga_rom_cache (
     .clk(clk_sys),
     .rst(rst),
     .invalidate(1'b0),
-    // The wide instruction-fetch port is unused: every V60 fetch goes through the
-    // shared PCB bus (data_*).  The module keeps the port for its own unit tests.
-    .if_req(1'b0),
-    .if_line_addr(18'd0),
-    .if_offset(3'd0),
-    .if_data(),
-    .if_ack(),
+    // Wide instruction-fetch client (V60 prefetch).  The F0-window mirror maps
+    // onto the first megabyte exactly as the data port does below.
+    .if_req(if_req),
+    .if_line_addr((if_addr[23:20] == 4'hf)
+                  ? {1'b0, if_addr[19:3]} : if_addr[20:3]),
+    .if_offset(if_addr[2:0]),
+    .if_data(if_data),
+    .if_ack(if_served),
     .data_req(m_req && !m_we && (sel_rom || sel_romhi) && !ack_r),
     .data_addr(sel_romhi ? {1'b0, A[19:0]} : A[20:0]),
     .data_data(rom_word_r),

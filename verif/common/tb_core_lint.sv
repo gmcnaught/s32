@@ -13,7 +13,7 @@ module tb_core_lint;
     end
     s32_core core (
         .clk_sys(1'b0), .clk_ram(1'b0), .rst(1'b1), .video_rst(1'b1), .board(bd),
-        .ce_cpu(1'b0), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0),
+        .ce_cpu(1'b0), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(1'b0),
         .sdr_p0_dout(64'h0), .sdr_p0_ack(1'b0),
         .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b0),
         .sdr_p2_dout(128'h0), .sdr_p2_ack(1'b0),
@@ -27,7 +27,7 @@ module tb_core_lint;
         .eep_upload(1'b0), .eep_modified(),
         .in_p1a(8'hff), .in_p2a(8'hff), .in_portc(8'hff), .in_svc12(8'hff), .in_svc34(8'hff),
         .in_p1b(8'hff), .in_p2b(8'hff), .in_portc_b(8'hff), .in_svc12_b(8'hff), .in_svc34_b(8'hff),
-        .adc_ch(adc), .vs_phase(2'b00),
+        .adc_ch(adc),
         .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff)
     );
 

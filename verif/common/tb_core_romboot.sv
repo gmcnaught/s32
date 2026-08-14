@@ -600,6 +600,12 @@ always @(posedge clk_sys) begin
 end
 `endif
 
+// +FASTV60 selects the production wide instruction-fetch transport for a
+// boot run; default keeps the shared-bus PCB path so both transports can be
+// A/B'd against the same ROM image.
+reg        test_fast_v60 = 1'b0;
+initial test_fast_v60 = $test$plusargs("FASTV60");
+
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
 `ifdef S32_UNIVERSAL
@@ -607,6 +613,7 @@ s32_core core (
 `endif
     .rst(rst), .video_rst(rst), .board(board),
     .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm), .pause(1'b0),
+    .fast_v60(test_fast_v60),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(p1_req), .sdr_p1_addr(p1_addr), .sdr_p1_dout(p1_dout), .sdr_p1_ack(p1_ack),
@@ -631,7 +638,7 @@ s32_core core (
     .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adc_a),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
-    .rgb_a(rgb_a), .rgb_b(), .vs_phase(2'b00), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
+    .rgb_a(rgb_a), .rgb_b(), .ce_pix(ce_pix), .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(audio_l), .audio_r(audio_r), .out_lamps()
 );
 

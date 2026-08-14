@@ -23,7 +23,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("holo", GAMES)
         self.assertIn("spidman", GAMES)
         self.assertIn("slipstrm", GAMES)
-        for promoted in ("darkedge", "radr"):
+        for promoted in ("darkedge", "radm", "radr"):
             self.assertIn(promoted, GAMES)
         for path in MRA_DIR.glob("*.mra"):
             root = ElementTree.parse(path).getroot()
@@ -91,20 +91,30 @@ class GlobalProfileContractTests(unittest.TestCase):
             self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
             self.assertIn('VERILOG_MACRO "S32_SYSTEM32_ONLY=1"', text)
 
-    def test_v60_fetch_uses_only_the_physical_pcb_bus(self) -> None:
-        """The optional wide "V60 Fetch: Fast" transport is fully removed."""
+    def test_v60_wide_fetch_is_always_on_with_no_osd_option(self) -> None:
+        """The wide instruction-fetch transport is present and hardwired on.
+
+        Its 2026-08-14 removal routed every V60 prefetch through the shared
+        ce-gated 16-bit bus, multiplying p0 SDRAM traffic and starving the
+        tile renderer's p1 port on its ~10% scanline margin (measured:
+        arabfgt water lines 51-53 displayed the stale line buffer on 19/448
+        captured frames).  It is restored as a fixed capability: no OSD
+        toggle, status[29] stays reserved, fast_v60 tied 1 in the top.
+        """
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         cpu = (ROOT / "rtl/cpu/v60/s32_v60.sv").read_text(encoding="utf-8")
-        # No OSD entry, no status bit consumer, no core/CPU plumbing.
+        # Hardwired on in the top; no OSD entry, no status-bit consumer.
+        self.assertIn(".fast_v60(1'b1)", top)
         self.assertNotIn("O[29],V60 Fetch", top)
-        self.assertNotIn("fast_v60", top)
         # status[29] survives only in the reserved-bit comment, never as logic.
         self.assertNotIn("status[29]", top.replace("status[29] is RESERVED", ""))
-        self.assertNotIn("fast_v60", core)
-        self.assertNotIn("FAST_IFETCH", core)
-        self.assertNotIn("FAST_IFETCH", cpu)
-        self.assertNotIn("fast_ifetch", cpu)
+        # Core and CPU plumbing present, compiled in for production.
+        self.assertIn("input             fast_v60", core)
+        self.assertIn(".FAST_IFETCH(`FAST_IFETCH_EN)", core)
+        self.assertIn(".if_req(if_req)", core)
+        self.assertIn("parameter        FAST_IFETCH = 1'b0", cpu)
+        self.assertIn("use_fast_ifetch = FAST_IFETCH && fast_ifetch && fetch_is_rom", cpu)
         # status[29] stays allocated so later options keep their meaning.
         self.assertIn("status[29] is RESERVED", top)
         self.assertIn("O[28:27],Scale,Normal,V-Integer,HV-Integer;", top)
@@ -359,7 +369,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertNotIn("jpark", text)
         self.assertNotIn("sonic", text)
         self.assertIn("spidman", text)
-        self.assertNotIn("radm)", text)
+        self.assertIn("radm", text)
 
 
 if __name__ == "__main__":

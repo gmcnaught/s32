@@ -15,6 +15,14 @@ module tb_core_boot;
 
 import s32_pkg::*;
 
+// Opt-in wide-fetch coverage: +define+S32_TEST_FAST_V60 exercises the
+// dedicated instruction port; the default keeps the shared-bus PCB path.
+`ifdef S32_TEST_FAST_V60
+localparam TEST_FAST_V60 = 1'b1;
+`else
+localparam TEST_FAST_V60 = 1'b0;
+`endif
+
 reg clk_sys = 0, clk_ram = 0, rst = 1;
 always #10.3 clk_sys = ~clk_sys;
 always #5.15 clk_ram = ~clk_ram;
@@ -59,7 +67,7 @@ end
 
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram), .rst(rst), .video_rst(rst), .board(board),
-    .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0),
+    .ce_cpu(ce_cpu), .ce_z80(1'b0), .ce_fm(1'b0), .ce_pcm(1'b0), .pause(1'b0), .fast_v60(TEST_FAST_V60),
     .sdr_p0_req(p0_req), .sdr_p0_burst(p0_burst), .sdr_p0_addr(p0_addr),
     .sdr_p0_dout(p0_dout), .sdr_p0_ack(p0_ack),
     .sdr_p1_req(), .sdr_p1_addr(), .sdr_p1_dout(64'h0), .sdr_p1_ack(1'b0),
@@ -83,7 +91,7 @@ s32_core core (
     .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adcz),
     .ppi_pa(8'hff), .ppi_pb(8'hff), .ppi_pc(8'hff),
-    .rgb_a(rgb_a), .rgb_b(rgb_b), .vs_phase(2'b00), .ce_pix(ce_pix),
+    .rgb_a(rgb_a), .rgb_b(rgb_b), .ce_pix(ce_pix),
     .hs(hs), .vs(vs), .hb(hb), .vb(vb),
     .audio_l(), .audio_r(),
     .out_lamps()

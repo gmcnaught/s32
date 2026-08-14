@@ -68,6 +68,7 @@ The following table is the complete set exposed by the tracked MRAs in
 | Dark Edge | Japan (`darkedgej`), World (`darkedge`) | Standard | `Arcade-SegaSystem32.rbf` |
 | Golden Axe: The Revenge of Death Adder | Japan (`ga2j`), US, Rev A (`ga2u`), World, Rev B (`ga2`) | Universal / real V25 descriptor path | `Arcade-SegaSystem32.rbf` |
 | Holosseum | US, Rev A (`holo`) | Standard | `Arcade-SegaSystem32.rbf` |
+| Rad Mobile | US (`radmu`), World (`radm`) | Standard | `Arcade-SegaSystem32.rbf` |
 | Rad Rally | Japan (`radrj`), US (`radru`), World (`radr`) | Standard | `Arcade-SegaSystem32.rbf` |
 | Slip Stream | Brazil 950515 (`slipstrm`), Hispanic 950515 (`slipstrmh`) | Standard | `Arcade-SegaSystem32.rbf` |
 | Spider-Man: The Videogame | Japan (`spidmanj`), US, Rev A (`spidmanu`), World (`spidman`) | Standard | `Arcade-SegaSystem32.rbf` |
