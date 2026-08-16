@@ -289,6 +289,13 @@ HLE titles).
   descriptor, reuses the existing communication RAM, and passes focused map
   plus byte/wide ROM-loader tests. Full-core radr attract verification now
   passes the screenshot gate at frame 360 in the retained 420-frame run.
+- 2026-08-16 direct-CRT timing audit: the production `s32_video.sv` path keeps
+  416-mode lines at exactly 3,072 `clk_sys` cycles and 320-mode lines at
+  exactly 3,075 cycles, with stable raw HSync pulse widths of 192/240 cycles.
+  This preserves the earlier hardware-informed fix for consumer-CRT wobble
+  caused by non-repeating NCO line cadence. `tb_video_mode` now measures both
+  line periods and pulse-width stability. Focused strict headless Verilator
+  validation passed; no Quartus build, RBF, or physical CRT test was run here.
 
 ## Current goal acceptance scope (2026-08-02)
 
