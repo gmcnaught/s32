@@ -698,15 +698,20 @@ try {
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")
 
-    Write-Tier 35 "Slip Stream right-stick pedals and digital fallbacks"
+    Write-Tier 35 "direct positional wheel, right-stick pedals, and digital fallbacks"
     Run-HdlTest "t35_driving_controls" "tb_driving_controls" @(
         "rtl/io/s32_driving_controls.sv", "verif/common/tb_driving_controls.sv"
-    ) "PASS: Slip Stream driving controls"
+    ) "PASS: System 32 driving controls"
 
     Write-Tier 36 "Dark Edge protection contract"
     Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"
     ) "DARK EDGE HLE PASS"
+
+    Write-Tier 36 "J.League protection contract"
+    Run-HdlTest "t36_jleague_hle" "tb_jleague_hle" @(
+        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_jleague_hle.sv"
+    ) "J.LEAGUE HLE PASS"
 
     Write-Tier 37 "MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
     Run-HdlTest "t37_radm_msm6253" "tb_radm_msm6253" @(
@@ -743,7 +748,7 @@ try {
     foreach ($line in $v25sOutput) { Write-RunLine $line }
     Assert-Marker $v25sOutput "V25_SDRAM RUNNER: PASS" "real V25 + production SDRAM integration"
 
-    Write-RunLine "`nSYSTEM 32 REGRESSION: PASS (41/41 tiers)"
+    Write-RunLine "`nSYSTEM 32 REGRESSION: PASS (42/42 tiers)"
     Write-RunLine "Detailed log: $LogPath"
     $Completed = $true
 }

@@ -2,6 +2,25 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-17: direct positional driving wheel
+
+Rad Mobile hardware testing reported that continuous left-stick sweeps could
+pause at arbitrary intermediate steering positions until the stick moved
+again. Rad Mobile, Rad Rally, and Slip Stream use the MSM6253 `ANALOG1` paddle
+for steering, and pinned MAME 0.289 defines the same `0x80`-centred,
+`0x00..0xff` Paddle for Rad Mobile and Rad Rally. The universal top inserted a
+stateful low-rate IIR (`wheel_sm`) between MiSTer's current left-stick X report
+and the ADC even though a positional wheel requires the current coordinate.
+
+The established signed-to-offset conversion and centred subtractive deadzone
+now feed MSM6253 channel 1 combinationally. The IIR register, divider, update
+tick, and their retained intermediate coordinate are removed. This shared
+change applies to every `ANALOG_DRIVING` descriptor; ADC serialization, channel
+order, pedal mapping, player-port buttons, clocks, resets, and constraints are
+unchanged. `tb_driving_controls` sweeps all 255 valid signed stick coordinates,
+checks exact monotonic output, reverses directly between intermediate left and
+right positions, and requires an immediate return to centre.
+
 ## 2026-08-17: Rad Mobile moving-controller response
 
 Rad Mobile's Deluxe cabinet uses the 837-7753 moving controller over the first
@@ -72,9 +91,10 @@ also removed from the source manifest and core integration. Rad Rally's
 descriptor-selected behavioral link responder remains authoritative and its
 MRAs no longer download unused diagnostic firmware planes.
 
-The production protection RTL now contains only the Dark Edge sequence and the
-descriptor-selected real V25 path. Dormant and excluded-title responders are
-not synthesized; reserved descriptor values resolve to no action.
+The production protection RTL now contains the Dark Edge sequence, the
+descriptor-selected J.League write hook, and the descriptor-selected real V25
+path. Dormant and excluded-title responders are not synthesized; reserved
+descriptor values resolve to no action.
 
 These changes are estimated to save roughly 64 RAM blocks from RF wave memory,
 plus any resources formerly retained by the disabled diagnostic shadow. The
@@ -235,15 +255,25 @@ macro after a specific game.
   `arabfgt` (descriptor-selected real V25).
 - No production image supports Multi 32 sets.
 
+## 2026-08-17: Super Visual Football family restored
+
+The universal profile now emits the five standard-board football sets `svf`,
+`svfo`, `svs`, `jleague`, and `jleagueo`. All use the `svf` two-player,
+8-way/three-button input layout; the MRA labels are Shoot, Pass-A, and Pass-B.
+The two J.League sets select `PROT_JLEAGUE` in descriptor byte 2 because MAME's
+`init_jleague` installs the `0x20f700-0x20f705` protection write handler. The
+European and Soccer sets retain `PROT_NONE`.
+
+The production RBF remains `Arcade-SegaSystem32.rbf`; this is a descriptor and
+shared protection-path extension, not a new Quartus revision or game macro.
+
 ## User-requested exclusions (2026-08-03)
 
 The following parents/sets are intentionally ignored and must not be emitted
 as MRAs, staged by the active profile sweep, or treated as supported in future
 profile work: `alien3`, `arescue`, `brival`, `dbzvrvs`, `f1en`, `f1lap`,
-`jleague`, `jleagueo`, `jpark`, `sonic`, `svf`, and `svfo`. Local private media
-and historical captures may remain on disk; they are outside the production
-profile. The `svs` North American clone is also excluded through its `svf`
-parent.
+`jpark`, and `sonic`. Local private media and historical captures may remain
+on disk; they are outside the production profile.
 
 ## Source of truth
 
@@ -262,7 +292,7 @@ timing and never selects a game or RBF.
 | Feature/change | `Arcade-SegaSystem32` |
 |---|---:|---:|
 | Shared V60, video, sprite, audio, I/O, loader, and dedicated V60 ROM cache | yes |
-| MSM6253 driving ADC, PPI, and Dark Edge protection | descriptor-driven |
+| MSM6253 driving ADC, PPI, Dark Edge, and J.League protection | descriptor-driven |
 | Rad Rally communication HLE | descriptor-driven |
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_V25_HW=1`), enabled by `has_v25` |
 | V25 table/cadence selection | descriptor-driven (`v25_table`) |

@@ -19,6 +19,10 @@ reg         data_req = 1'b0;
 reg  [20:0] data_addr = 21'd0;
 wire [15:0] data_data;
 wire        data_ack;
+reg         prot_req = 1'b0;
+reg  [20:0] prot_addr = 21'd0;
+wire [15:0] prot_data;
+wire        prot_ack;
 wire        rom_req;
 wire        rom_burst;
 wire [23:1] rom_addr;
@@ -54,6 +58,10 @@ s32_ga_rom_cache #(.INDEX_BITS(CACHE_INDEX_BITS)) dut (
     .data_addr(data_addr),
     .data_data(data_data),
     .data_ack(data_ack),
+    .prot_req(prot_req),
+    .prot_addr(prot_addr),
+    .prot_data(prot_data),
+    .prot_ack(prot_ack),
     .rom_req(rom_req),
     .rom_burst(rom_burst),
     .rom_addr(rom_addr),
@@ -83,6 +91,52 @@ task automatic fail(input string message);
 begin
     $display("ERROR @ %0t: %s", $time, message);
     errors = errors + 1;
+end
+endtask
+
+task automatic read_prot(
+    input [17:0] line_addr,
+    input  [1:0] word_sel,
+    input integer expected_rom_requests
+);
+integer req_start;
+integer timeout;
+reg [63:0] expected_line;
+reg [15:0] expected_word;
+begin
+    req_start = rom_request_count;
+    expected_line = reference_line(line_addr);
+    case (word_sel)
+        2'd0: expected_word = expected_line[15:0];
+        2'd1: expected_word = expected_line[31:16];
+        2'd2: expected_word = expected_line[47:32];
+        default: expected_word = expected_line[63:48];
+    endcase
+    @(negedge clk);
+    prot_addr = {line_addr, 3'b000} | {17'd0, word_sel, 1'b0};
+    prot_req = 1'b1;
+    timeout = 0;
+    while (!prot_ack && timeout < 80) begin
+        @(negedge clk);
+        timeout = timeout + 1;
+    end
+    if (!prot_ack)
+        fail("protection table lookup timed out");
+    else if (prot_data !== expected_word)
+        fail($sformatf("protection table word %04x, expected %04x",
+                       prot_data, expected_word));
+    if ((rom_request_count - req_start) != expected_rom_requests)
+        fail($sformatf("protection lookup made %0d ROM requests, expected %0d",
+                       rom_request_count-req_start, expected_rom_requests));
+    repeat (2) begin
+        @(negedge clk);
+        if (!prot_ack)
+            fail("protection acknowledge was not held while request remained asserted");
+    end
+    prot_req = 1'b0;
+    @(negedge clk);
+    if (prot_ack)
+        fail("protection acknowledge did not clear after request dropped");
 end
 endtask
 
@@ -270,6 +324,9 @@ initial begin : run_tests
 
     // The single shared lookup port also serves V60 data reads from the line.
     read_data(line_a, 2'd2, 0);
+    // J.League's protection table uses the same cache client and must hit the
+    // already resident line without issuing a second SDRAM burst.
+    read_prot(line_a, 2'd1, 0);
 
     // Direct-map aliasing must miss, replace, and then miss again on the old tag.
     fetch_line(line_b, 3'd1, 1);

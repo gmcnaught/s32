@@ -492,57 +492,29 @@ wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
 wire [7:0] core_p2a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
                        p2a_dig;
 
-// The retained analog titles are driving cabinets. Convert MiSTer's signed
-// left-stick X axis to the MSM6253 wheel coordinate, preserve the established
-// centered deadzone, and smooth it at the existing low-rate update cadence.
-localparam signed [8:0] WHEEL_DZ = 9'sd6;
-function automatic [7:0] wheel_deadzone(input [7:0] raw);
-    logic [7:0] v;
-    logic signed [8:0] d;
-    begin
-        v = raw ^ 8'h80;
-        d = $signed({1'b0, v}) - 9'sd128;
-        if (d <= WHEEL_DZ && d >= -WHEEL_DZ) wheel_deadzone = 8'h80;
-        else if (d > 0)                      wheel_deadzone = 8'd128 + (d - WHEEL_DZ);
-        else                                 wheel_deadzone = 8'd128 + (d + WHEEL_DZ);
-    end
-endfunction
-
-reg [7:0] wheel_sm = 8'h80;
-reg [15:0] wheel_div = 16'd0;
-wire wheel_tick = (wheel_div == 16'd0);
-always @(posedge clk_sys) begin
-    logic [7:0] tgt;
-    logic signed [9:0] err;
-    wheel_div <= wheel_div + 1'b1;
-    tgt = wheel_deadzone(joystick_l_analog_0[7:0]);
-    if (reset)
-        wheel_sm <= 8'h80;
-    else if (wheel_tick) begin
-        err = $signed({2'b00, tgt}) - $signed({2'b00, wheel_sm});
-        if (err >= -10'sd3 && err <= 10'sd3) wheel_sm <= tgt;
-        else                                  wheel_sm <= wheel_sm + (err >>> 2);
-    end
-end
-
 wire [7:0] adc_ch [0:7];
 // MiSTer reports each analog-stick axis as signed -128..+127. Split the right
 // stick's vertical axis into independent, released-at-zero pedals: up is
 // accelerator and down is brake. Saturating magnitude 127/128 to 255 lets
 // both directions reach the cabinet ADC endpoint without a multiplier.
+wire [7:0] driving_wheel;
 wire [7:0] driving_accel;
 wire [7:0] driving_brake;
 s32_driving_controls driving_controls (
-    .right_analog(joystick_r_analog_0),
+    .left_x(joystick_l_analog_0[7:0]),
+    .right_y(joystick_r_analog_0[15:8]),
     .digital_accel(joystick_0[4]),
     .digital_brake(joystick_0[5]),
+    .wheel(driving_wheel),
     .accel(driving_accel),
     .brake(driving_brake)
 );
 // Driving cabinets wire the wheel, accelerator, and brake to the first three
 // MSM6253 channels. MiSTer's left-stick X is the wheel; right-stick up/down
-// are the analog pedals, with A/B as full-scale digital fallbacks.
-assign adc_ch[0] = wheel_sm;
+// are the analog pedals, with A/B as full-scale digital fallbacks. The wheel
+// follows the current deadzoned stick coordinate directly; retaining an IIR
+// history here made continuous sweeps pause at stale intermediate positions.
+assign adc_ch[0] = driving_wheel;
 assign adc_ch[1] = driving_accel;
 assign adc_ch[2] = driving_brake;
 assign adc_ch[3] = 8'hff;

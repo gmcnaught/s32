@@ -27,6 +27,11 @@ class BoardDescriptorTests(unittest.TestCase):
         # bit0 unused and puts Light/Wiper on bits 1/2 (DIGITAL_RADM = 1).
         self.assertEqual(GAMES["radm"][4], 0x01)
 
+    def test_football_family_uses_standard_board_and_jleague_protection(self) -> None:
+        self.assertEqual(GAMES["svf"][:3], bytes.fromhex("000000"))
+        self.assertEqual(GAMES["jleague"][:3], bytes.fromhex("000006"))
+        self.assertEqual(GAMES["jleagueo"][:3], bytes.fromhex("000006"))
+
     def test_every_supported_four_player_parent_selects_the_ppi(self) -> None:
         # b0[5] is the descriptor's i8255-present flag.  Keep this list
         # explicit: Arabian Fight and Golden Axe II use the same 4-player
@@ -122,6 +127,14 @@ class ButtonMetadataTests(unittest.TestCase):
         self.assertEqual(defaults.split(","),
                          ["A", "B", "X", "Start", "Select", "R", "L"])
 
+    def test_football_controls_are_named_and_mapped_as_three_buttons(self) -> None:
+        names, defaults = BUTTONS["svf"]
+        self.assertEqual(names.split(","),
+                         ["Shoot", "Pass-A", "Pass-B", "-", "-", "-",
+                          "Start", "Coin", "Test", "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "X", "Start", "Select", "R", "L"])
+
 
 class EepromArchiveSourceTests(unittest.TestCase):
     def generate_radr(self, setname: str, parent: str) -> ElementTree.Element:
@@ -173,6 +186,26 @@ class EepromArchiveSourceTests(unittest.TestCase):
 
 
 class OptimizedLayoutTests(unittest.TestCase):
+    def test_football_variants_have_the_parent_and_descriptor_split(self) -> None:
+        expected = {
+            "svf": ("Super Visual Football European Sega Cup (Rev A).mra", 0x00),
+            "svfo": ("Super Visual Football European Sega Cup.mra", 0x00),
+            "svs": ("Super Visual Soccer Sega Cup (US, Rev A).mra", 0x00),
+            "jleague": ("The J.League 1994 (Japan, Rev A).mra", 0x06),
+            "jleagueo": ("The J.League 1994 (Japan).mra", 0x06),
+        }
+        mra_dir = Path(__file__).parents[1] / "mra"
+        for setname, (filename, prot) in expected.items():
+            with self.subTest(setname=setname):
+                root = ElementTree.parse(mra_dir / filename).getroot()
+                self.assertEqual(root.findtext("setname"), setname)
+                if setname != "svf":
+                    self.assertEqual(root.findtext("parent"), "svf")
+                self.assertEqual(root.find("buttons").attrib["names"],
+                                 BUTTONS["svf"][0])
+                descriptor = bytes.fromhex(root.findall("rom")[-1].findtext("part", ""))
+                self.assertEqual(descriptor[2], prot)
+
     def test_every_supported_mra_declares_persistent_score_storage(self) -> None:
         """Every supported variant must expose the EEPROM to MiSTer NVRAM.
 
@@ -186,7 +219,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             Path(__file__).parents[1] / "releases",
         ):
             paths = sorted(mra_dir.glob("*.mra"))
-            self.assertEqual(len(paths), 19, str(mra_dir))
+            self.assertEqual(len(paths), 24, str(mra_dir))
             for path in paths:
                 root = ElementTree.parse(path).getroot()
                 self.assertEqual(len(root.findall("nvram")), 1, path.name)
@@ -199,7 +232,7 @@ class OptimizedLayoutTests(unittest.TestCase):
         paths = sorted(mra_dir.glob("*.mra"))
         # Air Rescue is intentionally excluded because its second PCB is not
         # part of the production core.
-        self.assertEqual(len(paths), 19)
+        self.assertEqual(len(paths), 24)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")

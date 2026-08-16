@@ -17,7 +17,6 @@ class GlobalProfileContractTests(unittest.TestCase):
             "alien3", "brival", "jpark", "sonic", "sonicp",
             "kokoroj", "kokoroj2",
             "dbzvrvs", "f1en", "f1lap",
-            "jleague", "jleagueo", "svf", "svfo",
         }
         self.assertTrue(removed.isdisjoint(GAMES))
         self.assertIn("holo", GAMES)
@@ -335,7 +334,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         controls = (ROOT / "rtl/io/s32_driving_controls.sv").read_text(
             encoding="utf-8")
         self.assertIn(".joystick_r_analog_0(joystick_r_analog_0)", text)
-        self.assertIn(".right_analog(joystick_r_analog_0)", text)
+        self.assertIn(".right_y(joystick_r_analog_0[15:8])", text)
         self.assertIn("stick_y < 0", controls)
         self.assertIn("stick_y > 0", controls)
         self.assertIn("digital_accel ? 8'hff", controls)
@@ -350,6 +349,17 @@ class GlobalProfileContractTests(unittest.TestCase):
             "active_board.digital_profile == DIGITAL_RADM) ? radm_p1a",
             text,
         )
+
+    def test_driving_wheel_has_no_stateful_intermediate_position(self) -> None:
+        text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
+        controls = (ROOT / "rtl/io/s32_driving_controls.sv").read_text(
+            encoding="utf-8")
+        self.assertIn(".left_x(joystick_l_analog_0[7:0])", text)
+        self.assertIn(".right_y(joystick_r_analog_0[15:8])", text)
+        self.assertIn("assign adc_ch[0] = driving_wheel", text)
+        self.assertIn("assign wheel = wheel_deadzone(left_x)", controls)
+        for stale_state in ("wheel_sm", "wheel_div", "wheel_tick"):
+            self.assertNotIn(stale_state, text)
 
     def test_standard_shape_retains_descriptor_gated_adc(self) -> None:
         text = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")

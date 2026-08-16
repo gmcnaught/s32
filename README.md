@@ -1,208 +1,131 @@
 # Sega System 32 for MiSTer FPGA
 
-Sega System 32 arcade core for the MiSTer DE10-Nano. The target is the
-standard single-screen System 32 board, using the MiSTer SDRAM expansion and
-DDR3 framebuffer path where required.
+MiSTer FPGA core for Sega's standard single-screen System 32 arcade board
+(837-7428 / 171-5964E). It targets the DE10-Nano with SDRAM and uses one
+universal `Arcade-SegaSystem32.rbf`; each MRA selects the required game
+hardware, including the real NEC V25 path for Arabian Fight and Golden Axe II.
 
-This repository contains source code, build scripts, verification, and MRA
-metadata. Commercial arcade ROMs are not included. Multi 32 and AS-1 are not
-supported or emitted by the production profile.
-
-| Item | Value |
-| --- | --- |
-| Core title | Sega System 32 |
-| Target hardware | MiSTer DE10-Nano, Cyclone V, SDRAM expansion |
-| Original board | Sega System 32 standard single-screen PCB, 837-7428 / 171-5964E |
-| Production RBF | `Arcade-SegaSystem32.rbf` |
-| Toolchain | Quartus Prime 17.0.2 Build 602 |
-
-## Profiles
-
-The repository has one universal production profile. Game differences are
-selected by the MRA descriptor; no game-specific production macro is used.
-
-| Profile | Production macros | Games | RBF |
-| --- | --- | --- | --- |
-| `Arcade-SegaSystem32` | `S32_PROFILE_STANDARD=1`, `S32_GAME_ONLY_STD=1`, `S32_UNIVERSAL=1`, `S32_V25_HW=1` | All supported parents; descriptors select the real V25 for `ga2`/`arabfgt` | `Arcade-SegaSystem32.rbf` |
+Commercial ROMs are not included. Multi 32 and AS-1 hardware are not supported.
 
 ## Features in the OSD
 
-| Option | Choices / function |
-| --- | --- |
-| Aspect ratio | Original, Full Screen |
-| Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
-| Scale | Normal, V-Integer, HV-Integer |
-| CRT Adjust | On/Off, horizontal size, horizontal position, vertical shift; direct-video/15 kHz path |
-| High-score saving | Persistent 128-byte 93C46 EEPROM/NVRAM for every supported MRA variant |
-| Service Mode | Off, On |
-| Reset | Resets the running core |
-
-The core reports the original arcade monitor as 4:3 by default; MiSTer's
-standard aspect choices and integer scaling modes remain available. Game
-controls are remappable through MiSTer input settings; each MRA declares the
-button labels and defaults for its game. All 19 supported variants declare the
-index-3 128-byte NVRAM image used by the 93C46 score/settings storage; the
-loader and EEPROM model preserve it across reset and MiSTer uploads.
+- Original 4:3 or full-screen aspect ratio
+- Normal, vertical-integer, or full-integer scaling
+- Optional CRT 25%, 50%, and 75% scandoubler effects
+- CRT horizontal size/position and vertical-shift controls for 15 kHz output
+- Persistent 128-byte 93C46 high-score/settings storage
+- Service mode and reset
+- Per-game remappable controls defined by each MRA
 
 ## PCB Accuracy
 
-This table is limited to board facts supported by the official System 32
-schematic set or silicon reverse-engineering evidence. It documents the
-hardware boundary and chip roles, not a universal cycle-accurate claim. The
-[PCB evidence ledger](docs/pcb/system32_evidence.json) records the remaining
-open timing, analogue, PLD, and protection measurements.
+This table lists only areas supported by schematics or silicon evidence. It
+defines the implemented hardware boundary, not a blanket cycle-accuracy claim.
+Open timing, analogue, PLD, and protection questions are tracked in the
+[PCB evidence ledger](docs/pcb/system32_evidence.json).
 
-| PCB area | Evidence | Core boundary |
+| Area | Evidence | Core implementation |
 | --- | --- | --- |
-| Board identity and clock plan | Sega schematic set 171-5964D / 171-5965C, source scan credited to Nemesis1207 and transcribed in [the reference record](docs/references.md) | Standard single-screen 837-7428 / 171-5964E profile; nominal V60, Z80/YM3438, and PCM clock domains |
-| Main CPU and system controller | Official schematics, sheet 1, documented in [the reference record](docs/references.md) | 16-bit V60 external data bus, 24-bit address bus, mapped controller, interrupt, and timer interfaces |
-| Scroll hardware | Official schematics, sheet 2; chip role identified as 315-5387 | Four tilemap layers and dual-port video RAM in [`s32_tilemap.sv`](rtl/video/s32_tilemap.sv) |
-| Object and frame memory | Official schematics, sheets 3–4; object chip identified as 315-5386 and separate double-buffered frame memory | Sprite/object list processing and framebuffer service in [`s32_sprite.sv`](rtl/video/s32_sprite.sv) |
-| Color, priority, and video output | Official schematics, sheet 5; 315-5242/OKI M71064 silicon evidence in [SiliconRE](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242) | Digital palette, priority, mixing, shadow/highlight, and RGB output boundary |
-| I/O, EEPROM, and sound board inventory | Official schematics, sheets 6–8; EEPROM pin wiring and audio parts are transcribed in [the reference record](docs/references.md) | 315-5296 I/O, BR93C46 serial storage, Z80/YM3438 sound board, and RF5C68-family PCM interfaces |
+| Board and clocks | Sega schematics 171-5964D / 171-5965C | Standard single-screen board; V60, Z80/YM3438, and PCM domains |
+| Main CPU/controller | Schematics, sheet 1 | 16-bit V60 bus, interrupts, timers, and system control |
+| Scroll hardware | Schematics, sheet 2; Sega 315-5387 | Four tilemap layers and dual-port VRAM |
+| Objects/frame memory | Schematics, sheets 3-4; Sega 315-5386 | Object processing and double-buffered framebuffer |
+| Colour/video output | Schematics, sheet 5; [315-5242 silicon evidence](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242) | Palette, priority, shadow/highlight, and RGB output |
+| I/O, EEPROM, and sound | Schematics, sheets 6-8 | 315-5296 I/O, 93C46 storage, Z80, dual YM3438, and PCM |
+
+See [hardware references](docs/references.md) for the schematic provenance and
+detailed source record.
 
 ## Supported games
 
-The following table is the complete set exposed by the tracked MRAs in
-[`releases/`](releases/). The names in parentheses are the MAME set names.
+The 24 tracked MRA variants use the same universal RBF:
 
-| Parent | Supported variants | Profile | RBF |
-| --- | --- | --- | --- |
-| Arabian Fight | Japan (`arabfgtj`), US (`arabfgtu`), World (`arabfgt`) | Universal / real V25 descriptor path | `Arcade-SegaSystem32.rbf` |
-| Dark Edge | Japan (`darkedgej`), World (`darkedge`) | Standard | `Arcade-SegaSystem32.rbf` |
-| Golden Axe: The Revenge of Death Adder | Japan (`ga2j`), US, Rev A (`ga2u`), World, Rev B (`ga2`) | Universal / real V25 descriptor path | `Arcade-SegaSystem32.rbf` |
-| Holosseum | US, Rev A (`holo`) | Standard | `Arcade-SegaSystem32.rbf` |
-| Rad Mobile | US (`radmu`), World (`radm`) | Standard | `Arcade-SegaSystem32.rbf` |
-| Rad Rally | Japan (`radrj`), US (`radru`), World (`radr`) | Standard | `Arcade-SegaSystem32.rbf` |
-| Slip Stream | Brazil 950515 (`slipstrm`), Hispanic 950515 (`slipstrmh`) | Standard | `Arcade-SegaSystem32.rbf` |
-| Spider-Man: The Videogame | Japan (`spidmanj`), US, Rev A (`spidmanu`), World (`spidman`) | Standard | `Arcade-SegaSystem32.rbf` |
+- **Arabian Fight:** World, US, Japan
+- **Dark Edge:** World, Japan
+- **Golden Axe: The Revenge of Death Adder:** World Rev B, US Rev A, Japan
+- **Holosseum:** US Rev A
+- **Rad Mobile:** World, US
+- **Rad Rally:** World, US, Japan
+- **Slip Stream:** Brazil, Hispanic
+- **Spider-Man: The Videogame:** World, US Rev A, Japan
+- **Super Visual Football / Soccer:** European, European Rev A, US Rev A
+- **The J.League 1994:** Japan, Japan Rev A
 
-Alien3: The Gun, Burning Rival, Jurassic Park, SegaSonic The Hedgehog, The
-J.League 1994 (`jleague`, `jleagueo`), Super Visual Football/Soccer
-(`svf`, `svs`, `svfo`), Hard Dunk, OutRunners, Stadium Cross, Title Fight,
-AS-1, and other excluded or Multi 32 families are outside the production
-contract and have no production MRA or game-specific hardware path here.
+Alien3: The Gun, Burning Rival, Jurassic Park, SegaSonic The Hedgehog, Hard
+Dunk, OutRunners, Stadium Cross, Title Fight, AS-1, and other Multi 32 games
+remain outside the production profile.
 
 ## **Hardware emulated**
 
-| Chip or subsystem | Relevant clock / interface | Implementation and evidence |
+| Chip or subsystem | Interface | Implementation / reference |
 | --- | --- | --- |
-| NEC µPD70616 V60 | Approximately 16.108 MHz PCB clock; 16-bit data bus and 24-bit address bus | [`s32_v60.sv`](rtl/cpu/v60/s32_v60.sv), [`s32_v60_bus.sv`](rtl/cpu/v60/s32_v60_bus.sv); board interface in [the PCB reference](docs/references.md) |
-| Sega 315-5385 controller | V60 memory-mapped 8/16-bit register interface; interrupt and timer sources | [`s32_io.sv`](rtl/io/s32_io.sv); chip role and board placement from schematic sheet 1, with behavior cross-checked against [MAME](https://github.com/mamedev/mame) |
-| Sega 315-5386 object hardware | System/video clock; object RAM and framebuffer service | [`s32_sprite.sv`](rtl/video/s32_sprite.sv); object role and RAM topology from schematic sheets 3–4, behavior from [MAME](https://github.com/mamedev/mame) |
-| Sega 315-5387 scroll hardware | System/video clock; dual-port tilemap VRAM and mapped scroll registers | [`s32_tilemap.sv`](rtl/video/s32_tilemap.sv); scroll role from schematic sheet 2, behavior from [MAME](https://github.com/mamedev/mame) |
-| Sega 315-5388 / 315-5242 video boundary | Pixel path; palette, priority, mixer, and digital RGB output | [`s32_mixer.sv`](rtl/video/s32_mixer.sv) and top-level video path; schematic sheet 5 plus [315-5242 SiliconRE evidence](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242) |
-| Sega 315-5296 I/O | V60-mapped 8-bit I/O ports; JAMMA, DIP, service, coin, and reset control | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 and [the EEPROM/I/O reference](docs/references.md) |
-| BR93C46 / 93C46 EEPROM | Serial CS, clock, data-in, and data-out lines on the 315-5296 interface | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 and MiSTer NVRAM upload/download support |
-| MSM6253 ADC and 8255 PPI | Descriptor-selected V60-mapped driving ADC and parallel-I/O interfaces | [`s32_io.sv`](rtl/io/s32_io.sv); MAME device maps and per-game MRA descriptors in [`gen_mra.py`](tools/gen_mra.py) |
-| NEC V25 protection path | Universal profile; descriptor-selected program/cache and dual-port mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv), [`s32_v25_rom_cache.sv`](rtl/cpu/v25/s32_v25_rom_cache.sv), and the pinned [s80x86 provenance record](rtl/cpu/v25/s80x86/README.system32.md) |
-| Z80 sound CPU | Approximately 8.054 MHz; ROM, shared RAM, and memory/I/O bus | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv) and the vendored [`T80`](rtl/audio/T80/) core; schematic sheets 7–8 |
-| 2 × YM3438 FM | Z80 I/O register interface on the sound board | [`JT12`](rtl/audio/jt12/) instances; schematic sheet 8 and [JT12](https://github.com/jotego/jt12) |
-| RF5C68-family PCM | Approximately 12.5 MHz PCM clock; Z80-mapped registers and wave RAM | [`s32_rf5c68.sv`](rtl/audio/s32_rf5c68.sv); schematic sheet 8, MAME behavior, and the family reference in [`DESIGN.md`](docs/DESIGN.md) |
-| MiSTer ROM, SDRAM, and DDR3 services | HPS ROM/download stream; SDRAM program/data traffic and DDR3 video framebuffer | Top-level [`Arcade-SegaSystem32.sv`](Arcade-SegaSystem32.sv), MiSTer [`sys/`](sys/), and the MRA stream generated by [`gen_mra.py`](tools/gen_mra.py) |
+| NEC µPD70616 V60 | ~16.108 MHz, 16-bit data / 24-bit address bus | [`s32_v60.sv`](rtl/cpu/v60/s32_v60.sv), [`s32_v60_bus.sv`](rtl/cpu/v60/s32_v60_bus.sv) |
+| Sega 315-5385 controller | V60 registers, IRQs, timers | [`s32_io.sv`](rtl/io/s32_io.sv); schematics and MAME behaviour |
+| Sega 315-5386 objects | Object RAM and framebuffer | [`s32_sprite.sv`](rtl/video/s32_sprite.sv); schematic sheets 3-4 |
+| Sega 315-5387 scroll | Tilemap VRAM and registers | [`s32_tilemap.sv`](rtl/video/s32_tilemap.sv); schematic sheet 2 |
+| Sega 315-5388 / 315-5242 video | Palette, priority, RGB | [`s32_mixer.sv`](rtl/video/s32_mixer.sv); schematic and silicon evidence |
+| Sega 315-5296 I/O | JAMMA, DIP, service, coin | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 |
+| BR93C46 EEPROM | Serial NVRAM | `s32_io.sv`; MiSTer NVRAM upload/download |
+| MSM6253 ADC / 8255 PPI | Driving and parallel I/O | Descriptor-selected interfaces in `s32_io.sv` |
+| NEC V25 protection | Program/cache and mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv); [s80x86 provenance](rtl/cpu/v25/s80x86/README.system32.md) |
+| Z80 sound CPU | ~8.054 MHz | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv); vendored [`T80`](rtl/audio/T80/) |
+| 2 × YM3438 | Z80 register bus | [`JT12`](rtl/audio/jt12/) |
+| RF5C68-family PCM | ~12.5 MHz, wave RAM | [`s32_rf5c68.sv`](rtl/audio/s32_rf5c68.sv) |
+| MiSTer memory services | HPS download, SDRAM, DDR3 | [`Arcade-SegaSystem32.sv`](Arcade-SegaSystem32.sv), [`sys/`](sys/) |
 
 ## Credits
 
-- **Meathax** — System 32 integration, authored RTL, profile routing, MRA
-  generation, verification, and MiSTer packaging.
-- **Sega and the System 32 schematic researchers** — original hardware
-  documentation. The public schematic scan is credited to Nemesis1207 in
-  [the source record](docs/references.md).
-- **MAME developers** — the [MAME System 32 driver and device models](https://github.com/mamedev/mame), used as the primary behavioral reference for CPU, video, protection, EEPROM, and sound behavior.
-- **Jamie Iles** — [s80x86](https://github.com/jamieiles/80x86), used by the
-  V25 compatibility wrapper; the pinned commit and GPL notice are in
-  [`README.system32.md`](rtl/cpu/v25/s80x86/README.system32.md).
-- **Jose Tejada Gomez / Jotego** — [JT12](https://github.com/jotego/jt12),
-  used for the YM3438-compatible FM implementation.
-- **Jose Tejada Gomez / Jotego** — the pinned [JT8255](https://github.com/jotego/jt8255/tree/3bb5f7ea461fc7d72b847ec55ce997e5d5bc1754)
-  MIT implementation is retained only as a dual-model PPI conformance
-  reference; the donor pin, interface verdict, and retained notice are in
-  [`verif/donors/README.md`](verif/donors/README.md).
-- **Jotego and MiSTer-devel reference authors** — [JTCORES](https://github.com/jotego/jtcores/tree/1268a90e365c2520b412f224ae30d20c61aa0031)
-  and [Arcade-IremM92_MiSTer](https://github.com/MiSTer-devel/Arcade-IremM92_MiSTer/tree/68a4683e237eafca02e3df56dd84bacc255fba55)
-  were audited as GPL reference/integration sources only; no incompatible
-  System 32 RTL was copied.
+- **Meathax** - System 32 RTL, integration, MRA generation, verification, and packaging.
+- **Sega, Nemesis1207, and System 32 researchers** - original hardware and
+  public schematic material recorded in [the source ledger](docs/references.md).
+- **MAME developers** - [System 32 behavioural reference](https://github.com/mamedev/mame).
+- **Jamie Iles** - [s80x86](https://github.com/jamieiles/80x86), used by the
+  V25 wrapper; pin and licence details are retained with the source.
+- **Jose Tejada Gomez / Jotego** - [JT12](https://github.com/jotego/jt12),
+  [JT8255](https://github.com/jotego/jt8255/tree/3bb5f7ea461fc7d72b847ec55ce997e5d5bc1754),
+  and audited [JTCORES](https://github.com/jotego/jtcores/tree/1268a90e365c2520b412f224ae30d20c61aa0031)
+  reference work.
 - **Daniel Wallner, MikeJ, Mike Johnson, TobiFlex, Sean Riddle, and Sorgelig**
-  — contributors to the vendored [T80 Z80 core](rtl/audio/T80/); source
-  headers retain the original BSD-style notices.
-- **furrtek / SiliconRE** — [315-5242](https://github.com/furrtek/SiliconRE/tree/master/Sega/315-5242)
-  and 315-5385 silicon reverse-engineering references; the retained license
-  is [`SiliconRE-LICENSE`](docs/references/siliconre/315-5385/SiliconRE-LICENSE).
-- **MiSTer-devel** — [Template_MiSTer](https://github.com/MiSTer-devel/Template_MiSTer),
-  the vendored MiSTer framework, [MRA documentation](https://mister-devel.github.io/MkDocs_MiSTer/developer/mra/),
-  and [mra-tools-c](https://github.com/MiSTer-devel/mra-tools-c).
-- **Reference core authors** — [S32X_MiSTer](https://github.com/MiSTer-devel/S32X_MiSTer),
-  [Arcade-IremM92_MiSTer](https://github.com/MiSTer-devel/Arcade-IremM92_MiSTer),
-  [WonderSwan_MiSTer](https://github.com/MiSTer-devel/WonderSwan_MiSTer),
-  and the MegaCD RF5C164 implementation, as documented in
-  [`reference-cores.md`](docs/reference-cores.md) and [`DESIGN.md`](docs/DESIGN.md).
-- **Umberto Parisi (rmonic79), with Andrea Bogazzi (@asturur)** — the GPL
-  [MiSTer-CRT-Adjust](https://github.com/rmonic79/MiSTer-CRT-Adjust/tree/c682de9f4acc61d8f4c7779efb48149d3baa3a8e)
-  core-side geometry stage, integrated through [`crt_adjust.sv`](rtl/crt_adjust.sv)
-  and recorded as donor D004.
-- **Tool authors and maintainers** — [Intel Quartus](https://www.intel.com/content/www/us/en/software/programmable/quartus-prime/overview.html),
-  [Verilator](https://www.veripool.org/verilator/), [Icarus Verilog](https://steveicarus.github.io/iverilog/),
-  ModelSim, and MAME, used for synthesis, simulation, and verification.
+  - the vendored T80 Z80 core.
+- **furrtek / SiliconRE** - Sega 315-5242 and 315-5385 silicon research.
+- **Umberto Parisi (rmonic79) and Andrea Bogazzi (@asturur)** -
+  [MiSTer-CRT-Adjust](https://github.com/rmonic79/MiSTer-CRT-Adjust/tree/c682de9f4acc61d8f4c7779efb48149d3baa3a8e).
+- **MiSTer-devel and reference-core authors** - MiSTer framework, MRA tooling,
+  and the audited S32X, Irem M92, WonderSwan, and MegaCD integration references
+  listed in [reference-cores.md](docs/reference-cores.md).
+- Intel Quartus, Verilator, Icarus Verilog, ModelSim, and MAME tool authors.
 
 ## License
 
-The original System 32 core source is licensed under GNU GPL version 3; see
-[`LICENSE`](LICENSE). The repository is an aggregate containing components
-that retain their own notices and licenses:
+Original core source is licensed under [GNU GPLv3](LICENSE). Vendored
+components retain their own terms and notices:
 
-- s80x86: GNU GPL version 3 or later; [`COPYING`](rtl/cpu/v25/s80x86/COPYING).
-- JT12: GNU GPL version 3; [`LICENSE`](rtl/audio/jt12/LICENSE).
-- JT8255 conformance reference: MIT; [`LICENSE.jt8255`](verif/donors/LICENSE.jt8255).
-- T80: BSD-style terms in the source headers under [`rtl/audio/T80/`](rtl/audio/T80/).
-- CRT Adjust: GNU GPL version 3 or later; upstream commit and local-diff
-  hashes are recorded in [`verif/donors/README.md`](verif/donors/README.md).
-- MiSTer framework and Intel/Altera generated IP under [`sys/`](sys/): retain
-  their upstream/vendor notices.
-- SiliconRE reference material: [`SiliconRE-LICENSE`](docs/references/siliconre/315-5385/SiliconRE-LICENSE).
+- s80x86: GPLv3 or later ([COPYING](rtl/cpu/v25/s80x86/COPYING))
+- JT12: GPLv3 ([LICENSE](rtl/audio/jt12/LICENSE))
+- JT8255 conformance reference: MIT ([LICENSE](verif/donors/LICENSE.jt8255))
+- T80: BSD-style terms in [`rtl/audio/T80/`](rtl/audio/T80/)
+- CRT Adjust: GPLv3 or later; provenance in [`verif/donors/README.md`](verif/donors/README.md)
+- SiliconRE material: [SiliconRE licence](docs/references/siliconre/315-5385/SiliconRE-LICENSE)
+- MiSTer framework and Intel/Altera IP: retained upstream/vendor notices
 
-MAME, MiSTer reference cores, and other linked projects remain under their
-respective licenses. Arcade ROMs are not included and remain the property of
-their copyright holders.
+Linked reference projects and arcade ROMs remain under their respective terms.
 
 ## How to install
 
-1. Obtain `Arcade-SegaSystem32.rbf` and the MRA files. It is the universal image for all
-   supported parents, including Arabian Fight and Golden Axe II.
-2. Copy the RBF file to `/media/fat/_Arcade/` on the MiSTer SD card.
-3. Copy the MRA files to the same `/media/fat/_Arcade/` directory. Equivalent
-   MiSTer release folders are also supported.
-4. Put the required MAME ROM ZIPs in `/media/fat/games/mame/`, then launch the
-   game from the MiSTer Arcade menu.
+Copy `Arcade-SegaSystem32.rbf` and the MRA files to `/media/fat/_Arcade/`.
+Place the required MAME ROM ZIPs in `/media/fat/games/mame/`, then launch a
+game from the MiSTer Arcade menu.
 
-For automatic installation, add this entry to
-`/media/fat/downloader.ini`:
+For automatic installation, add this to `/media/fat/downloader.ini` and run
+**Update All**:
 
 ```ini
 [meathax/meatcores]
 db_url = https://raw.githubusercontent.com/meathax/meatcores/db/downloader_meathax_meatcores.zip
 ```
 
-After adding the entry, run **Update All** to download the cores and MRAs.
+## Development
 
-## Building and verification
-
-Quartus Prime 17.0.2 Build 602 is the pinned hardware toolchain. Set
-`QUARTUS_ROOT` to the installation directory and run the profile wrapper from
-the repository root:
-
-```powershell
-$env:QUARTUS_ROOT = 'D:\Q17'
-.\tools\build-segas32.bat
-```
-
-Do not edit or share Quartus generated databases between builds. The wrappers
-serializes machine-wide Quartus work and stages only qualified release output.
-For source/profile validation, use:
-
-```powershell
-python -B -m unittest discover -s verif -p 'test_*.py'
-python -B verif/check_ga2_release.py
-python -B verif/check_arabianfight_release.py
-python -B verif/check_holo_release.py
-& .\verif\run_regression.ps1
-```
+Quartus Prime 17.0.2 Build 602 is the pinned toolchain. Build the universal
+profile with `tools/build-segas32.bat`. See [PROFILE_CONTRACT.md](PROFILE_CONTRACT.md)
+for profile rules and verification commands.

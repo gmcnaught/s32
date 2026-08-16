@@ -4,7 +4,7 @@ verif/common/tb_core_romboot.sv used to take its board descriptor from four
 hand-maintained +B0/+B1/+B2/+SBM plusargs that verif/verilator/run_romboot.sh
 set from a per-game `case` with a `B0=20` default.  Fifteen of the seventeen
 System 32 sets therefore simulated a board the core does not ship -- no ADC on
-the analog games, a phantom 8255 on holo/svf, `prot_sel` forced to zero on
+the analog games, a phantom 8255 on holo, `prot_sel` forced to zero on
 brival/darkedge/f1lap/dbzvrvs, and a 16 MB sprite bank mask on 4 and 8 MB sets.
 Every per-game diagnosis taken that way was taken against the wrong hardware.
 

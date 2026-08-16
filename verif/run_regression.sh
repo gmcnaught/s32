@@ -311,12 +311,17 @@ iverilog -g2012 -DSIMULATION -s tb_core_map_decode -o /tmp/s32_core_map \
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_map_decode.sv
 vvp /tmp/s32_core_map | grep -q "CORE MAP DECODE PASS" && echo "CORE MAP DECODE: PASS" || { echo "CORE MAP DECODE: FAIL"; exit 1; }
-echo "[35b/37] Slip Stream right-stick pedals and digital fallbacks"
+echo "[35b/37] direct positional wheel, right-stick pedals, and digital fallbacks"
 iverilog -g2012 -s tb_driving_controls -o /tmp/s32_driving_controls \
   rtl/io/s32_driving_controls.sv verif/common/tb_driving_controls.sv
-vvp /tmp/s32_driving_controls | grep -q "PASS: Slip Stream driving controls" && \
+vvp /tmp/s32_driving_controls | grep -q "PASS: System 32 driving controls" && \
   echo "SLIP STREAM DRIVING CONTROLS: PASS" || { echo "SLIP STREAM DRIVING CONTROLS: FAIL"; exit 1; }
-echo "[36/37] MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
+echo "[36/38] J.League protection write handler"
+iverilog -g2012 -s tb_jleague_hle -o /tmp/s32_jleague_hle \
+  rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_jleague_hle.sv
+vvp /tmp/s32_jleague_hle | grep -q "J.LEAGUE HLE PASS" && \
+  echo "J.LEAGUE HLE: PASS" || { echo "J.LEAGUE HLE: FAIL"; exit 1; }
+echo "[37/38] MAME-backed Rad Mobile MSM6253 channel and MSB-first read semantics"
 iverilog -g2012 -s tb_radm_msm6253 -o /tmp/s32_radm_msm6253 \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_radm_msm6253.sv
 vvp /tmp/s32_radm_msm6253 | grep -q "RAD MOBILE MSM6253 PASS" && \
@@ -325,6 +330,6 @@ iverilog -g2012 -s tb_radm_motor_mailbox -o /tmp/s32_radm_motor \
   rtl/s32_pkg.sv rtl/io/s32_io.sv verif/common/tb_radm_motor_mailbox.sv
 vvp /tmp/s32_radm_motor | grep -q "RAD MOBILE MOTOR MAILBOX PASS" && \
   echo "RAD MOBILE MOTOR MAILBOX: PASS" || { echo "RAD MOBILE MOTOR MAILBOX: FAIL"; exit 1; }
-echo "[37/37] real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
+echo "[38/38] real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
 bash verif/v25/run_v25_firmware.sh
-echo "SYSTEM 32 REGRESSION: PASS (37/37 tiers)"
+echo "SYSTEM 32 REGRESSION: PASS (38/38 tiers)"

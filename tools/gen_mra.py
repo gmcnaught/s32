@@ -84,6 +84,13 @@ GAMES = {
     # gear-change input is a latched toggle on P1_A bit 0; both are selected
     # from the shared Standard-profile descriptor, never a game macro.
     "slipstrm": desc(adc=1, analog=ANALOG["DRIVING"], gear_toggle=1),
+    # The football board uses the ordinary System 32 map.  J.League shares
+    # the same ROM/inputs but installs the 0x20f700 protection write handler;
+    # keep those clone-specific descriptors explicit rather than inheriting
+    # the plain svf parent descriptor.
+    "svf":      desc(),
+    "jleague":  desc(prot=PROT["JLEAGUE"]),
+    "jleagueo": desc(prot=PROT["JLEAGUE"]),
     # NO MULTI 32 SETS.  harddunk/orunners/scross/titlef are Multi 32 boards and
     # this repository builds System 32 only: every shipped revision sets
     # S32_SYSTEM32_ONLY=1, which folds is_multi32 to a constant and removes the
@@ -100,7 +107,7 @@ GAMES = {
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
     "alien3", "arescue", "brival", "dbzvrvs", "f1en", "f1lap",
-    "jleague", "jleagueo", "jpark", "sonic", "svf", "svfo",
+    "jpark", "sonic",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -156,6 +163,15 @@ BUTTONS = {
         "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
         "A,B,X,Start,Select,R,L",
     ),
+    # Arcade Museum's Super Visual Football panel labels the three game
+    # buttons Shoot / Pass-A / Pass-B (see the linked machine record at
+    # https://www.arcade-museum.com/Videogame/super-visual-football-european-sega-cup).
+    # All five football-family sets share this standard two-player,
+    # three-button System 32 input port.
+    "svf": (
+        "Shoot,Pass-A,Pass-B,-,-,-,Start,Coin,Test,Service",
+        "A,B,X,Start,Select,R,L",
+    ),
 }
 
 BUTTON_COUNTS = {
@@ -167,6 +183,7 @@ BUTTON_COUNTS = {
     "radr": 3,
     "spidman": 2,
     "slipstrm": 3,
+    "svf": 3,
 }
 # All supported parents use the one universal production image.
 RBF_BY_PARENT = {parent: "Arcade-SegaSystem32" for parent in GAMES}

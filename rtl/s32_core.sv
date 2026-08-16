@@ -1126,16 +1126,39 @@ s32_intc intc (
 // protection
 // ---------------------------------------------------------------------------
 wire [7:0]  v25_q;
+wire        dke_pr_req, dke_pr_we;
+wire [15:0] dke_pr_addr, dke_pr_wdata;
+wire [1:0]  dke_pr_be;
+wire        jl_pr_req, jl_pr_we;
+wire [15:0] jl_pr_addr, jl_pr_wdata;
+wire [1:0]  jl_pr_be;
+wire        jl_rom_req, jl_rom_ack;
+wire [20:0] jl_rom_addr;
+wire [15:0] jl_rom_data;
+
+// The accepted write pulse is deliberately taken from wr_stb rather than
+// raw m_req: the V60 bus holds a write request until ack, while the original
+// write16 handler runs once per accepted transaction.
+wire jl_cpu_write = wr_stb && m_we && sel_wram && m_be[0];
+
 // Dark Edge's VBlank work-RAM protection sequence. Responders for excluded
-// titles are deliberately absent from the universal image.
+// titles are deliberately absent from the universal image. J.League's
+// responder is the only protection path that also consumes a main-ROM read.
 generate
 `ifdef S32_UNIVERSAL_DISABLED
     begin : g_no_generic_prot
-        assign pr_req       = 1'b0;
-        assign pr_we        = 1'b0;
-        assign pr_addr      = 16'h0000;
-        assign pr_wdata     = 16'h0000;
-        assign pr_be        = 2'b00;
+        assign dke_pr_req   = 1'b0;
+        assign dke_pr_we    = 1'b0;
+        assign dke_pr_addr  = 16'h0000;
+        assign dke_pr_wdata = 16'h0000;
+        assign dke_pr_be    = 2'b00;
+        assign jl_pr_req    = 1'b0;
+        assign jl_pr_we     = 1'b0;
+        assign jl_pr_addr   = 16'h0000;
+        assign jl_pr_wdata  = 16'h0000;
+        assign jl_pr_be     = 2'b00;
+        assign jl_rom_req   = 1'b0;
+        assign jl_rom_addr  = 21'h000000;
     end
 `else
     begin : g_generic_prot
@@ -1143,13 +1166,29 @@ generate
             .clk(clk_sys), .rst(rst),
             .enable(cfg_prot_sel == PROT_DARKEDGE),
             .vblank(vbl_start),
-            .wram_req(pr_req), .wram_we(pr_we), .wram_addr(pr_addr),
-            .wram_wdata(pr_wdata), .wram_be(pr_be),
+            .wram_req(dke_pr_req), .wram_we(dke_pr_we), .wram_addr(dke_pr_addr),
+            .wram_wdata(dke_pr_wdata), .wram_be(dke_pr_be),
             .wram_rdata(pr_q), .wram_ack(pr_ack)
+        );
+        s32_prot_jleague #(.ENABLE(GAME_ONLY_STD || !GAME_ONLY)) jleague_prot (
+            .clk(clk_sys), .rst(rst),
+            .enable(cfg_prot_sel == PROT_JLEAGUE),
+            .cpu_write(jl_cpu_write), .cpu_addr(A), .cpu_wdata(m_wdata),
+            .rom_req(jl_rom_req), .rom_addr(jl_rom_addr),
+            .rom_data(jl_rom_data), .rom_ack(jl_rom_ack),
+            .wram_req(jl_pr_req), .wram_we(jl_pr_we), .wram_addr(jl_pr_addr),
+            .wram_wdata(jl_pr_wdata), .wram_be(jl_pr_be),
+            .wram_ack(pr_ack)
         );
     end
 `endif
 endgenerate
+
+assign pr_req   = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_req   : dke_pr_req;
+assign pr_we    = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_we    : dke_pr_we;
+assign pr_addr  = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_addr  : dke_pr_addr;
+assign pr_wdata = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_wdata : dke_pr_wdata;
+assign pr_be    = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_be    : dke_pr_be;
 
 `ifdef S32_V25_HW
 wire [15:3] v25_rom_addr;
@@ -1241,6 +1280,10 @@ s32_ga_rom_cache ga_rom_cache (
     .data_addr(sel_romhi ? {1'b0, A[19:0]} : A[20:0]),
     .data_data(rom_word_r),
     .data_ack(rom_ready),
+    .prot_req(jl_rom_req),
+    .prot_addr(jl_rom_addr),
+    .prot_data(jl_rom_data),
+    .prot_ack(jl_rom_ack),
     .rom_req(rom_req_r),
     .rom_burst(rom_burst_r),
     .rom_addr(rom_addr_r),
@@ -1453,6 +1496,12 @@ module s32_ga_rom_cache #(
     output reg  [15:0] data_data,
     output reg         data_ack,
 
+    // J.League protection table reads share this cache/SDRAM client.
+    input              prot_req,
+    input       [20:0] prot_addr,
+    output reg  [15:0] prot_data,
+    output reg         prot_ack,
+
     output reg         rom_req,
     output reg         rom_burst,
     output reg  [23:1] rom_addr,
@@ -1473,6 +1522,7 @@ reg [LINE_COUNT-1:0] cache_valid;
 
 reg        lookup_pending;
 reg        lookup_fetch;
+reg        lookup_prot;
 reg  [INDEX_BITS-1:0] lookup_index;
 reg [TAG_BITS-1:0] lookup_tag;
 reg [17:0] lookup_line_addr;
@@ -1482,16 +1532,20 @@ reg  [1:0] lookup_data_word;
 reg        filling;
 reg        fill_discard;
 reg        fill_fetch;
+reg        fill_prot;
 reg  [INDEX_BITS-1:0] fill_index;
 reg [TAG_BITS-1:0] fill_tag;
 reg  [2:0] fill_if_offset;
 reg  [1:0] fill_data_word;
 
 wire choose_fetch = if_req && !if_ack;
-wire choose_data  = !choose_fetch && data_req && !data_ack;
-wire launch_lookup = !lookup_pending && !filling && (choose_fetch || choose_data);
+wire choose_prot  = !choose_fetch && prot_req && !prot_ack;
+wire choose_data  = !choose_fetch && !choose_prot && data_req && !data_ack;
+wire launch_lookup = !lookup_pending && !filling &&
+                     (choose_fetch || choose_prot || choose_data);
 wire [INDEX_BITS-1:0] lookup_mem_addr = lookup_pending ? lookup_index :
     choose_fetch ? if_line_addr[INDEX_BITS+2:3]
+                 : choose_prot ? prot_addr[INDEX_BITS+2:3]
                  : data_addr[INDEX_BITS+2:3];
 wire [63:0] completed_line = rom_data;
 wire cache_commit = filling && rom_ack &&
@@ -1524,6 +1578,7 @@ always @(posedge clk) begin
         cache_valid      <= '0;
         lookup_pending   <= 1'b0;
         lookup_fetch     <= 1'b0;
+        lookup_prot      <= 1'b0;
         lookup_index     <= '0;
         lookup_tag       <= '0;
         lookup_line_addr <= 18'd0;
@@ -1532,6 +1587,7 @@ always @(posedge clk) begin
         filling          <= 1'b0;
         fill_discard     <= 1'b0;
         fill_fetch       <= 1'b0;
+        fill_prot        <= 1'b0;
         fill_index       <= '0;
         fill_tag         <= '0;
         fill_if_offset   <= 3'd0;
@@ -1540,6 +1596,8 @@ always @(posedge clk) begin
         if_ack           <= 1'b0;
         data_data        <= 16'hffff;
         data_ack         <= 1'b0;
+        prot_data        <= 16'hffff;
+        prot_ack         <= 1'b0;
         rom_req          <= 1'b0;
         rom_burst        <= 1'b0;
         rom_addr         <= 23'd0;
@@ -1549,12 +1607,14 @@ always @(posedge clk) begin
         rom_burst <= 1'b0;
         if (!if_req)   if_ack   <= 1'b0;
         if (!data_req) data_ack <= 1'b0;
+        if (!prot_req) prot_ack <= 1'b0;
 
         if (invalidate) begin
             cache_valid    <= '0;
             lookup_pending <= 1'b0;
             if_ack          <= 1'b0;
             data_ack        <= 1'b0;
+            prot_ack        <= 1'b0;
             if (filling) begin
                 if (rom_ack) begin
                     filling      <= 1'b0;
@@ -1583,6 +1643,10 @@ always @(posedge clk) begin
                         if_data <= completed_line >> {fill_if_offset, 3'b000};
                         if_ack  <= 1'b1;
                     end
+                    else if (fill_prot) begin
+                        prot_data <= select_word(completed_line, fill_data_word);
+                        prot_ack  <= 1'b1;
+                    end
                     else begin
                         data_data <= select_word(completed_line, fill_data_word);
                         data_ack  <= 1'b1;
@@ -1598,6 +1662,10 @@ always @(posedge clk) begin
                     if_data <= cache_q[63:0] >> {lookup_if_offset, 3'b000};
                     if_ack  <= 1'b1;
                 end
+                else if (lookup_prot) begin
+                    prot_data <= select_word(cache_q[63:0], lookup_data_word);
+                    prot_ack  <= 1'b1;
+                end
                 else begin
                     data_data <= select_word(cache_q[63:0], lookup_data_word);
                     data_ack  <= 1'b1;
@@ -1607,6 +1675,7 @@ always @(posedge clk) begin
                 filling        <= 1'b1;
                 fill_discard   <= 1'b0;
                 fill_fetch     <= lookup_fetch;
+                fill_prot      <= lookup_prot;
                 fill_index     <= lookup_index;
                 fill_tag       <= lookup_tag;
                 fill_if_offset <= lookup_if_offset;
@@ -1619,12 +1688,20 @@ always @(posedge clk) begin
         else if (launch_lookup) begin
             lookup_pending <= 1'b1;
             lookup_fetch   <= choose_fetch;
+            lookup_prot    <= choose_prot;
             if (choose_fetch) begin
                 lookup_index     <= if_line_addr[INDEX_BITS+2:3];
                 lookup_tag       <= if_line_addr[20:INDEX_BITS+3];
                 lookup_line_addr <= if_line_addr;
                 lookup_if_offset <= if_offset;
                 lookup_data_word <= 2'd0;
+            end
+            else if (choose_prot) begin
+                lookup_index     <= prot_addr[INDEX_BITS+2:3];
+                lookup_tag       <= prot_addr[20:INDEX_BITS+3];
+                lookup_line_addr <= prot_addr[20:3];
+                lookup_if_offset <= 3'd0;
+                lookup_data_word <= prot_addr[2:1];
             end
             else begin
                 lookup_index     <= data_addr[INDEX_BITS+2:3];

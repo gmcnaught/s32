@@ -101,6 +101,99 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
+// The J.League 1994 protection write handler.
+//
+// MAME's init_jleague installs a write16 handler at 0x20f700-0x20f705:
+// offset 0 indexes the main-ROM table at 0x07bbc0 and publishes its low byte
+// at work RAM 0x20f708; offset 2 (0x20f704) publishes the selected team byte at
+// 0x200016.  svf/svfo/svs do not install this handler and therefore never
+// enable this responder.
+// ---------------------------------------------------------------------------
+module s32_prot_jleague #(
+    parameter ENABLE = 1'b1
+) (
+    input             clk,
+    input             rst,
+    input             enable,
+    input             cpu_write,
+    input      [23:0] cpu_addr,
+    input      [15:0] cpu_wdata,
+    output reg        rom_req,
+    output reg  [20:0] rom_addr,
+    input      [15:0] rom_data,
+    input             rom_ack,
+    output reg        wram_req,
+    output reg        wram_we,
+    output reg [15:0] wram_addr,
+    output reg [15:0] wram_wdata,
+    output reg  [1:0] wram_be,
+    input             wram_ack
+);
+
+typedef enum logic [1:0] { JL_IDLE, JL_ROM, JL_WR } jl_state_t;
+jl_state_t state;
+
+always @(posedge clk) begin
+    if (rst || !ENABLE || !enable) begin
+        state      <= JL_IDLE;
+        rom_req    <= 1'b0;
+        rom_addr   <= 21'h000000;
+        wram_req   <= 1'b0;
+        wram_we    <= 1'b0;
+        wram_addr  <= 16'h0000;
+        wram_wdata <= 16'h0000;
+        wram_be    <= 2'b00;
+    end
+    else begin
+        case (state)
+        JL_IDLE: begin
+            rom_req  <= 1'b0;
+            wram_req <= 1'b0;
+            if (cpu_write && cpu_addr == 24'h20f700) begin
+                // 0x07bbc0 + data * 2, the same word-aligned main-ROM read
+                // used by segas32_state::jleague_protection_w.
+                rom_addr <= 21'h07bbc0 + {4'd0, cpu_wdata, 1'b0};
+                rom_req  <= 1'b1;
+                state    <= JL_ROM;
+            end
+            else if (cpu_write && cpu_addr == 24'h20f704) begin
+                wram_req   <= 1'b1;
+                wram_we    <= 1'b1;
+                wram_addr  <= 16'h0016 >> 1;
+                wram_wdata <= {8'h00, cpu_wdata[7:0]};
+                wram_be    <= 2'b01;
+                state      <= JL_WR;
+            end
+        end
+        JL_ROM: begin
+            if (rom_ack) begin
+                rom_req    <= 1'b0;
+                wram_req   <= 1'b1;
+                wram_we    <= 1'b1;
+                wram_addr  <= 16'hf708 >> 1;
+                wram_wdata <= {8'h00, rom_data[7:0]};
+                wram_be    <= 2'b01;
+                state      <= JL_WR;
+            end
+        end
+        JL_WR: begin
+            if (wram_ack) begin
+                wram_req <= 1'b0;
+                state    <= JL_IDLE;
+            end
+        end
+        default: begin
+            state    <= JL_IDLE;
+            rom_req  <= 1'b0;
+            wram_req <= 1'b0;
+        end
+        endcase
+    end
+end
+
+endmodule
+
+// ---------------------------------------------------------------------------
 //  s32_v25: protection MCU subsystem (§8.1) — ga2 / arabfgt
 //  v1 strategy per DESIGN.md: HLE responder implementing the documented
 //  wakeup/command protocol through the MB8421 dual-port RAM at 0xA00000,
