@@ -12,6 +12,9 @@ VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
 if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
    [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
   VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
+elif ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
+     [[ -x /c/Users/meath/bin/verilator-safe.exe ]]; then
+  VERILATOR_SAFE=/c/Users/meath/bin/verilator-safe.exe
 fi
 MDIR=scratch/vromboot_obj_wsl
 WARN="-Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT -Wno-BLKANDNBLK -Wno-CASEINCOMPLETE -Wno-MULTIDRIVEN -Wno-INITIALDLY -Wno-DECLFILENAME"
@@ -34,11 +37,13 @@ fi
 "$VERILATOR_SAFE" status
 if [[ "${ROMBOOT_SKIP_BUILD:-0}" != 1 ]]; then
   "$VERILATOR_SAFE" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 $WARN \
+    -CFLAGS "-D_GLIBCXX_USE_CXX11_ABI=0" \
     +define+SIMULATION +define+S32_REAL_FB_SIM +define+S32_SYSTEM32_ONLY \
     +define+S32_PROFILE_STANDARD +define+S32_GAME_ONLY_STD \
     --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f scratch/romboot.f
 fi
 SIM="$PWD/$MDIR/romboot"
+[[ -x "${SIM}.exe" ]] && SIM="${SIM}.exe"
 IMG="$PWD/roms/sim/$GAME"
 if [[ ! -x "$SIM" ]]; then
   echo "run_romboot: no model executable at $SIM (unset ROMBOOT_SKIP_BUILD)" >&2

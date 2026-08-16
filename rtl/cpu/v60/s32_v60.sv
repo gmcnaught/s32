@@ -632,6 +632,9 @@ wire       exec_retire_dispatch_now = exec_retire_shift_ok &&
 wire win_shift_now = (st == S_FILL && fb_base != pc)
                      || (st == S_NEXT && seq_shift_ok)
                      || exec_retire_shift_ok;
+// A dedicated fast-fetch ack can coincide with RSR's data-pop ack; reject it
+// because RSR rebases and flushes the fetch window on the same edge.
+wire rsr_rebase_now = (st == S_RSR && dack);
 
 // Consolidate every dynamic general-register read onto two explicit ports.
 // The architectural register array remains flip-flop based with its existing
@@ -1697,6 +1700,7 @@ else if (ce) begin
                         dbus_we   <= 1'b0;
                         dbus_size <= f12_dim1(cur_op);
                         dbus_addr <= rf_rdata_b + eaf_disp;
+                        st_after_ea <= S_EXEC;
                         st        <= S_EA_VAL;
                     end
                 end
@@ -1721,6 +1725,7 @@ else if (ce) begin
                         dbus_we   <= 1'b0;
                         dbus_size <= f12_dim1(cur_op);
                         dbus_addr <= rf_rdata_b;
+                        st_after_ea <= S_EXEC;
                         st        <= S_EA_VAL;
                     end
                 end
@@ -3783,7 +3788,7 @@ else if (ce) begin
         // stale index and fight the shift for the same fb[] bytes.
         if (pf_iss_epoch == pf_epoch
             && pf_addr == fb_base + {27'b0, fb_wr}
-            && !win_shift_now) begin
+            && !win_shift_now && !rsr_rebase_now) begin
             if (pf_fast) begin
                 // append the 8-byte line from the frontier offset to the line end
                 // (1..8 bytes).  s32_core has ALREADY aligned if_data so byte 0 is

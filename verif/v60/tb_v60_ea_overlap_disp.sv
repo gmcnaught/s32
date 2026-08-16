@@ -95,6 +95,31 @@ task run_one(input [255:0] label, input integer settle_cycles);
     end
 endtask
 
+`ifdef __ICARUS__
+// Reproduce the state-history dependency from Spider-Man: a previous string
+// operation left S_STR_OP2 in st_after_ea.  Icarus permits the deliberate
+// internal-state deposit used here; the ordinary functional cases remain in
+// the Verilator suite.  Each D=1 value-read overlap must replace this token
+// before launching S_EA_VAL.
+task run_one_poisoned(input [255:0] label, input integer settle_cycles);
+    integer start_cycle;
+    begin
+        rst = 1; repeat (8) @(posedge clk); rst = 0;
+        cpu.st_after_ea = cpu.S_STR_OP2;
+        start_cycle = sim_cycles;
+        while (!cpu.halted && (sim_cycles - start_cycle) < settle_cycles)
+            @(posedge clk);
+        last_run_cycles = sim_cycles - start_cycle;
+        $display("  timing %0s: %0d clocks", label, last_run_cycles);
+        if (!cpu.halted) begin
+            errors = errors + 1;
+            $display("  FAIL %0s: stale EA continuation escaped", label);
+        end
+        repeat (4) @(posedge clk);
+    end
+endtask
+`endif
+
 initial begin
     // ---------------------------------------------------------------------
     // Case 1: ADDW R1, [R2+0x10] (byte displacement, F2 D=0, op2 = AM).
@@ -188,6 +213,33 @@ initial begin
         errors = errors + 1;
         $display("  FAIL case5 throughput: %0d clocks want<=105", last_run_cycles);
     end
+
+`ifdef __ICARUS__
+    // Case 6: the same register-indirect source with a deliberately stale
+    // non-S_EXEC continuation.  Before the fix this enters the string states,
+    // over-consumes one instruction byte and fails to halt at the successor.
+    for (ap = 0; ap < 65536; ap = ap + 1) ram[ap] = 16'h0000;
+    ram[16'h0100] = 16'd9;
+    ap = 0;
+    movw_imm(5'd1, 32'd4);
+    movw_imm(5'd2, 32'h0000_0200);
+    ab(8'h84); ab(8'h21); ab(8'h62);              // ADDW [R2],R1
+    halt();
+    run_one_poisoned("case6-stale-continuation", 300);
+    check16(cpu.r[1][15:0], 16'd13, "D=1 overlap replaces stale continuation");
+
+    // Case 7: displacement companion, independently guarding the other direct
+    // S_EA_VAL launch fixed by this change.
+    for (ap = 0; ap < 65536; ap = ap + 1) ram[ap] = 16'h0000;
+    ram[16'h0102] = 16'd9;
+    ap = 0;
+    movw_imm(5'd1, 32'd4);
+    movw_imm(5'd2, 32'h0000_0200);
+    ab(8'h84); ab(8'h21); ab(8'h02); ab(8'h04);  // ADDW [R2+4],R1
+    halt();
+    run_one_poisoned("case7-stale-disp-continuation", 300);
+    check16(cpu.r[1][15:0], 16'd13, "D=1 displacement replaces stale continuation");
+`endif
 
     if (errors == 0)
         $display("V60 EA_OVERLAP DISP PASS");

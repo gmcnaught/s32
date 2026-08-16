@@ -181,9 +181,9 @@ initial begin
     disp_x = 9'd400;
     repeat (4 * PIXEL_EDGES_416) @(posedge clk_ram);
 
-    measure(9'd100, 24'hF8F8F8, "pen1 white");
-    measure(9'd101, 24'h0000F8, "pen2 blue ");
-    measure(9'd100, 24'hF8F8F8, "pen1 again");
+    measure(9'd100, 24'hFFFFFF, "pen1 white");
+    measure(9'd101, 24'h0000FF, "pen2 blue ");
+    measure(9'd100, 24'hFFFFFF, "pen1 again");
 
     if (errors == 0)
         $display("MIXER PIXEL LATENCY PASS worst=%0d budget=%0d", worst, BUDGET_EDGES);

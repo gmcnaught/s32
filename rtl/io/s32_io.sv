@@ -259,7 +259,12 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
-module s32_eeprom93c46 (
+module s32_eeprom93c46 #(
+    parameter integer WRITE_BUSY_CYCLES     = 84556,  // 1750 us @ 48,317,307 Hz
+    parameter integer ERASE_BUSY_CYCLES     = 48318,  // 1000 us @ 48,317,307 Hz
+    parameter integer WRITE_ALL_BUSY_CYCLES = 386539, // 8000 us @ 48,317,307 Hz
+    parameter integer ERASE_ALL_BUSY_CYCLES = 386539  // 8000 us @ 48,317,307 Hz
+) (
     input             clk,
     input             rst,
 
@@ -282,12 +287,10 @@ module s32_eeprom93c46 (
 // 93C46, x16 organization: command frame = start(1) + opcode(2) + addr(6),
 // i.e. 8 post-start bits. Opcodes: 10=READ, 01=WRITE(+16 data), 11=ERASE,
 // 00 with addr[5:4]: 11=EWEN, 00=EWDS, 10=ERAL, 01=WRAL(+16 data).
-// Behaviour mirrors MAME eepromser.cpp exactly (holo's boot depends on it):
-//   - writes/erases execute immediately, then the device sits in a DONE
-//     state that ignores every clock until CS falls (chained commands in
-//     the same CS frame are dropped, as on the real self-timed part);
-//   - DO idles high (tristate + pullup) in every state except the data
-//     phase of a READ.
+// Writes/erases commit to the NVRAM shadow as before, then the device reports
+// the real part's self-timed busy/READY handshake: with CS high DO is low while
+// busy and high when programming completes. New commands are ignored while
+// busy; DO otherwise idles high except during the data phase of a READ.
 typedef enum logic [2:0] { E_IDLE, E_CMD, E_READ, E_WRDATA, E_DONE } est_t;
 est_t es;
 reg [6:0]  sr;
@@ -304,6 +307,15 @@ reg [15:0] serial_wr_data;
 reg        bulk_active = 1'b0;
 reg  [5:0] bulk_addr = 6'd0;
 reg [15:0] bulk_data = 16'hFFFF;
+localparam integer BUSY_MAX_WE = (WRITE_BUSY_CYCLES > ERASE_BUSY_CYCLES)
+                               ? WRITE_BUSY_CYCLES : ERASE_BUSY_CYCLES;
+localparam integer BUSY_MAX_ALL = (WRITE_ALL_BUSY_CYCLES > ERASE_ALL_BUSY_CYCLES)
+                                ? WRITE_ALL_BUSY_CYCLES : ERASE_ALL_BUSY_CYCLES;
+localparam integer BUSY_MAX = (BUSY_MAX_WE > BUSY_MAX_ALL)
+                            ? BUSY_MAX_WE : BUSY_MAX_ALL;
+localparam integer BUSY_W = (BUSY_MAX < 2) ? 1 : $clog2(BUSY_MAX + 1);
+reg [BUSY_W-1:0] busy_count = {BUSY_W{1'b0}};
+wire busy = |busy_count;
 
 wire        ram_wren = ld_wr || bulk_active || serial_wr;
 wire  [5:0] ram_waddr = ld_wr       ? ld_addr :
@@ -331,6 +343,8 @@ always @(posedge clk) begin
     // ERAL/WRAL are serialized over 64 clocks, far shorter than the real
     // EEPROM's self-timed busy interval and compatible with one RAM port.
     serial_wr <= 1'b0;
+    if (busy)
+        busy_count <= busy_count - 1'b1;
     if (ld_wr)
         bulk_active <= 1'b0;
     else if (bulk_active) begin
@@ -352,9 +366,16 @@ always @(posedge clk) begin
         // a new frame to resynchronize in the middle of the 64-word sweep.
         // Use explicit enum branches for Quartus-17 and Icarus portability;
         // the conditional expression has identical hardware semantics.
-        if (bulk_active) es <= E_DONE;
+        if (bulk_active || busy) es <= E_DONE;
         else             es <= E_IDLE;
         bitcnt <= 0; dout <= 1'b1;
+    end
+    else if (busy) begin
+        // CS-high post-operation polling: low while programming, high on the
+        // exact completion edge. E_DONE rejects clocks until CS falls.
+        es <= E_DONE;
+        if (busy_count == {{(BUSY_W-1){1'b0}}, 1'b1}) dout <= 1'b1;
+        else                                          dout <= 1'b0;
     end
     else if (sk & ~sk_d) begin        // rising SK
         case (es)
@@ -380,6 +401,7 @@ always @(posedge clk) begin
                             serial_wr_addr <= cmd[5:0];
                             serial_wr_data <= 16'hFFFF;
                             serial_wr <= 1'b1;
+                            busy_count <= ERASE_BUSY_CYCLES;
                         end
                         es <= E_DONE;
                     end
@@ -392,6 +414,7 @@ always @(posedge clk) begin
                                     bulk_active <= 1'b1;
                                     bulk_addr <= 6'd0;
                                     bulk_data <= 16'hFFFF;
+                                    busy_count <= ERASE_ALL_BUSY_CYCLES;
                                 end
                                 es <= E_DONE;
                             end
@@ -426,11 +449,13 @@ always @(posedge clk) begin
                         bulk_active <= 1'b1;
                         bulk_addr <= 6'd0;
                         bulk_data <= {shifter[14:0], di};
+                        busy_count <= WRITE_ALL_BUSY_CYCLES;
                     end
                     else begin
                         serial_wr_addr <= eaddr;
                         serial_wr_data <= {shifter[14:0], di};
                         serial_wr <= 1'b1;
+                        busy_count <= WRITE_BUSY_CYCLES;
                     end
                 end
                 es <= E_DONE;

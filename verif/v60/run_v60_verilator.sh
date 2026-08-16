@@ -13,10 +13,16 @@ VERILATOR_SIM_SAFE="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
 if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
    [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
   VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
+elif ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
+     [[ -x /c/Users/meath/bin/verilator-safe.exe ]]; then
+  VERILATOR_SAFE=/c/Users/meath/bin/verilator-safe.exe
 fi
 if ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
    [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
   VERILATOR_SIM_SAFE=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
+elif ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
+     [[ -x /c/Users/meath/bin/verilator-sim-safe.exe ]]; then
+  VERILATOR_SIM_SAFE=/c/Users/meath/bin/verilator-sim-safe.exe
 fi
 VFLAGS=(--binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4
   -CFLAGS "-D_GLIBCXX_USE_CXX11_ABI=0"
@@ -59,18 +65,19 @@ declare -A TB=(
 
 # Verilator can't elaborate testbenches that poke internal enum FSM state
 # (EnumItemRef can't deref back to an Enum). Route those through Icarus.
-ICARUS_ONLY="tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp"
+ICARUS_ONLY="tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_ea_overlap_disp"
 
 ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_smc tb_v60_long_ea tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate tb_v60_ea_overlap_disp"
 
 is_icarus() { case " $ICARUS_ONLY " in *" $1 "*) return 0;; *) return 1;; esac; }
 
-mkdir -p /tmp/v60ut
+work_root="${TMPDIR:-/tmp}/v60ut"
+mkdir -p "$work_root"
 pass=0; fail=0; failed=""
 for tb in $ORDER; do
   src="verif/v60/${tb}.sv"
   [ -f "$src" ] || { echo "SKIP  $tb (no file)"; continue; }
-  bdir="/tmp/v60ut/$tb"; rm -rf "$bdir"; mkdir -p "$bdir"
+  bdir="$work_root/$tb"; rm -rf "$bdir"; mkdir -p "$bdir"
   if is_icarus "$tb"; then
     if ! iverilog -g2012 -Wno-timescale -o "$bdir/$tb.vvp" -s "$tb" $PKG $CPU "$src" > "$bdir.log" 2>&1; then
       echo "BUILDFAIL $tb (icarus)  (see $bdir.log)"; fail=$((fail+1)); failed="$failed $tb"; continue
@@ -95,8 +102,8 @@ for tb in $ORDER; do
 done
 # gated-ce (production /3 cadence) coherency re-run of the SMC test — catches
 # prefetch ack-sampling bugs that ce=1 runs would miss (audit gated-ce gap).
-if [ -x /tmp/v60ut/tb_v60_smc/tb_v60_smc ]; then
-  if /tmp/v60ut/tb_v60_smc/tb_v60_smc +CEDIV=3 2>&1 | grep -qF "V60 SMC PASS"; then
+if [ -x "$work_root/tb_v60_smc/tb_v60_smc" ]; then
+  if "$work_root/tb_v60_smc/tb_v60_smc" +CEDIV=3 2>&1 | grep -qF "V60 SMC PASS"; then
     echo "PASS  tb_v60_smc(ce=/3)"
   else
     echo "FAIL  tb_v60_smc(ce=/3)"; fail=$((fail+1)); failed="$failed tb_v60_smc(ce/3)"

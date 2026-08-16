@@ -500,6 +500,15 @@ function automatic [4:0] clamp5(input signed [11:0] v);
     else                 clamp5 = v[4:0];
 endfunction
 
+// 315-5242 presents each clamped 5-bit DAC component as a full-scale 8-bit
+// HDMI component.  This is the standard pal5bit expansion used by MAME:
+// replicate the upper three bits into the low three bits so 5'b11111 becomes
+// 8'hff (not 8'hf8).  Keep the expansion after all mixer arithmetic and
+// clamping; it is a transport-boundary conversion, not a palette change.
+function automatic [7:0] expand5(input [4:0] v);
+    expand5 = {v, v[4:2]};
+endfunction
+
 // MAME applies signed color offsets before blending and clamps only after the
 // weighted sum.  An offset channel can therefore be -32..62.  Letting the
 // expression inherit the eight-bit width of r1/r2 truncates products above
@@ -683,9 +692,9 @@ always @(posedge clk) begin
         end
         else if (ph == 4'd6) begin
             rgb <= !act_hold ? 24'h000000
-                 : {clamp5(rr_pipe), 3'b000,
-                    clamp5(gg_pipe), 3'b000,
-                    clamp5(bb_pipe), 3'b000};
+                 : {expand5(clamp5(rr_pipe)),
+                    expand5(clamp5(gg_pipe)),
+                    expand5(clamp5(bb_pipe))};
             ph <= 4'hF;
         end
     end

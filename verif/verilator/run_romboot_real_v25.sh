@@ -23,16 +23,23 @@ verilator_sim_safe="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
 if ! command -v "$verilator_safe" >/dev/null 2>&1 &&
    [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
   verilator_safe=/mnt/c/Users/meath/bin/verilator-safe.exe
+elif ! command -v "$verilator_safe" >/dev/null 2>&1 &&
+     [[ -x /c/Users/meath/bin/verilator-safe.exe ]]; then
+  verilator_safe=/c/Users/meath/bin/verilator-safe.exe
 fi
 if ! command -v "$verilator_sim_safe" >/dev/null 2>&1 &&
    [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
   verilator_sim_safe=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
+elif ! command -v "$verilator_sim_safe" >/dev/null 2>&1 &&
+     [[ -x /c/Users/meath/bin/verilator-sim-safe.exe ]]; then
+  verilator_sim_safe=/c/Users/meath/bin/verilator-sim-safe.exe
 fi
 
 # The machine-wide safe launcher serializes model builds and limits both
 # Verilator generation and the C++ build.  This runner is part of the V25 gate.
 "$verilator_safe" status
 "$verilator_safe" --binary --timing --verilate-jobs 4 --build-jobs 4 --threads 1 "${warnings[@]}" \
+  -CFLAGS "-D_GLIBCXX_USE_CXX11_ABI=0" \
   +define+SIMULATION +define+S32_REAL_FB_SIM \
   +define+S32_SYSTEM32_ONLY +define+S32_PROFILE_STANDARD \
   +define+S32_UNIVERSAL +define+S32_V25_HW +define+S80X86_PSEUDO_286_INT=0 \
@@ -44,6 +51,8 @@ fi
 
 mkdir -p "$output_dir"
 cd "$output_dir"
-"$verilator_sim_safe" -- "$repo_root/$build_dir/romboot" \
+romboot_exe="$repo_root/$build_dir/romboot"
+[[ -x "${romboot_exe}.exe" ]] && romboot_exe="${romboot_exe}.exe"
+"$verilator_sim_safe" -- "$romboot_exe" \
   +IMG="$repo_root/roms/sim/ga2" +DESC="$repo_root/roms/sim/ga2/desc.txt" \
   +FRAMES="$frames" "$@"

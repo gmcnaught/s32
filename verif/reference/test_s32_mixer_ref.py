@@ -34,7 +34,7 @@ class MixerReferenceTests(unittest.TestCase):
         result = mix_pixel(blank_regs(), [0] * 6, 0xFFFF, 0, 0x0200, 0, palette)
         self.assertEqual(result.winner, BACKGROUND)
         self.assertEqual(result.first_palette_index, 0x200)
-        self.assertEqual(result.rgb, 0x780000)
+        self.assertEqual(result.rgb, 0x7B0000)
 
     def test_equal_priority_order_is_sprite_then_nbg0(self) -> None:
         regs = blank_regs()
@@ -57,7 +57,7 @@ class MixerReferenceTests(unittest.TestCase):
         result = mix_pixel(regs, pixels, 0x07FE, 0, 0, 0, palette)
         self.assertEqual(result.winner, NBG0)
         self.assertTrue(result.shadowed)
-        self.assertEqual(result.rgb, 0x787878)
+        self.assertEqual(result.rgb, 0x7B7B7B)
 
     def test_blend_uses_raw_not_or_adjusted_sprite_group(self) -> None:
         regs = blank_regs()
@@ -71,7 +71,7 @@ class MixerReferenceTests(unittest.TestCase):
         self.assertEqual(result.winner, NBG0)
         self.assertEqual(result.partner, SPRITE)
         self.assertTrue(result.blended)
-        self.assertEqual(result.rgb, 0x787898)
+        self.assertEqual(result.rgb, 0x7B7B9C)
 
     def test_opaque_zero_is_only_a_backdrop_fallback(self) -> None:
         regs = blank_regs()
@@ -133,7 +133,7 @@ class MixerReferenceTests(unittest.TestCase):
         self.assertEqual(result.winner, NBG0)
         self.assertEqual(result.partner, NBG1)
         self.assertTrue(result.blended)
-        self.assertEqual(result.rgb, 0x78F878)
+        self.assertEqual(result.rgb, 0x7BFF7B)
 
         # Fallback NBG1 blends with the backdrop when no real pixel exists.
         regs[0x11] = 0
@@ -144,7 +144,7 @@ class MixerReferenceTests(unittest.TestCase):
         self.assertEqual(result.winner, NBG1)
         self.assertEqual(result.partner, BACKGROUND)
         self.assertTrue(result.blended)
-        self.assertEqual(result.rgb, 0x387800)
+        self.assertEqual(result.rgb, 0x397B00)
 
     def test_all_sprite_group_modes_and_blend_encodings(self) -> None:
         self.assertEqual([sprite_group_params(mode) for mode in range(16)], [

@@ -67,6 +67,13 @@ def _signed6(value: int) -> int:
     return value - 0x40 if value & 0x20 else value
 
 
+def expand5(value: int) -> int:
+    """Expand a clamped 5-bit DAC component to the 8-bit HDMI boundary."""
+
+    value = max(0, min(31, value))
+    return (value << 3) | (value >> 2)
+
+
 def _color_offset(regs: Sequence[int], layer: int, layerflag: bool) -> int:
     r3e = regs[0x1F]
     bit = 8 if layer == BACKGROUND else 6 if layer == SPRITE else layer
@@ -226,7 +233,11 @@ def mix_pixel(
         rgb = [value >> 1 for value in rgb]
 
     rgb = [min(31, max(0, value)) for value in rgb]
-    packed = (rgb[0] << 19) | (rgb[1] << 11) | (rgb[2] << 3)
+    packed = (
+        (expand5(rgb[0]) << 16)
+        | (expand5(rgb[1]) << 8)
+        | expand5(rgb[2])
+    )
     return MixResult(
         rgb=packed,
         winner=first.index,

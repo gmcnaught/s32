@@ -681,9 +681,6 @@ always @(posedge clk_sys) begin
             in_p1a_r = 8'hff;
             in_portc_r = 8'hff;
             in_svc12_r = 8'hff;
-            trk0_dv = 1'b0;
-            trk0_dx = 9'sd0;
-            trk0_dy = 9'sd0;
             if (input_path != "") begin
                 input_mask_value = 0;
                 input_fd = $fopen(input_path, "r");
@@ -840,6 +837,20 @@ integer n_intc_wr = 0, n_wram_wr = 0, n_exc = 0, n_irq = 0;
 integer n_pal_alias_lo = 0, n_pal_alias_hi = 0;
 integer n_pal_bank_lo = 0, n_pal_bank_hi = 0;
 integer vs_count = 0;
+// +IOLOG=<n>: bounded read-only trace of System 32 I/O writes.  This is used
+// to distinguish a missing CNT1 write from a decode/byte-lane loss without
+// changing the core's functional signals.
+integer iolog = 0, iolog_n = 0;
+initial if (!$value$plusargs("IOLOG=%d", iolog)) iolog = 0;
+always @(posedge clk_sys) begin
+    if (iolog && iolog_n < iolog && core.m_req && core.m_we &&
+        core.A[23:20] == 4'hc && core.A[6:5] == 2'b00 && core.m_be[0]) begin
+        iolog_n = iolog_n + 1;
+        $display("[iow] f=%0d pc=%08x A=%06x addr=%02x data=%04x be=%b cnt=%b/%b/%b",
+            cur_frame, core.v60.pc, core.A, core.A[5:1], core.m_wdata,
+            core.m_be, core.io0_cnt2, core.io0_cnt1, core.io0.cnt0);
+    end
+end
 integer snd_rom_reqs = 0, snd_opcodes = 0;
 integer snd_bank_lo = 0, snd_bank_hi = 0;
 integer snd_fm1 = 0, snd_fm2 = 0, snd_rfreg = 0, snd_rfram = 0;
@@ -897,6 +908,7 @@ localparam [6:0] S_EA_VAL_V  = 7'd8;  // == s32_v60 st_t S_EA_VAL
 localparam [6:0] S_EXEC_V    = 7'd9;  // == s32_v60 st_t S_EXEC
 localparam [6:0] S_WB_MEM_V  = 7'd13; // == s32_v60 st_t S_WB_MEM
 localparam [6:0] S_NEXT_V    = 7'd15; // == s32_v60 st_t S_NEXT
+localparam [6:0] S_RSR_V     = 7'd38; // == s32_v60 st_t S_RSR
 `ifdef S32_V60_NO_FP
 localparam [6:0] S_EXC_PUSH1_V = 7'd69;   // == s32_v60 st_t S_EXC_PUSH1
 localparam [6:0] S_EXC_VEC_V   = 7'd73;   // == s32_v60 st_t S_EXC_VEC
@@ -910,6 +922,130 @@ always @(posedge clk_sys) begin
     if ((core.v60.st == S_EXC_PUSH1_V) && !exc_d) begin
         if (core.v60.exc_vector >= 8'h40) n_irq = n_irq + 1;
         else n_exc = n_exc + 1;
+    end
+end
+
+// Narrow Spider-Man fetch/PC diagnostic.  The ROM branch at 0x062174 is
+// encoded 62 C2; its only legal successors are 0x062136 and 0x062176.
+// Keep this opt-in and observation-only so normal boot runs are unchanged.
+always @(posedge clk_sys) begin
+    if ($test$plusargs("PFTRACE") && core.v60.ce &&
+        core.v60.pc == 32'h0006_2168) begin
+        $display("[pfretire] pc=%08x st=%0d flags=%02x len=%0d/%0d ealen=%0d flag=%0d/%0d total=%0d execlen=%0d op=%02x b1=%02x b2=%02x",
+                 core.v60.pc, core.v60.st, core.v60.instflags,
+                 core.v60.len1, core.v60.len2, core.v60.ea_len,
+                 core.v60.flag1, core.v60.flag2, core.v60.total_len,
+                 core.v60.exec_retire_len, core.v60.opcode,
+                 core.v60.fb[1], core.v60.fb[2]);
+    end
+    if ($test$plusargs("PFTRACE") && core.v60.ce &&
+        core.v60.st == S_DECODE_V &&
+        ((core.v60.pc >= 32'h0006_2110 && core.v60.pc < 32'h0006_2190) ||
+         core.v60.opcode == 8'hc2)) begin
+        $display("[pftrace] pc=%08x st=%0d op=%02x b1=%02x base=%08x valid=%0d wr=%0d pfbusy=%0d pfaddr=%08x epoch=%0d/%0d owner=%0d req=%0d ack=%0d irqn=%0d ie=%0d",
+                 core.v60.pc, core.v60.st, core.v60.opcode, core.v60.fb[1],
+                 core.v60.fb_base, core.v60.fb_valid, core.v60.fb_wr,
+                 core.v60.pf_busy, core.v60.pf_addr, core.v60.pf_epoch,
+                 core.v60.pf_iss_epoch, core.v60.bus_owner, core.v60.bus_req,
+                 core.v60.bus_ack, core.v60.irq_n, core.v60.psw_ie);
+        if ($test$plusargs("STOPPF") && core.v60.pc == 32'h0006_216b)
+            $finish;
+        if ($test$plusargs("STOPPF") && core.v60.pc == 32'h0006_2175)
+            $fatal(1, "Spider-Man instruction boundary regressed to operand byte 0x62175");
+    end
+end
+
+// Bounded Spider-Man boot-reentry diagnostic.  The first accepted write to
+// 0x200000 is the normal cold-boot clear; a second one means software has
+// re-entered that routine.  Preserve the preceding retired instruction
+// boundaries so the re-entry producer can be compared with a read-only MAME
+// tap without changing core behavior.
+reg [31:0] spid_boot_pc [0:31];
+reg  [7:0] spid_boot_op [0:31];
+integer spid_boot_wr = 0;
+integer spid_boot_pos = 0;
+integer spid_boot_i;
+reg [6:0] spid_boot_st_d = 0;
+reg [6:0] spid_boot_ce_st_d = 0;
+reg spid_boot_left_reset = 0;
+reg [31:0] spid_boot_decode_pc_d = 0;
+reg  [7:0] spid_boot_decode_op_d = 0;
+reg  [6:0] spid_boot_decode_from_st_d = 0;
+integer spid_boot_low_xfer = 0;
+reg spid_boot_seq_on = 0;
+integer spid_boot_seq = 0;
+integer spid_boot_loop_read = 0;
+always @(posedge clk_sys) begin
+    spid_boot_st_d <= core.v60.st;
+    if (core.v60.st != 0)
+        spid_boot_left_reset <= 1'b1;
+    if ($test$plusargs("SPIDBOOTTRACE") && spid_boot_left_reset &&
+        core.v60.st == 0 && spid_boot_st_d != 0)
+        $display("[spidreset] f=%0d prev_st=%0d pc=%08x rst=%b",
+                 cur_frame, spid_boot_st_d, core.v60.pc, rst);
+    if (core.v60.ce) begin
+        if ($test$plusargs("SPIDBOOTTRACE") &&
+            core.v60.st == S_DECODE_V && spid_boot_ce_st_d != S_DECODE_V) begin
+            if ($test$plusargs("SPIDSEQTRACE") && spid_boot_seq_on &&
+                spid_boot_seq < 200000) begin
+                spid_boot_seq = spid_boot_seq + 1;
+                $display("[spidseq] ordinal=%0d pc=%08x op=%02x",
+                         spid_boot_seq, core.v60.pc, core.v60.opcode);
+            end
+            if (spid_boot_decode_pc_d >= 32'h0006_0000 &&
+                core.v60.pc < 32'h0000_1000) begin
+                spid_boot_low_xfer = spid_boot_low_xfer + 1;
+                $display("[spidlow] ordinal=%0d prev_pc=%08x prev_op=%02x prev_from_st=%0d pc=%08x op=%02x from_st=%0d sp=%08x psw=%08x",
+                         spid_boot_low_xfer,
+                         spid_boot_decode_pc_d, spid_boot_decode_op_d,
+                         spid_boot_decode_from_st_d, core.v60.pc,
+                         core.v60.opcode, spid_boot_ce_st_d,
+                         core.v60.r[31], core.v60.psw);
+            end
+            spid_boot_pc[spid_boot_pos & 31] <= core.v60.pc;
+            spid_boot_op[spid_boot_pos & 31] <= core.v60.opcode;
+            spid_boot_pos = spid_boot_pos + 1;
+            spid_boot_decode_pc_d <= core.v60.pc;
+            spid_boot_decode_op_d <= core.v60.opcode;
+            spid_boot_decode_from_st_d <= spid_boot_ce_st_d;
+        end
+        spid_boot_ce_st_d <= core.v60.st;
+    end
+    if ($test$plusargs("SPIDBOOTTRACE") && core.m_req && core.m_ack &&
+        core.m_we && !core.ack_d && core.m_be == 2'b11 &&
+        {core.A[23:1], 1'b0} == 24'h200000) begin
+        spid_boot_wr = spid_boot_wr + 1;
+        if (spid_boot_wr == 1)
+            spid_boot_seq_on <= 1'b1;
+        $display("[spidclear] ordinal=%0d f=%0d pc=%08x sp=%08x sbr=%08x ie=%b irq_n=%b cnt=%b%b ppi=%02x rst=%b",
+                 spid_boot_wr, cur_frame, core.v60.pc, core.v60.r[31],
+                 core.v60.sbr, core.v60.psw_ie, core.irq_n,
+                 core.io0_cnt1, core.io0_cnt2, core.ppi_q, rst);
+        if (spid_boot_wr == 2)
+            for (spid_boot_i = 0; spid_boot_i < 32; spid_boot_i = spid_boot_i + 1)
+                $display("[spidhist] back=%0d pc=%08x op=%02x",
+                         31-spid_boot_i,
+                         spid_boot_pc[(spid_boot_pos + spid_boot_i) & 31],
+                         spid_boot_op[(spid_boot_pos + spid_boot_i) & 31]);
+    end
+    if ($test$plusargs("SPIDBOOTTRACE") && core.v60.ce &&
+        core.v60.st == S_RSR_V && core.v60.dack) begin
+        $display("[spidrsr] pc=%08x sp=%08x pop=%08x pfbusy=%b pffast=%b fetchack=%b pfaddr=%08x epoch=%0d/%0d fbbase=%08x valid=%0d fb0=%02x",
+                 core.v60.pc, core.v60.r[31], core.v60.bus_rdata,
+                 core.v60.pf_busy, core.v60.pf_fast, core.v60.fetch_ack,
+                 core.v60.pf_addr, core.v60.pf_epoch,
+                 core.v60.pf_iss_epoch, core.v60.fb_base,
+                 core.v60.fb_valid, core.v60.fb[0]);
+    end
+    if ($test$plusargs("SPIDBOOTTRACE") && core.m_req && core.m_ack &&
+        !core.m_we && !core.ack_d && core.v60.pc == 32'h0008_9532) begin
+        spid_boot_loop_read = spid_boot_loop_read + 1;
+        $display("[spidloopread] ordinal=%0d f=%0d pc=%08x r0=%08x r2=%08x r12=%08x addr=%06x data=%04x be=%b do=%b es=%0d bit=%0d pd=%02x",
+                 spid_boot_loop_read, cur_frame, core.v60.pc,
+                 core.v60.r[0], core.v60.r[2], core.v60.r[12],
+                 {core.A[23:1], 1'b0}, core.m_rdata, core.m_be,
+                 core.eep_do, core.eeprom.es, core.eeprom.bitcnt,
+                 core.io0_pd);
     end
 end
 
@@ -1068,6 +1204,10 @@ end
 // with the V60 PC + data. MAME spawns it at frame 436 via 0x063DB5 (word0=0x8000)
 // and 0x063DBB (handler=0x64200, PC-relative). This shows whether our V60 reaches
 // those spawn stores or diverges — and with what data (sim reads back 0x56e0/0x20).
+// +QUEUETRACE=1: accepted V60 work-RAM reads/writes around the GA2 vblank
+// queue (0x20b120..0x20b180, word indices 0x5890..0x58c0).  Diagnostic only.
+integer queue_trace;
+initial if (!$value$plusargs("QUEUETRACE=%d", queue_trace)) queue_trace = 0;
 integer obj8_fd = 0;
 initial obj8_fd = $fopen("sim_obj8_writes.txt", "w");
 integer arab_obj_fd = 0;
@@ -1099,6 +1239,12 @@ always @(posedge clk_sys) begin
         $fwrite(obj8_fd, "frame=%0d pc=%08x wa=%04x data=%04x be=%b\n",
             sprdump_cur, core.v60.pc, core.wram_a, core.m_wdata, core.m_be);
         $fflush(obj8_fd);
+    end
+    if (queue_trace && core.m_req && core.sel_wram &&
+        core.wram_a >= 16'h5890 && core.wram_a <= 16'h58c0) begin
+        $display("[queue] f=%0d %s pc=%08x wa=%04x data=%04x be=%b",
+            cur_frame, core.m_we ? "W" : "R", core.v60.pc, core.wram_a,
+            core.m_we ? core.m_wdata : core.m_rdata, core.m_be);
     end
 end
 
@@ -1336,6 +1482,23 @@ always @(posedge clk_sys) begin
         io_log_n = io_log_n + 1;
         $display("[io] pc=%08x wr [%06x] = %04x be=%b",
             core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+    end
+end
+
+// +SPIDEEP: accepted 315-5296 port-D transfers with the serial EEPROM state.
+// Observation-only; used to align Spider-Man's boot EEPROM transaction with
+// the pinned MAME port trace.
+integer spideep_n = 0;
+always @(posedge clk_sys) begin
+    if ($test$plusargs("SPIDEEP") && core.m_req && core.m_ack && !core.ack_d &&
+        (core.A[23:0] == 24'hc00006 || core.A[23:0] == 24'hc0000a) &&
+        spideep_n < 256) begin
+        spideep_n = spideep_n + 1;
+        $display("[spideep] n=%0d f=%0d pc=%08x rw=%s data=%04x be=%b pd=%02x cs/sk/di=%b%b%b do=%b es=%0d bit=%0d skd=%b",
+            spideep_n, cur_frame, core.v60.pc, core.m_we ? "W" : "R",
+            core.m_we ? core.m_wdata : core.m_rdata, core.m_be, core.io0_pd,
+            core.io0_pd[5], core.io0_pd[6], core.io0_pd[7], core.eep_do,
+            core.eeprom.es, core.eeprom.bitcnt, core.eeprom.sk_d);
     end
 end
 // intc write log: what vectors/mask does the game program?
@@ -1595,6 +1758,36 @@ always @(posedge clk_sys) begin
             irqprobe_n = irqprobe_n + 1;
         end
         exc_is_interrupt_d <= core.v60.exc_is_interrupt;
+    end
+end
+
+// Diagnostic-only exception-vector bus probe.  This does not alter the core;
+// it records the exact vector address/data presented by the real V60 bus.
+integer veclog_max;
+initial if (!$value$plusargs("VECLOG=%d", veclog_max)) veclog_max = 0;
+integer veclog_n = 0;
+always @(posedge clk_sys) begin
+    if (veclog_max > 0 && veclog_n < veclog_max &&
+        core.v60.st == S_EXC_VEC_V && core.v60.bus_req && core.v60.bus_ack) begin
+        $display("[veclog] f=%0d pc=%08x addr=%08x size=%0d req=%b ack=%b rdata=%08x",
+            cur_frame, core.v60.pc, core.v60.bus_addr, core.v60.bus_size,
+            core.v60.bus_req, core.v60.bus_ack, core.v60.bus_rdata);
+        veclog_n = veclog_n + 1;
+    end
+end
+
+// Diagnostic-only handler operand probe for the first causal GA2 IRQ write.
+integer hlog_max;
+initial if (!$value$plusargs("HLOG=%d", hlog_max)) hlog_max = 0;
+integer hlog_n = 0;
+always @(posedge clk_sys) begin
+    if (hlog_max > 0 && hlog_n < hlog_max &&
+        (core.v60.pc == 32'h001006e2 || core.v60.pc == 32'h001006ec) &&
+        (core.m_req || core.A == 24'hc0001c)) begin
+        $display("[hlog] f=%0d pc=%08x st=%0d r25=%08x A=%06x req=%b we=%b ack=%b mrd=%04x mwd=%04x",
+            cur_frame, core.v60.pc, core.v60.st, core.v60.r[25],
+            core.A, core.m_req, core.m_we, core.m_ack, core.m_rdata, core.m_wdata);
+        hlog_n = hlog_n + 1;
     end
 end
 

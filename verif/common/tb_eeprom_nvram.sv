@@ -39,7 +39,12 @@ s32_eeprom_nvram_if nvram_if (
     .ioctl_din(ioctl_din)
 );
 
-s32_eeprom93c46 dut (
+s32_eeprom93c46 #(
+    .WRITE_BUSY_CYCLES(96),
+    .ERASE_BUSY_CYCLES(72),
+    .WRITE_ALL_BUSY_CYCLES(96),
+    .ERASE_ALL_BUSY_CYCLES(96)
+) dut (
     .clk(clk), .rst(rst),
     .di(di), .cs(cs), .sk(sk), .dout(dout),
     .ld_wr(ld_wr), .ld_addr(ld_addr), .ld_data(ld_data),
@@ -145,6 +150,27 @@ begin
 end
 endtask
 
+task automatic poll_busy_ready(input [255:0] name);
+integer polls;
+begin
+    @(negedge clk);
+    cs = 1'b1;
+    sk = 1'b0;
+    di = 1'b0;
+    @(posedge clk);
+    #1;
+    check(dout === 1'b0, {name, " busy drives DO low"});
+    polls = 0;
+    while (dout !== 1'b1 && polls < 256) begin
+        @(posedge clk);
+        #1;
+        polls = polls + 1;
+    end
+    check(dout === 1'b1, {name, " completion drives READY high"});
+    end_command();
+end
+endtask
+
 task automatic load_word(input [5:0] address, input [15:0] data);
 begin
     @(negedge clk);
@@ -235,6 +261,9 @@ initial begin
     write_word(6'd5, 16'hA55A);
     check(modified, "enabled WRITE marks dirty");
     check_word(6'd5, 16'hA55A);
+    command_only(8'h00); // EWDS attempt must be ignored during WRITE busy
+    check(dut.ewen, "busy EEPROM rejects a new command");
+    poll_busy_ready("WRITE");
     read_word(6'd5, serial_readback);
     check(serial_readback === 16'hA55A, "serial READ returns written word");
 
@@ -262,6 +291,7 @@ initial begin
     command_only(8'hC5); // ERASE word 5
     check(modified, "enabled ERASE marks dirty");
     check_word(6'd5, 16'hFFFF);
+    poll_busy_ready("ERASE");
 
     load_word(6'd5, 16'h1357);
     check(!modified, "loader write clears dirty");
@@ -271,6 +301,7 @@ initial begin
     check(!modified, "WRAL remains clean until final RAM commit");
     wait_bulk_write();
     check(modified, "enabled WRAL marks dirty");
+    poll_busy_ready("WRAL");
     check_word(6'd0, 16'h2468);
     check_word(6'd63, 16'h2468);
     set_upload(16'd3, 1'b1);
@@ -281,6 +312,7 @@ initial begin
     check(!modified, "ERAL remains clean until final RAM commit");
     wait_bulk_write();
     check(modified, "enabled ERAL marks dirty");
+    poll_busy_ready("ERAL");
     check_word(6'd0, 16'hFFFF);
     check_word(6'd63, 16'hFFFF);
 

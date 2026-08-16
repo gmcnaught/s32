@@ -329,3 +329,45 @@ for anyone resuming this investigation.
 3. Cross-check with `S32_REAL_V25` per Iteration 1's open item 4, since this ISR is unrelated to
    V25/protection and would presumably show the identical symptom, which would help rule in/out
    any V25-HLE-timing interaction with the main V60's interrupt cadence.
+
+## Iteration 2026-08-15 — Golden Axe MAME attract reference only (differential incomplete)
+
+Scenario / first divergence before fix: `ga2-cold-no-input-attract`; no RTL comparison was run in
+this capture-only iteration. The requested MAME reference had previously been suspected of a
+black-screen attract failure.
+
+Completion status: **INCOMPLETE — paired MAME/Verilator differential not completed.** The MAME
+lane exists, but the required Verilator and comparator receipts are missing.
+
+Observation / violated invariant: **KNOWN** — pinned MAME 0.289 reaches a visible 320x224
+no-credit attract/demo screen by frame 180; it is not a full-frame black output.
+
+Evidence classification: **KNOWN**, MAME MCP preflight and two independent headless cold runs.
+The complete manifest, scripts, logs, PNGs, state and hashes are in
+`artifacts/mame-mcp/ga2/attract-20260815/manifest.json`. MAME executable SHA-256 is
+`AF6966108D9B52C22465C6D50F4E5D50CC371B50F2D27DC443935F287AAD37A3`; external merged `ga2.zip`
+SHA-256 is `C2B3F542369CA2B3B63EF6A4F66D7E8DF8FE8AE73907671041176E1DC850F575`.
+
+Competing hypotheses + falsification tests: black MAME output versus capture/backend failure
+versus a real emulation failure. The two clean `-video none -sound none -nothrottle` runs produced
+byte-identical PNGs at frames 60, 120 and 180, falsifying nondeterministic MAME output and the
+full-frame-black hypothesis for the pinned reference.
+
+Selected earliest-causal explanation: not applicable; no RTL change selected. The MAME-only
+reference artifact is bound to cold boot, no inputs, frame 180, 320x224, main V60 PC
+`0x0013350B`; it is not a completed differential golden.
+
+MAME MCP preflight/session status: ping PASS; config_check PASS; `ga2` ROM audit PASS; get_ioports
+PASS; persistent session PASS; reference untainted.
+
+Checkpoint used / issue checkpoint saved: no prior checkpoint. A supplementary live MAME state was
+saved as `checkpoint/states/ga2/ga2-attract-menu-2772.sta`; use the exact frame-180 PNG as the
+comparison reference because MAME's external frame counter is not restored by the MCP state load.
+
+MAME-only targeted test: PASS — frame 60/120/180 PNG bytes identical across both clean runs.
+Verilator receipt: MISSING. Comparator receipt: MISSING. Regressions: N/A — no RTL change. No
+final RBF was built.
+
+Known unknowns / next action: Verilator has not yet been driven to the same frame-180 barrier; the
+next step is to compare its native 320x224 attract output and earliest liveness/state boundary
+against this pinned golden.
