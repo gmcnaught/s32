@@ -195,7 +195,7 @@ always @(posedge clk) begin
                             desc_r.v25_table   <= desc_bytes[0][2];
                             desc_r.has_adc     <= desc_bytes[0][3];
                             desc_r.has_ppi     <= desc_bytes[0][5];
-                            desc_r.has_dsp_hle <= desc_bytes[0][6];
+                            desc_r.has_motor_hle <= desc_bytes[0][6];
                             desc_r.dual_pcb    <= desc_bytes[1][0];
                             desc_r.prot_sel    <= desc_bytes[2][6:0];
                             desc_r.sprite_bank_valid <= desc_bytes[3][7];
@@ -245,7 +245,7 @@ always @(posedge clk) begin
                             desc_r.v25_table   <= desc_bytes[0][2];
                             desc_r.has_adc     <= desc_bytes[0][3];
                             desc_r.has_ppi     <= desc_bytes[0][5];
-                            desc_r.has_dsp_hle <= desc_bytes[0][6];
+                            desc_r.has_motor_hle <= desc_bytes[0][6];
                             desc_r.dual_pcb    <= desc_bytes[1][0];
                             desc_r.prot_sel    <= desc_bytes[2][6:0];
                             desc_r.sprite_bank_valid <= desc_bytes[3][7];

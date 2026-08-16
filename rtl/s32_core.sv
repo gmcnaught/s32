@@ -196,6 +196,7 @@ wire       cfg_has_v25           = board.has_v25;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_ppi           = board.has_ppi;
+wire       cfg_has_motor_hle     = board.has_motor_hle;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
 wire [6:0] cfg_prot_sel          = board.prot_sel;
 wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
@@ -207,6 +208,7 @@ wire       cfg_has_v25           = board.has_v25;
 wire       cfg_v25_table         = board.v25_table;
 wire       cfg_has_adc           = board.has_adc;
 wire       cfg_has_ppi           = board.has_ppi;
+wire       cfg_has_motor_hle     = board.has_motor_hle;
 wire       cfg_comm_link_hle     = board.comm_link_hle;
 wire [6:0] cfg_prot_sel          = board.prot_sel;
 wire       cfg_sprite_bank_valid = board.sprite_bank_valid;
@@ -1008,20 +1010,30 @@ end
 // I/O chips + EEPROM
 // ---------------------------------------------------------------------------
 wire [7:0] io0_q, io1_q;
-wire [7:0] io0_pd, io0_pg, io1_ph;
+wire [7:0] io0_pc, io0_pd, io0_pg, io0_dir, io1_ph;
+wire [7:0] radm_motor_q;
+wire       radm_motor_sel;
+wire [7:0] io0_pc_in = radm_motor_sel ? radm_motor_q : in_portc;
 wire       eep_do;
+
+s32_radm_motor_mailbox radm_motor (
+    .clk(clk_sys), .rst(rst), .enable(cfg_has_motor_hle),
+    .address(io0_pg), .data_out(io0_pc), .data_output_en(io0_dir[2]),
+    .strobe_n(io0_pd[4]), .data_in(radm_motor_q), .selected(radm_motor_sel)
+);
 
 s32_io5296 io0 (
     .clk(clk_sys), .rst(rst),
     .cs(m_req && sel_io0 && m_be[0]), .we(m_we),
     .addr(A[5:1]), .wdata(m_wdata[7:0]), .rdata(io0_q),
     .in_pa(in_p1a), .in_pb(in_p2a),
-    .in_pc(in_portc),                          // B2: portc no longer carries EEPROM
+    .in_pc(io0_pc_in),                         // RadM: bidirectional moving-board bus
     .in_pe(in_svc12),
     // System 32 EEPROM DO on SERVICE34_A bit 7; Multi 32 reads it on io1 instead
     // (see io1 below), so don't force eep_do onto io0 bit 7 in Multi 32.
     .in_pf(is_multi32 ? in_svc34 : {eep_do, in_svc34[6:0]}),
-    .out_pd(io0_pd), .out_pg(io0_pg), .out_ph(io0_ph),
+    .out_pc(io0_pc), .out_pd(io0_pd), .out_pg(io0_pg), .out_ph(io0_ph),
+    .dir_out(io0_dir),
     .cnt0(), .cnt1(io0_cnt1), .cnt2(io0_cnt2)
 );
 assign out_lamps = io0_pd;
@@ -1035,7 +1047,7 @@ s32_io5296 io1 (
     // (MAME io_chip_1.in_pf = SERVICE34_B, do_read on bit 7); previously io1 got
     // constant 0xff there, so Multi 32 NVRAM boot never converged (audit R23-F1).
     .in_pe(in_svc12_b), .in_pf(is_multi32 ? {eep_do, in_svc34_b[6:0]} : in_svc34_b),
-    .out_pd(), .out_pg(), .out_ph(io1_ph),
+    .out_pc(), .out_pd(), .out_pg(), .out_ph(io1_ph), .dir_out(),
     // cnt1 = screen-B display enable (MAME io_chip_1 out_cnt1 -> display_enable_w<1>).
     .cnt0(), .cnt1(io1_cnt1), .cnt2()
 );

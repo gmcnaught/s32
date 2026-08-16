@@ -21,8 +21,23 @@ class FileLock:
 
     def __enter__(self) -> "FileLock":
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = self.path.open("a+b")
         deadline = time.monotonic() + self.timeout_s
+
+        # On Windows, a process holding this file with restrictive sharing
+        # makes the second open fail with PermissionError before
+        # msvcrt.locking() can report ordinary contention.  Treat that exact
+        # failure as contention and wait; otherwise every queued heavy task
+        # fails immediately while the owner is still running.
+        while self.handle is None:
+            try:
+                self.handle = self.path.open("a+b")
+            except PermissionError as exc:
+                if time.monotonic() >= deadline:
+                    raise LockTimeout(
+                        f"Timed out waiting for heavy-job lock: {self.path}"
+                    ) from exc
+                time.sleep(self.poll_s)
+
         while True:
             try:
                 if os.name == "nt":

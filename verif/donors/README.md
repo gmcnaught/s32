@@ -8,6 +8,7 @@ instantiated by the production `segas32` profile.
 | D001 | [jotego/jt8255](https://github.com/jotego/jt8255/tree/3bb5f7ea461fc7d72b847ec55ce997e5d5bc1754), `3bb5f7ea461fc7d72b847ec55ce997e5d5bc1754` | MIT | `jt8255.v` is retained verbatim as the Intel 8255 comparison model; `LICENSE.jt8255` is retained | Structurally shared; reverified by `tb_i8255_conformance` |
 | D002 | [jotego/jtcores](https://github.com/jotego/jtcores/tree/1268a90e365c2520b412f224ae30d20c61aa0031), `1268a90e365c2520b412f224ae30d20c61aa0031` | GPL-3.0-or-later | `jts18_io` was inspected as a 315-5296 reference only | Rejected for copying: System 18 register map is not System 32 |
 | D003 | [MiSTer-devel/Arcade-IremM92_MiSTer](https://github.com/MiSTer-devel/Arcade-IremM92_MiSTer/tree/68a4683e237eafca02e3df56dd84bacc255fba55), `68a4683e237eafca02e3df56dd84bacc255fba55` | GPL-2.0 | MiSTer integration/reference patterns only | No System 32 chip RTL imported |
+| D004 | [rmonic79/MiSTer-CRT-Adjust](https://github.com/rmonic79/MiSTer-CRT-Adjust/tree/c682de9f4acc61d8f4c7779efb48149d3baa3a8e), `c682de9f4acc61d8f4c7779efb48149d3baa3a8e` | GPL-3.0-or-later | `rtl/crt_adjust.sv`, core-side analog geometry stage; project glue in `Arcade-SegaSystem32.sv` | Imported and integrated; HDMI/scandoubler safety gates are core-specific |
 
 The upstream JT8255 source hash is
 `208f61e0e39ad8c468b2bba69fd04b26e6ad6bdc047b811af7cf64107d883b67`.
@@ -19,6 +20,18 @@ No compatible open RTL was found for Jurassic Park's drive board, EPR-14084,
 or the remaining System 32 protection devices. Those remain evidence-led
 implementation tasks; no excluded Multi 32, Air Rescue, F1 Exhaust Note, CD,
 or AS-1 hardware is introduced here.
+
+## D004 import details
+
+The upstream `rtl/crt_adjust.sv` SHA-256 is
+`E66C4BAE75CA86606C134FA82E57F63274331422A2C8931188495DFEAC5AFC21`.
+The retained project file SHA-256 is
+`9B4D2832F3F4DF932063C87D7CD920A97940F4DB85AC4F7F9D7D822ED9E07A44`.
+The local difference is limited to exposing the existing AW=10 storage width
+as a parameter and documenting the measured Cyclone V memory cost; the default
+hardware behavior remains AW=10. The upstream source header and GPL-3 notice
+remain in the file. The project uses only the core-side module; the upstream
+sys-side and experimental V-Size variants are not compiled or imported.
 
 ## Evidence-gated gaps
 

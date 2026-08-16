@@ -85,7 +85,7 @@ package s32_pkg;
         logic       v25_table;     // 0=ga2 table, 1=arf table
         logic       has_adc;       // MSM6253 analog board
         logic       has_ppi;       // i8255 4/6-player board
-        logic       has_dsp_hle;   // reserved descriptor bit; unsupported
+        logic       has_motor_hle; // Rad Mobile 837-7753 mailbox responder
         logic       dual_pcb;      // reserved descriptor bit; unsupported
         logic [6:0] prot_sel;      // HLE protection select (PROT_*)
         logic       comm_link_hle; // descriptor-selected EPR-14084 link HLE

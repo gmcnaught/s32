@@ -39,7 +39,7 @@ STREAM_ORDER = ["maincpu", "soundcpu", "tiles", "sega", "mcu", "sprites"]
 REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 
 # board descriptor per parent (DESIGN.md §3.4):
-#   b0: flags {multi32,v25,v25table,adc,reserved,ppi,dsp_hle}
+#   b0: flags {multi32,v25,v25table,adc,reserved,ppi,motor_hle}
 #       multi32 is retained because the RTL still parses the bit, but it is
 #       always 0 here: this repository emits no Multi 32 set.
 #   b1: bit0=dual_pcb, bit1=vertical orientation flip, bits3:2=reserved,
@@ -52,9 +52,9 @@ ANALOG = dict(CENTERED=0, DRIVING=1, ALL_FF=2)
 DIGITAL = dict(GENERIC=0, RADM=1)
 def desc(multi32=0, v25=0, v25table=0, adc=0, ppi=0,
          dual=0, flip_y=0, prot=0, analog=0, dual_ff=0,
-         comm_hle=0, gear_toggle=0, digital=0, dsp=0):
+         comm_hle=0, gear_toggle=0, digital=0, motor_hle=0):
     b0 = (multi32 | v25 << 1 | v25table << 2 | adc << 3 |
-          ppi << 5 | dsp << 6)
+          ppi << 5 | motor_hle << 6)
     b1 = (dual | (flip_y << 1) | (analog << 4) |
           (dual_ff << 6) | (gear_toggle << 7))
     b2 = prot | (comm_hle << 7)
@@ -72,14 +72,11 @@ GAMES = {
     "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
     "holo":     desc(flip_y=1),
-    # Rad Mobile is a plain analog driving board: MAME's init_radm installs no
-    # protection handler, no ROM poke and no communication link -- only the two
-    # cabinet lamp/wiper switch outputs.  So it needs exactly the MSM6253 ADC
-    # (b0 bit3) plus the shared driving analog defaults (b1[5:4]=DRIVING) and
-    # the RADM player-port layout (byte 4), where P1_A bit0 is unused and
-    # Light/Wiper sit on bits 1/2 instead of the generic bits 0/1.
+    # Rad Mobile Deluxe adds the 837-7753 moving-controller mailbox on the
+    # 315-5296 C/G/D port group. MAME does not emulate that board, but the Sega
+    # manual, main ROM transaction loop and EPR-13686 handshake establish it.
     "radm":     desc(adc=1, analog=ANALOG["DRIVING"],
-                     digital=DIGITAL["RADM"]),
+                     digital=DIGITAL["RADM"], motor_hle=1),
     "radr":     desc(adc=1, analog=ANALOG["DRIVING"], comm_hle=1,
                      gear_toggle=1),
     "spidman":  desc(ppi=1),
@@ -96,12 +93,14 @@ GAMES = {
     # Multi32ExclusionTests in verif/test_gen_mra.py fails if one reappears.
 }
 
-# These parent sets are intentionally no longer part of the production profile.
+# These parents/sets are intentionally no longer part of the production
+# profile.  Keep clone names explicit when their parent is supported, otherwise
+# the parent fallback in gen() would emit them.
 # Keep the exclusion explicit so a future source refresh cannot re-emit them by
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
     "alien3", "arescue", "brival", "dbzvrvs", "f1en", "f1lap",
-    "jleague", "jpark", "sonic", "svf",
+    "jleague", "jleagueo", "jpark", "sonic", "svf", "svfo",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -319,9 +318,9 @@ def gen(setname, data, outdir):
     if setname in IGNORED_PARENTS or parent in IGNORED_PARENTS:
         return False
     # A set-specific entry must override its parent's board descriptor when
-    # MAME installs a different init/protection handler for the clone.  This
-    # matters for the J.League handler; falling back to the parent is correct
-    # only when no explicit set entry exists.
+    # MAME installs a different init/protection handler for the clone;
+    # falling back to the parent is correct only when no explicit set entry
+    # exists.
     d_base = GAMES.get(setname) or GAMES.get(parent)
     if d_base is None or setname in UNSUPPORTED:
         return False

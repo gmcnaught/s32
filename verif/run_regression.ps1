@@ -439,6 +439,7 @@ $FullCoreSources = @(
     "rtl/cpu/v60/s32_v60.sv",
     "rtl/cpu/v60/s32_v60_bus.sv"
 ) + $VideoSources + @(
+    "rtl/crt_adjust.sv",
     "rtl/audio/s32_rf5c68.sv",
     "rtl/audio/s32_multipcm.sv",
     "rtl/audio/s32_audio_mix.sv",
@@ -711,6 +712,11 @@ try {
     Run-HdlTest "t37_radm_msm6253" "tb_radm_msm6253" @(
         "rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_radm_msm6253.sv"
     ) "RAD MOBILE MSM6253 PASS"
+
+    Write-Tier 37 "Rad Mobile 315-5296 bidirectional bus and 837-7753 mailbox"
+    Run-HdlTest "t37_radm_motor" "tb_radm_motor_mailbox" @(
+        "rtl/s32_pkg.sv", "rtl/io/s32_io.sv", "verif/common/tb_radm_motor_mailbox.sv"
+    ) "RAD MOBILE MOTOR MAILBOX PASS"
 
     Write-Tier 38 "real encrypted GA2 V25 firmware and exact 10 MHz CE cadence"
     $v25Output = @(& (Join-Path $Root "verif/v25/run_v25_firmware.ps1") -ModelSimBin $ModelSimDirectory 2>&1)

@@ -17,6 +17,9 @@
 //    +FRAMES=<n>    frames to run (804k clk_sys each), default 3
 //    +REQUIRE_VERILATOR_SCREENSHOT  require +DUMPAT to produce a non-black
 //                   PPM from this same full-core Verilator run
+//    +DUMP5         write companion native RGB5 P6 PPM files (maxval=31)
+//    +NATIVE5ONLY   write only native RGB5 files, omitting the diagnostic PPM
+//    +REQUIRE_VERILATOR_NATIVE5 require a completed native RGB5 capture
 //    +COINAT=<n>     assert P1 coin active-low starting at harness frame n
 //    +COINLEN=<n>    coin assertion length in frames, default 1
 //    +COIN2AT/LEN    optional second deterministic coin pulse
@@ -206,6 +209,7 @@ initial begin
     board.v25_table   = b0[2];
     board.has_adc     = b0[3];
     board.has_ppi     = b0[5];
+    board.has_motor_hle = b0[6];
     board.dual_pcb    = b1[0];
     board.flip_y      = b1[1];
     board.analog_profile = b1[5:4];
@@ -214,9 +218,10 @@ initial begin
     board.prot_sel    = b2[6:0];
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
-    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d ppi=%0d dual=%0d prot=%0d flip_y=%0d analog=%0d sbm=%0d",
+    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d ppi=%0d motor=%0d dual=%0d prot=%0d flip_y=%0d analog=%0d sbm=%0d",
              board.multi32, board.has_v25, board.v25_table,
-             ga2_qualification, board.has_adc, board.has_ppi, board.dual_pcb,
+             ga2_qualification, board.has_adc, board.has_ppi,
+             board.has_motor_hle, board.dual_pcb,
              board.prot_sel, board.flip_y,
              board.analog_profile,
              board.sprite_bank_mask);
@@ -1072,7 +1077,10 @@ always @(posedge clk_sys) if (ce_cpu) begin
 end
 
 // frame capture: with +DUMPAT=<frame#> (+DUMPN=<count>, default 1) write
-// active-video pixels of those frames as PPM files (dump<frame>.ppm in cwd)
+// active-video pixels of those frames as PPM files (dump<frame>.ppm in cwd).
+// +DUMP5 adds dump<frame>.rgb5.ppm, whose P6 samples are the native 5-bit
+// channels before 8-bit presentation expansion; this is the canonical video
+// comparison surface, while the 8-bit PPM remains diagnostic preview output.
 integer dump_at, dump_n, dump_fd = 0, dump_x, dump_y, dump_every, live_every;
 reg dumping = 0;
 integer dump_nonblack = 0;
@@ -1085,7 +1093,19 @@ integer live_slot = 0, live_write_slot = 0, live_meta_fd = 0;
 reg dump_complete = 0;
 reg dump_nonblack_seen = 0;
 reg require_verilator_screenshot = 0;
+integer native5_fd = 0, native5_x = 0, native5_y = 0;
+integer native5_nonblack = 0;
+integer native5_frame = -1;
+reg native5_enabled = 0, native5_only = 0, native5_dumping = 0;
+reg native5_complete = 0, native5_nonblack_seen = 0;
+reg require_verilator_native5 = 0;
 initial require_verilator_screenshot = $test$plusargs("REQUIRE_VERILATOR_SCREENSHOT");
+initial begin
+    native5_enabled = $test$plusargs("DUMP5") || $test$plusargs("NATIVE5ONLY") ||
+                       $test$plusargs("REQUIRE_VERILATOR_NATIVE5");
+    native5_only = $test$plusargs("NATIVE5ONLY");
+    require_verilator_native5 = $test$plusargs("REQUIRE_VERILATOR_NATIVE5");
+end
 initial begin
     if (!$value$plusargs("DUMPAT=%d", dump_at)) dump_at = -1;
     if (!$value$plusargs("DUMPN=%d", dump_n)) dump_n = 1;
@@ -1480,8 +1500,9 @@ always @(posedge clk_sys) begin
     if (core.m_req && core.m_ack && core.m_we && !core.ack_d &&
         core.A[23:16] == 8'hC0 && io_log_n < 120) begin
         io_log_n = io_log_n + 1;
-        $display("[io] pc=%08x wr [%06x] = %04x be=%b",
-            core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+        if (!quiet)
+            $display("[io] pc=%08x wr [%06x] = %04x be=%b",
+                core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
     end
 end
 
@@ -1507,8 +1528,9 @@ always @(posedge clk_sys) begin
     if (core.m_req && core.m_ack && core.m_we && !core.ack_d &&
         core.A[23:16] == 8'hD0 && intc_log_n < 40) begin
         intc_log_n = intc_log_n + 1;
-        $display("[intc] pc=%08x wr [%06x] = %04x be=%b",
-            core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
+        if (!quiet)
+            $display("[intc] pc=%08x wr [%06x] = %04x be=%b",
+                core.v60.pc, {core.A[23:1],1'b0}, core.m_wdata, core.m_be);
     end
 end
 
@@ -1517,7 +1539,8 @@ integer ldpr_n = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.st == S_EXEC_V && core.v60.cur_op == 8'h12 && ldpr_n < 16) begin
         ldpr_n = ldpr_n + 1;
-        $display("[ldpr] pc=%08x op1=%08x op2=%08x", core.v60.pc, core.v60.op1, core.v60.op2);
+        if (!quiet)
+            $display("[ldpr] pc=%08x op1=%08x op2=%08x", core.v60.pc, core.v60.op1, core.v60.op2);
     end
 end
 
@@ -1525,7 +1548,8 @@ end
 reg [31:0] sbr_prev = 0;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.sbr != sbr_prev) begin
-        $display("[sbr] pc=%08x sbr %08x -> %08x", core.v60.pc, sbr_prev, core.v60.sbr);
+        if (!quiet)
+            $display("[sbr] pc=%08x sbr %08x -> %08x", core.v60.pc, sbr_prev, core.v60.sbr);
         sbr_prev = core.v60.sbr;
     end
 end
@@ -1536,12 +1560,13 @@ always @(posedge clk_sys) if (ce_cpu) begin
     if (core.v60.st == S_EXC_VEC_V && core.v60.bus_req && core.v60.bus_ack &&
         exc_log_n < 12) begin
         exc_log_n = exc_log_n + 1;
-        $display("[exc] vec=%02x sbr=%08x sp=%08x retpc=%08x handler=[%08x]=%08x cur_op=%02x bus=%b/%b addr=%08x rdata=%08x cdata=%08x m=%b/%b/%04x",
-            core.v60.exc_vector, core.v60.sbr, core.v60.r[31], core.v60.exc_retpc,
-            (core.v60.sbr & ~32'hfff) + {22'b0, core.v60.exc_vector, 2'b00},
-            core.v60.bus_rdata, core.v60.cur_op, core.v60.bus_req,
-            core.v60.bus_ack, core.v60.bus_addr, core.v60.bus_rdata,
-            core.c_rdata, core.m_req, core.m_ack, core.m_rdata);
+        if (!quiet)
+            $display("[exc] vec=%02x sbr=%08x sp=%08x retpc=%08x handler=[%08x]=%08x cur_op=%02x bus=%b/%b addr=%08x rdata=%08x cdata=%08x m=%b/%b/%04x",
+                core.v60.exc_vector, core.v60.sbr, core.v60.r[31], core.v60.exc_retpc,
+                (core.v60.sbr & ~32'hfff) + {22'b0, core.v60.exc_vector, 2'b00},
+                core.v60.bus_rdata, core.v60.cur_op, core.v60.bus_req,
+                core.v60.bus_ack, core.v60.bus_addr, core.v60.bus_rdata,
+                core.c_rdata, core.m_req, core.m_ack, core.m_rdata);
     end
 end
 
@@ -2122,9 +2147,10 @@ initial if (!$value$plusargs("MIXWMAX=%d", mixw_max)) mixw_max = 80;
 always @(posedge clk_sys) begin
     if (core.mix0.reg_we && mixw_n < mixw_max) begin
         mixw_n = mixw_n + 1;
-        $display("[mixw] f=%0d pc=%08x mreg[%02x] <= %04x (byte ofs %03x) busA=%06x",
-            cur_frame, core.v60.pc, core.mix0.reg_addr, core.mix0.reg_wdata,
-            {core.mix0.reg_addr, 1'b0}, {core.A[23:1],1'b0});
+        if (!quiet)
+            $display("[mixw] f=%0d pc=%08x mreg[%02x] <= %04x (byte ofs %03x) busA=%06x",
+                cur_frame, core.v60.pc, core.mix0.reg_addr, core.mix0.reg_wdata,
+                {core.mix0.reg_addr, 1'b0}, {core.A[23:1],1'b0});
     end
 end
 

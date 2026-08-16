@@ -5,21 +5,18 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 root="$PWD"
-build_dir="scratch/verilator-real-v25-arabfgt/obj_dir"
 run_id="${ARAB_RUN_ID:-latest}"
 out_dir="scratch/arabfgt-regression/$run_id"
 microcode="$root/rtl/cpu/v25/s80x86/generated"
 warn="-Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT -Wno-BLKANDNBLK -Wno-CASEINCOMPLETE -Wno-MULTIDRIVEN -Wno-INITIALDLY -Wno-DECLFILENAME -Wno-SYNCASYNCNET"
 verilator_safe="${VERILATOR_SAFE:-verilator-safe}"
 verilator_sim_safe="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
-if ! command -v "$verilator_safe" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
-  verilator_safe=/mnt/c/Users/meath/bin/verilator-safe.exe
-fi
-if ! command -v "$verilator_sim_safe" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  verilator_sim_safe=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
-fi
+command -v "$verilator_safe" >/dev/null 2>&1 || { echo "missing $verilator_safe" >&2; exit 127; }
+
+source verif/verilator/workspace.sh
+s32_verilator_workspace "$verilator_safe"
+build_dir="$(s32_verilator_mdir arabfgt_obj)"
+command -v "$verilator_sim_safe" >/dev/null 2>&1 || { echo "missing $verilator_sim_safe" >&2; exit 127; }
 
 mkdir -p "$build_dir" "$out_dir"
 "$verilator_safe" status
@@ -37,7 +34,7 @@ mkdir -p "$build_dir" "$out_dir"
 
 (
   cd "$out_dir"
-  "$verilator_sim_safe" -- "$root/$build_dir/romboot" \
+  "$verilator_sim_safe" -- "$build_dir/romboot" \
     +IMG="$root/roms/sim/arabfgt" +B0=26 +B1=0 +B2=0 +SBM=3 \
     +CPUDIV=2 +FRAMES=155 +ARABPERFAT=140 +ARABPERFN=13 \
     +ARABHEAVYAT=148 +ARABHEAVYN=6 +ARABHEAVYMIN=3 \

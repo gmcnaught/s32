@@ -3,25 +3,23 @@
 # map which parities trigger the request-drop.  Builds once per (dut,phase).
 set -u
 cd "$(dirname "$0")/../.." || exit 1
-MDIR=/tmp/vsweep
 WARN="-Wno-fatal -Wno-DECLFILENAME -Wno-UNUSEDPARAM -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-INITIALDLY"
 VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
 VERILATOR_SIM_SAFE="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
-if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
-  VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
-fi
-if ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  VERILATOR_SIM_SAFE=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
-fi
+command -v "$VERILATOR_SAFE" >/dev/null 2>&1 || { echo "missing $VERILATOR_SAFE" >&2; exit 127; }
+
+source verif/verilator/workspace.sh
+s32_verilator_workspace "$VERILATOR_SAFE"
+MDIR="$(s32_verilator_mdir vsweep)"
+BUILD_LOG="$S32_VERILATOR_WORKSPACE/vb.log"
+command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 || { echo "missing $VERILATOR_SIM_SAFE" >&2; exit 127; }
 
 build() {  # $1=dut $2=phase(edge|half) -> binary at $MDIR/sim
   local def="+define+SIMULATION"; [ "$2" = half ] && def="$def +define+HALF_OFFSET"
   "$VERILATOR_SAFE" status
   "$VERILATOR_SAFE" --binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4 $WARN --top-module tb_sdram_edge $def \
-     --Mdir "$MDIR" -o sim verif/verilator/tb_sdram_edge.sv "$1" >/tmp/vb.log 2>&1 \
-     || { echo "BUILD FAIL"; tail -4 /tmp/vb.log; return 1; }
+     --Mdir "$MDIR" -o sim verif/verilator/tb_sdram_edge.sv "$1" >"$BUILD_LOG" 2>&1 \
+     || { echo "BUILD FAIL"; tail -4 "$BUILD_LOG"; return 1; }
 }
 
 sweep() {  # $1=label $2=dut $3=phase

@@ -557,6 +557,38 @@ class CIWorkflowSafetyTests(unittest.TestCase):
         self.assertNotIn("upload-artifact", lowered)
         self.assertNotIn("action-gh-release", lowered)
 
+
+class VerilatorPathContractTests(unittest.TestCase):
+    def test_verilator_scripts_use_global_ram_workspace_allocator(self) -> None:
+        helper = (REPO_ROOT / "verif" / "verilator" / "workspace.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("workspace", helper)
+        self.assertIn("VERILATOR_WORKSPACE", helper)
+        self.assertIn("Rr]:\\\\Verilator", helper)
+
+        script_roots = (REPO_ROOT / "verif", REPO_ROOT / "tools")
+        offenders: list[str] = []
+        for root in script_roots:
+            for path in (*root.rglob("*.sh"), *root.rglob("*.ps1")):
+                if path.resolve() == Path(__file__).resolve():
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                if "verilator-safe" not in text.lower() and "--Mdir" not in text:
+                    continue
+                normalized = text.replace("\\", "/").lower()
+                forbidden = (
+                    "c:/msys64",
+                    "/mnt/c/users/meath/bin/verilator",
+                    "/c/users/meath/bin/verilator",
+                    "scratch/tmp",
+                    "--mdir obj_dir",
+                )
+                hits = [token for token in forbidden if token in normalized]
+                if hits:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}: {', '.join(hits)}")
+        self.assertEqual(offenders, [], "stale Verilator paths:\n" + "\n".join(offenders))
+
 class DeprecatedEntrypointTests(unittest.TestCase):
     @staticmethod
     def assert_actionable_failure(result: subprocess.CompletedProcess[str]) -> None:

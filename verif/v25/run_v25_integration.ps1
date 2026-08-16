@@ -3,12 +3,12 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$msysBash = 'C:\msys64\usr\bin\bash.exe'
+$msysRoot = 'D:\vibes\fpga\toolchains\msys64'
+$msysBash = Join-Path $msysRoot 'usr\bin\bash.exe'
 if (-not (Test-Path -LiteralPath $msysBash -PathType Leaf)) {
     throw 'MSYS2 bash is required for the native Windows V25 integration runner.'
 }
 
-$taskTemp = Join-Path $repoRoot 'scratch\tmp'
 $buildDir = $null
 $validatedBuildDir = $false
 $savedPath = $env:PATH
@@ -17,8 +17,7 @@ $savedSimSafe = $env:S32_VERILATOR_SIM_SAFE
 $savedBuildOnly = $env:S32_V25_BUILD_ONLY
 $savedKeepBuild = $env:KEEP_BUILD
 try {
-    New-Item -ItemType Directory -Force -Path $taskTemp | Out-Null
-    $env:PATH = 'C:\msys64\ucrt64\bin;C:\msys64\usr\bin;C:\Users\meath\bin;' + $savedPath
+    $env:PATH = (Join-Path $msysRoot 'ucrt64\bin') + ';' + (Join-Path $msysRoot 'usr\bin') + ';D:\vibes\fpga\bin;' + $savedPath
     $safeVerilator = (Get-Command verilator-safe -ErrorAction Stop).Source
     $safeSimulator = (Get-Command verilator-sim-safe -ErrorAction Stop).Source
     $env:S32_VERILATOR_SAFE = ($safeVerilator -replace '\\', '/')
@@ -44,10 +43,8 @@ try {
 
     $firmwareExe = [IO.Path]::GetFullPath($exeLine.Substring($exePrefix.Length).Trim())
     $buildDir = [IO.Path]::GetFullPath($dirLine.Substring($dirPrefix.Length).Trim()).TrimEnd('\')
-    $scratchRoot = [IO.Path]::GetFullPath($taskTemp).TrimEnd('\')
     $expectedExe = Join-Path $buildDir 'obj_dir\Vtb_core_v25int.exe'
-    if (-not $buildDir.StartsWith($scratchRoot + '\', [StringComparison]::OrdinalIgnoreCase) -or
-        -not (Split-Path -Leaf $buildDir).StartsWith('s32-v25int.', [StringComparison]::Ordinal) -or
+    if (-not $buildDir.StartsWith('R:\Verilator\', [StringComparison]::OrdinalIgnoreCase) -or
         -not $firmwareExe.Equals($expectedExe, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing an unexpected V25 integration build path: $buildDir"
     }

@@ -10,20 +10,10 @@ PKG="rtl/s32_pkg.sv"
 CPU="rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv"
 VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
 VERILATOR_SIM_SAFE="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
-if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
-  VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
-elif ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
-     [[ -x /c/Users/meath/bin/verilator-safe.exe ]]; then
-  VERILATOR_SAFE=/c/Users/meath/bin/verilator-safe.exe
-fi
-if ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  VERILATOR_SIM_SAFE=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
-elif ! command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 &&
-     [[ -x /c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  VERILATOR_SIM_SAFE=/c/Users/meath/bin/verilator-sim-safe.exe
-fi
+command -v "$VERILATOR_SAFE" >/dev/null 2>&1 || { echo "missing $VERILATOR_SAFE" >&2; exit 127; }
+source verif/verilator/workspace.sh
+s32_verilator_workspace "$VERILATOR_SAFE"
+command -v "$VERILATOR_SIM_SAFE" >/dev/null 2>&1 || { echo "missing $VERILATOR_SIM_SAFE" >&2; exit 127; }
 VFLAGS=(--binary --timing --threads 1 --verilate-jobs 4 --build-jobs 4
   -CFLAGS "-D_GLIBCXX_USE_CXX11_ABI=0"
   -Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT
@@ -71,7 +61,7 @@ ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_smc tb_v60_long_ea tb_v6
 
 is_icarus() { case " $ICARUS_ONLY " in *" $1 "*) return 0;; *) return 1;; esac; }
 
-work_root="${TMPDIR:-/tmp}/v60ut"
+work_root="$S32_VERILATOR_WORKSPACE/v60ut"
 mkdir -p "$work_root"
 pass=0; fail=0; failed=""
 for tb in $ORDER; do
@@ -102,8 +92,10 @@ for tb in $ORDER; do
 done
 # gated-ce (production /3 cadence) coherency re-run of the SMC test — catches
 # prefetch ack-sampling bugs that ce=1 runs would miss (audit gated-ce gap).
-if [ -x "$work_root/tb_v60_smc/tb_v60_smc" ]; then
-  if "$work_root/tb_v60_smc/tb_v60_smc" +CEDIV=3 2>&1 | grep -qF "V60 SMC PASS"; then
+smc_exe="$work_root/tb_v60_smc/tb_v60_smc"
+[ -x "${smc_exe}.exe" ] && smc_exe="${smc_exe}.exe"
+if [ -x "$smc_exe" ]; then
+  if "$VERILATOR_SIM_SAFE" -- "$smc_exe" +CEDIV=3 2>&1 | grep -qF "V60 SMC PASS"; then
     echo "PASS  tb_v60_smc(ce=/3)"
   else
     echo "FAIL  tb_v60_smc(ce=/3)"; fail=$((fail+1)); failed="$failed tb_v60_smc(ce/3)"

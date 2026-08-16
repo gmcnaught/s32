@@ -4,8 +4,11 @@ Independent (Verilator 5.x) checks that complement the ModelSim regression.
 Verilator is a second, structurally different simulator — agreement across both
 raises confidence; disagreement is a live lead.
 
-Requires `verilator` on PATH (the project uses the WSL Ubuntu install:
-`verilator --version` → 5.032). Run from the repo root.
+Requires the machine-wide `verilator-safe` and `verilator-sim-safe` launchers
+on PATH. They use the native UCRT64 toolchain under
+`D:\vibes\fpga\toolchains\msys64`, force `--threads 1`, and allocate every
+generated model beneath a unique `R:\Verilator` workspace. Run from the repo
+root; never invoke a raw Verilator binary or reuse a local `obj_dir`.
 
 ## tb_sdram_edge.sv — SDRAM arbitration / request-latch fix
 

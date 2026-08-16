@@ -19,30 +19,27 @@ for required in \
     fi
 done
 
-tmp_root="$repo_root/scratch/tmp"
-mkdir -p -- "$tmp_root"
-export TMP="$tmp_root" TEMP="$tmp_root" TMPDIR="$tmp_root"
-build_dir="$(mktemp -d "$tmp_root/s32-v25-firmware.XXXXXX")"
+start_seconds=$SECONDS
+safe_verilator="${S32_VERILATOR_SAFE:-verilator-safe}"
+safe_sim="${S32_VERILATOR_SIM_SAFE:-verilator-sim-safe}"
+command -v "$safe_verilator" >/dev/null 2>&1 || { echo "missing $safe_verilator" >&2; exit 127; }
+command -v "$safe_sim" >/dev/null 2>&1 || { echo "missing $safe_sim" >&2; exit 127; }
+source "$repo_root/verif/verilator/workspace.sh"
+s32_verilator_workspace "$safe_verilator"
+build_dir="$S32_VERILATOR_WORKSPACE"
+mkdir -p -- "$build_dir/temp"
+export TMP="$build_dir/temp" TEMP="$build_dir/temp" TMPDIR="$build_dir/temp"
 cleanup() {
     if [[ "${KEEP_BUILD:-0}" == "1" ]]; then
         echo "V25_FIRMWARE build retained at $build_dir"
     else
-        rm -rf -- "$build_dir"
+        case "$build_dir" in
+            /r/Verilator/*|/mnt/r/Verilator/*) rm -rf -- "$build_dir" ;;
+            *) echo "refusing unsafe V25 firmware cleanup: $build_dir" >&2 ;;
+        esac
     fi
 }
 trap cleanup EXIT
-
-start_seconds=$SECONDS
-safe_verilator="${S32_VERILATOR_SAFE:-verilator-safe}"
-safe_sim="${S32_VERILATOR_SIM_SAFE:-verilator-sim-safe}"
-if ! command -v "$safe_verilator" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
-  safe_verilator=/mnt/c/Users/meath/bin/verilator-safe.exe
-fi
-if ! command -v "$safe_sim" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  safe_sim=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
-fi
 "$safe_verilator" status
 modelsim_bin="${MODELSIM_BIN:-}"
 if command -v iverilog >/dev/null 2>&1; then

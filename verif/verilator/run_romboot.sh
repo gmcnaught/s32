@@ -9,14 +9,10 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 GAME="${1:-ga2}"; FRAMES="${2:-90}"; shift 2 2>/dev/null || shift $# 
 VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
-if ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
-  VERILATOR_SAFE=/mnt/c/Users/meath/bin/verilator-safe.exe
-elif ! command -v "$VERILATOR_SAFE" >/dev/null 2>&1 &&
-     [[ -x /c/Users/meath/bin/verilator-safe.exe ]]; then
-  VERILATOR_SAFE=/c/Users/meath/bin/verilator-safe.exe
-fi
-MDIR=scratch/vromboot_obj_wsl
+command -v "$VERILATOR_SAFE" >/dev/null 2>&1 || { echo "missing $VERILATOR_SAFE" >&2; exit 127; }
+source verif/verilator/workspace.sh
+s32_verilator_workspace "$VERILATOR_SAFE"
+MDIR="$(s32_verilator_mdir vromboot_obj)"
 WARN="-Wno-fatal -Wno-WIDTHTRUNC -Wno-WIDTHEXPAND -Wno-UNOPTFLAT -Wno-BLKANDNBLK -Wno-CASEINCOMPLETE -Wno-MULTIDRIVEN -Wno-INITIALDLY -Wno-DECLFILENAME"
 # The board descriptor comes from the image's own desc.txt, which
 # make_sim_images.py copies verbatim out of the MRA's ioctl index-0 stream.
@@ -42,7 +38,7 @@ if [[ "${ROMBOOT_SKIP_BUILD:-0}" != 1 ]]; then
     +define+S32_PROFILE_STANDARD +define+S32_GAME_ONLY_STD \
     --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f scratch/romboot.f
 fi
-SIM="$PWD/$MDIR/romboot"
+SIM="$MDIR/romboot"
 [[ -x "${SIM}.exe" ]] && SIM="${SIM}.exe"
 IMG="$PWD/roms/sim/$GAME"
 if [[ ! -x "$SIM" ]]; then

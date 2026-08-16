@@ -32,13 +32,17 @@ selected by the MRA descriptor; no game-specific production macro is used.
 | Aspect ratio | Original, Full Screen |
 | Scandoubler Fx | None, CRT 25%, CRT 50%, CRT 75% |
 | Scale | Normal, V-Integer, HV-Integer |
+| CRT Adjust | On/Off, horizontal size, horizontal position, vertical shift; direct-video/15 kHz path |
+| High-score saving | Persistent 128-byte 93C46 EEPROM/NVRAM for every supported MRA variant |
 | Service Mode | Off, On |
 | Reset | Resets the running core |
 
 The core reports the original arcade monitor as 4:3 by default; MiSTer's
 standard aspect choices and integer scaling modes remain available. Game
 controls are remappable through MiSTer input settings; each MRA declares the
-button labels and defaults for its game.
+button labels and defaults for its game. All 19 supported variants declare the
+index-3 128-byte NVRAM image used by the 93C46 score/settings storage; the
+loader and EEPROM model preserve it across reset and MiSTer uploads.
 
 ## PCB Accuracy
 
@@ -73,10 +77,11 @@ The following table is the complete set exposed by the tracked MRAs in
 | Slip Stream | Brazil 950515 (`slipstrm`), Hispanic 950515 (`slipstrmh`) | Standard | `Arcade-SegaSystem32.rbf` |
 | Spider-Man: The Videogame | Japan (`spidmanj`), US, Rev A (`spidmanu`), World (`spidman`) | Standard | `Arcade-SegaSystem32.rbf` |
 
-Alien3: The Gun, Burning Rival, Jurassic Park, SegaSonic The Hedgehog, Hard
-Dunk, OutRunners, Stadium Cross, Title Fight, AS-1, and other excluded or
-Multi 32 families are outside the production contract and have no production
-MRA or game-specific hardware path here.
+Alien3: The Gun, Burning Rival, Jurassic Park, SegaSonic The Hedgehog, The
+J.League 1994 (`jleague`, `jleagueo`), Super Visual Football/Soccer
+(`svf`, `svs`, `svfo`), Hard Dunk, OutRunners, Stadium Cross, Title Fight,
+AS-1, and other excluded or Multi 32 families are outside the production
+contract and have no production MRA or game-specific hardware path here.
 
 ## **Hardware emulated**
 
@@ -131,8 +136,10 @@ MRA or game-specific hardware path here.
   [WonderSwan_MiSTer](https://github.com/MiSTer-devel/WonderSwan_MiSTer),
   and the MegaCD RF5C164 implementation, as documented in
   [`reference-cores.md`](docs/reference-cores.md) and [`DESIGN.md`](docs/DESIGN.md).
-- **Umberto Parisi (rmonic79), with Andrea Bogazzi (@asturur)** — the GPL CRT
-  Adjust source retained as an uncompiled legacy reference.
+- **Umberto Parisi (rmonic79), with Andrea Bogazzi (@asturur)** — the GPL
+  [MiSTer-CRT-Adjust](https://github.com/rmonic79/MiSTer-CRT-Adjust/tree/c682de9f4acc61d8f4c7779efb48149d3baa3a8e)
+  core-side geometry stage, integrated through [`crt_adjust.sv`](rtl/crt_adjust.sv)
+  and recorded as donor D004.
 - **Tool authors and maintainers** — [Intel Quartus](https://www.intel.com/content/www/us/en/software/programmable/quartus-prime/overview.html),
   [Verilator](https://www.veripool.org/verilator/), [Icarus Verilog](https://steveicarus.github.io/iverilog/),
   ModelSim, and MAME, used for synthesis, simulation, and verification.
@@ -147,8 +154,8 @@ that retain their own notices and licenses:
 - JT12: GNU GPL version 3; [`LICENSE`](rtl/audio/jt12/LICENSE).
 - JT8255 conformance reference: MIT; [`LICENSE.jt8255`](verif/donors/LICENSE.jt8255).
 - T80: BSD-style terms in the source headers under [`rtl/audio/T80/`](rtl/audio/T80/).
-- The uncompiled legacy CRT Adjust source: GNU GPL version 3 or later, as
-  stated in [`crt_adjust.sv`](rtl/crt_adjust.sv).
+- CRT Adjust: GNU GPL version 3 or later; upstream commit and local-diff
+  hashes are recorded in [`verif/donors/README.md`](verif/donors/README.md).
 - MiSTer framework and Intel/Altera generated IP under [`sys/`](sys/): retain
   their upstream/vendor notices.
 - SiliconRE reference material: [`SiliconRE-LICENSE`](docs/references/siliconre/315-5385/SiliconRE-LICENSE).

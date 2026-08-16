@@ -7,7 +7,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$ModelDirectory = "scratch\s32_obj_s32_visual",
+    [string]$ModelDirectory = "",
     [switch]$Force
 )
 
@@ -15,24 +15,21 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $Root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$Safe = "C:\Users\meath\bin\verilator-safe.exe"
-$env:MSYSTEM = "UCRT64"
-$env:PATH = "C:\msys64\ucrt64\bin;C:\msys64\usr\bin;" + $env:PATH
-$Bash = "C:\msys64\usr\bin\bash.exe"
-$BuildTemp = Join-Path $Root "scratch\tmp"
+$Safe = (Get-Command "verilator-safe.exe" -ErrorAction Stop).Source
+. (Join-Path $PSScriptRoot 'verilator-workspace.ps1')
+if ([string]::IsNullOrWhiteSpace($ModelDirectory)) {
+    $ModelDirectory = New-S32VerilatorWorkspace -SafeLauncher $Safe -ModelDirectoryName 's32_visual'
+}
+else {
+    $ModelDirectory = [IO.Path]::GetFullPath($ModelDirectory)
+    if ($ModelDirectory -notmatch '^[Rr]:\\Verilator\\') {
+        throw "ModelDirectory must be under R:\Verilator: $ModelDirectory"
+    }
+    $env:VERILATOR_WORKSPACE = Split-Path -Parent $ModelDirectory
+}
+$BuildTemp = Join-Path $env:VERILATOR_WORKSPACE 'temp'
 New-Item -ItemType Directory -Force -Path $BuildTemp | Out-Null
-$env:TEMP = $BuildTemp
-$env:TMP = $BuildTemp
-$env:TMPDIR = $BuildTemp
-if (-not (Test-Path -LiteralPath $Safe)) {
-    $command = Get-Command "verilator-safe.exe" -ErrorAction SilentlyContinue
-    if ($command) { $Safe = $command.Source }
-}
-if (-not (Test-Path -LiteralPath $Safe)) {
-    throw "verilator-safe.exe was not found"
-}
 
-$ModelDirectory = [IO.Path]::GetFullPath($ModelDirectory)
 if ($ModelDirectory.Contains(" ")) {
     throw "ModelDirectory must not contain spaces: $ModelDirectory"
 }
@@ -96,33 +93,8 @@ if ($Force -or -not $cached) {
         "--top-module", "tb_core_romboot", "--Mdir", $ModelDirectory, "-o", "s32_visual",
         "-CFLAGS", "-D_GLIBCXX_USE_CXX11_ABI=0 -O3 -march=native -mtune=native -fomit-frame-pointer"
     ) + $warnings + $defines + @("-f", $fileList, $visualMain)
-    function Convert-ToMsysPath {
-        param([Parameter(Mandatory = $true)][string]$Path)
-        $normalized = $Path.Replace("\", "/")
-        if ($normalized -match "^([A-Za-z]):/(.*)$") {
-            return "/$($Matches[1].ToLower())/$($Matches[2])"
-        }
-        return $normalized
-    }
-    function Quote-BashArgument {
-        param([Parameter(Mandatory = $true)][string]$Value)
-        $single = [string][char]39
-        $replacement = [string]::Concat([char]39, [char]34, [char]39, [char]34, [char]39)
-        return $single + $Value.Replace($single, $replacement) + $single
-    }
-    if (-not (Test-Path -LiteralPath $Bash)) { throw "MSYS2 bash was not found: $Bash" }
-    $bashArguments = $arguments | ForEach-Object {
-        $value = [string]$_
-        if ($value -eq $ModelDirectory) { $value = Convert-ToMsysPath $ModelDirectory }
-        elseif ($value -eq $fileList) { $value = Convert-ToMsysPath $fileList }
-        elseif ($value -eq $visualMain) { $value = Convert-ToMsysPath $visualMain }
-        Quote-BashArgument $value
-    }
-    $bashRoot = Quote-BashArgument (Convert-ToMsysPath $Root)
-    $bashTemp = Convert-ToMsysPath $BuildTemp
-    $bashCommand = "export MSYSTEM=UCRT64; export PATH=/ucrt64/bin:/usr/bin:`$PATH; export TMP=$bashTemp; export TEMP=$bashTemp; export TMPDIR=$bashTemp; cd $bashRoot; /c/Users/meath/bin/verilator-safe.exe " + ($bashArguments -join " ")
-    Write-Host ("Building native visual model through MSYS2 UCRT64: {0}" -f $bashCommand)
-    & $Bash -lc $bashCommand
+    Write-Host ("Building native visual model in {0}" -f $ModelDirectory)
+    & $Safe @arguments
     if ($LASTEXITCODE -ne 0) { throw "verilator-safe build failed with exit code $LASTEXITCODE" }
     if (-not (Test-Path -LiteralPath $exe)) { throw "Visual executable was not produced: $exe" }
     Set-Content -LiteralPath $signaturePath -Value $signature -Encoding ASCII
@@ -135,7 +107,7 @@ else {
 # Pin those DLLs beside the model so the safe native launcher cannot resolve
 # an ABI-incompatible MinGW/MSYS copy from the host PATH.
 foreach ($runtimeDll in @("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll")) {
-    $runtimeSource = Join-Path "C:\msys64\ucrt64\bin" $runtimeDll
+    $runtimeSource = Join-Path "D:\vibes\fpga\toolchains\msys64\ucrt64\bin" $runtimeDll
     if (-not (Test-Path -LiteralPath $runtimeSource)) {
         throw "Missing UCRT64 runtime DLL: $runtimeSource"
     }

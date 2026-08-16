@@ -21,22 +21,32 @@ module s32_io5296 (
     output reg  [7:0] rdata,
 
     input       [7:0] in_pa, in_pb, in_pc, in_pe, in_pf,
-    output reg  [7:0] out_pd, out_pg, out_ph,
+    output      [7:0] out_pc, out_pd, out_pg, out_ph,
+    output      [7:0] dir_out,
     output reg        cnt0, cnt1, cnt2
 );
 
 // registers 0-7 = ports A-H, 8-B = 'S''E''G''A' signature, C/E = CNT,
 // D/F = direction, 10-1F = unused (read 0xff).  Matches MAME 315_5296.cpp
-// read()/write() in MAME's 315_5296 device.  System 32 wires
-// A/B/C/E/F as inputs and D/G/H as outputs; the games program DIR to match, so
-// the fixed port-direction hardcode below is equivalent to MAME's DIR-gated
-// port 0-7 access for these boards (a documented-benign device-model divergence
-// kept to avoid changing the proven boot behaviour of the output ports).
+// read()/write() in MAME's 315_5296 device.  Every port has an output latch;
+// DIR bit N selects that latch (1) or the external pin (0).  Rad Mobile relies
+// on this real bidirectional behaviour: port C is the moving-controller data
+// bus and changes direction around each transfer.
 reg [7:0] dir;
 reg [7:0] cnt_reg;   // full CNT byte for readback (cnt2/1/0 mirror the low bits)
+reg [7:0] port_latch [0:7];
+integer port_index;
+
+assign out_pc = dir[2] ? port_latch[2] : 8'h00;
+assign out_pd = dir[3] ? port_latch[3] : 8'h00;
+assign out_pg = dir[6] ? port_latch[6] : 8'h00;
+assign out_ph = dir[7] ? port_latch[7] : 8'h00;
+assign dir_out = dir;
+
 always @(posedge clk) begin
     if (rst) begin
-        out_pd <= 8'h00; out_pg <= 8'h00; out_ph <= 8'h00;
+        for (port_index = 0; port_index < 8; port_index = port_index + 1)
+            port_latch[port_index] <= 8'h00;
         {cnt2, cnt1, cnt0} <= 3'b000;
         cnt_reg <= 8'h00;   // MAME device_reset: m_cnt = 0
         dir     <= 8'h00;   // MAME device_reset: m_dir = 0
@@ -45,23 +55,22 @@ always @(posedge clk) begin
         // register = full 5-bit index (A[5:1]); 315-5296 is byte-lane, 2-byte
         // spacing. Ports A-H = 0-7, CNT = 0xE, direction = 0xF (per MAME map).
         case (addr[4:0])
-            5'h3: out_pd <= wdata;
-            5'h6: out_pg <= wdata;
-            5'h7: out_ph <= wdata;
+            5'h0, 5'h1, 5'h2, 5'h3,
+            5'h4, 5'h5, 5'h6, 5'h7: port_latch[addr[2:0]] <= wdata;
             5'he: begin {cnt2, cnt1, cnt0} <= wdata[2:0]; cnt_reg <= wdata; end
             5'hf: dir <= wdata;
             default: ;
         endcase
     end
     case (addr[4:0])
-        5'h0: rdata <= in_pa;
-        5'h1: rdata <= in_pb;
-        5'h2: rdata <= in_pc;
-        5'h3: rdata <= out_pd;
-        5'h4: rdata <= in_pe;
-        5'h5: rdata <= in_pf;
-        5'h6: rdata <= out_pg;
-        5'h7: rdata <= out_ph;
+        5'h0: rdata <= dir[0] ? port_latch[0] : in_pa;
+        5'h1: rdata <= dir[1] ? port_latch[1] : in_pb;
+        5'h2: rdata <= dir[2] ? port_latch[2] : in_pc;
+        5'h3: rdata <= dir[3] ? port_latch[3] : 8'hff;
+        5'h4: rdata <= dir[4] ? port_latch[4] : in_pe;
+        5'h5: rdata <= dir[5] ? port_latch[5] : in_pf;
+        5'h6: rdata <= dir[6] ? port_latch[6] : 8'hff;
+        5'h7: rdata <= dir[7] ? port_latch[7] : 8'hff;
         5'h8: rdata <= 8'h53;   // 'S'
         5'h9: rdata <= 8'h45;   // 'E'
         5'ha: rdata <= 8'h47;   // 'G'
@@ -70,6 +79,112 @@ always @(posedge clk) begin
         5'hd, 5'hf: rdata <= dir;
         default: rdata <= 8'hff;   // 0x10-0x1F: unused, read 0xff
     endcase
+end
+
+endmodule
+
+// ---------------------------------------------------------------------------
+// Rad Mobile Deluxe 837-7753 moving-controller mailbox.
+//
+// The V60 presents address 80-90 on 315-5296 port G, data on bidirectional
+// port C, and an active-low transfer strobe on port D bit 4.  EPR-13686 maps
+// that window to its C000-C010 shared bytes.  C008 is the ownership handshake:
+// main sets bit 0 for a request; the controller clears it and sets bit 1 when
+// the response is ready.  This HLE represents a connected, stationary cabinet;
+// analog motor motion remains outside this digital mailbox contract.
+module s32_radm_motor_mailbox #(
+    parameter integer STARTUP_CYCLES = 16'd65535,
+    parameter integer RESPONSE_CYCLES = 12'd4095
+) (
+    input             clk,
+    input             rst,
+    input             enable,
+    input       [7:0] address,
+    input       [7:0] data_out,
+    input             data_output_en,
+    input             strobe_n,
+    output reg  [7:0] data_in,
+    output            selected
+);
+
+reg [7:0] shared [0:16];
+reg       strobe_d;
+reg [15:0] startup_count;
+reg [11:0] response_count;
+reg        response_pending;
+integer mailbox_index;
+
+wire address_valid = (address >= 8'h80) && (address <= 8'h90);
+wire transfer_read = enable && address_valid && !strobe_n && !data_output_en;
+wire transfer_write_edge = enable && address_valid && strobe_d && !strobe_n &&
+                           data_output_en;
+wire [4:0] shared_index = address - 8'h80;
+
+assign selected = transfer_read;
+
+always @(*) begin
+    if (transfer_read)
+        data_in = shared[shared_index];
+    else
+        data_in = 8'hff;
+end
+
+always @(posedge clk) begin
+    strobe_d <= strobe_n;
+    if (rst || !enable) begin
+        strobe_d <= 1'b1;
+        startup_count <= STARTUP_CYCLES[15:0];
+        response_count <= 12'd0;
+        response_pending <= 1'b0;
+        for (mailbox_index = 0; mailbox_index < 17; mailbox_index = mailbox_index + 1)
+            shared[mailbox_index] <= 8'h00;
+    end
+    else begin
+        // The controller firmware publishes its first completed status after
+        // power-on self-test.  Healthy stationary status has no C009 faults.
+        if (startup_count != 0)
+            startup_count <= startup_count - 1'd1;
+        else if (shared[8][1:0] == 2'b00) begin
+            shared[8][1:0] <= 2'b10;
+            shared[9] <= 8'h00;
+`ifdef SIMULATION
+            $display("[radm-motor] startup response C008=02");
+`endif
+        end
+
+        if (transfer_write_edge) begin
+            shared[shared_index] <= data_out;
+`ifdef SIMULATION
+            $display("[radm-motor] wr %02x(C%03x)=%02x", address,
+                     {7'h60, shared_index}, data_out);
+`endif
+            if (shared_index == 5'd8 && data_out[0]) begin
+                response_pending <= 1'b1;
+                response_count <= RESPONSE_CYCLES[11:0];
+            end
+        end
+
+        if (response_pending) begin
+            if (response_count != 0)
+                response_count <= response_count - 1'd1;
+            else begin
+                // Preserve firmware-owned status bits while transferring
+                // mailbox ownership back to the V60.
+                shared[8][1:0] <= 2'b10;
+                shared[9] <= 8'h00;
+                response_pending <= 1'b0;
+`ifdef SIMULATION
+                $display("[radm-motor] request acknowledged C008=02");
+`endif
+            end
+        end
+
+`ifdef SIMULATION
+        if (enable && address_valid && strobe_d && !strobe_n && !data_output_en)
+            $display("[radm-motor] rd %02x(C%03x)=%02x", address,
+                     {7'h60, shared_index}, shared[shared_index]);
+`endif
+    end
 end
 
 endmodule

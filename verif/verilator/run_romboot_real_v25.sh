@@ -10,7 +10,6 @@ cd "$repo_root"
 
 frames="${1:-650}"
 shift 2>/dev/null || true
-build_dir="${REAL_V25_BUILD:-scratch/verilator-real-v25-go}"
 output_dir="${REAL_V25_OUT:-scratch/vromboot_real_out}"
 microcode="$repo_root/rtl/cpu/v25/s80x86/generated"
 warnings=(
@@ -20,20 +19,12 @@ warnings=(
 )
 verilator_safe="${VERILATOR_SAFE:-verilator-safe}"
 verilator_sim_safe="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
-if ! command -v "$verilator_safe" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-safe.exe ]]; then
-  verilator_safe=/mnt/c/Users/meath/bin/verilator-safe.exe
-elif ! command -v "$verilator_safe" >/dev/null 2>&1 &&
-     [[ -x /c/Users/meath/bin/verilator-safe.exe ]]; then
-  verilator_safe=/c/Users/meath/bin/verilator-safe.exe
-fi
-if ! command -v "$verilator_sim_safe" >/dev/null 2>&1 &&
-   [[ -x /mnt/c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  verilator_sim_safe=/mnt/c/Users/meath/bin/verilator-sim-safe.exe
-elif ! command -v "$verilator_sim_safe" >/dev/null 2>&1 &&
-     [[ -x /c/Users/meath/bin/verilator-sim-safe.exe ]]; then
-  verilator_sim_safe=/c/Users/meath/bin/verilator-sim-safe.exe
-fi
+command -v "$verilator_safe" >/dev/null 2>&1 || { echo "missing $verilator_safe" >&2; exit 127; }
+
+source verif/verilator/workspace.sh
+s32_verilator_workspace "$verilator_safe"
+build_dir="$(s32_verilator_mdir real_v25_romboot)"
+command -v "$verilator_sim_safe" >/dev/null 2>&1 || { echo "missing $verilator_sim_safe" >&2; exit 127; }
 
 # The machine-wide safe launcher serializes model builds and limits both
 # Verilator generation and the C++ build.  This runner is part of the V25 gate.
@@ -51,7 +42,7 @@ fi
 
 mkdir -p "$output_dir"
 cd "$output_dir"
-romboot_exe="$repo_root/$build_dir/romboot"
+romboot_exe="$build_dir/romboot"
 [[ -x "${romboot_exe}.exe" ]] && romboot_exe="${romboot_exe}.exe"
 "$verilator_sim_safe" -- "$romboot_exe" \
   +IMG="$repo_root/roms/sim/ga2" +DESC="$repo_root/roms/sim/ga2/desc.txt" \

@@ -22,7 +22,7 @@ class BoardDescriptorTests(unittest.TestCase):
         # Rad Mobile: MSM6253 ADC (b0 bit3) + DRIVING analog profile
         # (b1[5:4]=1), no protection, no gear toggle and no comm link -- MAME's
         # init_radm installs only the cabinet lamp/wiper switch outputs.
-        self.assertEqual(GAMES["radm"][:3], bytes.fromhex("081000"))
+        self.assertEqual(GAMES["radm"][:3], bytes.fromhex("481000"))
         # Byte 4 is the semantic player-port layout: Rad Mobile leaves P1_A
         # bit0 unused and puts Light/Wiper on bits 1/2 (DIGITAL_RADM = 1).
         self.assertEqual(GAMES["radm"][4], 0x01)
@@ -173,6 +173,27 @@ class EepromArchiveSourceTests(unittest.TestCase):
 
 
 class OptimizedLayoutTests(unittest.TestCase):
+    def test_every_supported_mra_declares_persistent_score_storage(self) -> None:
+        """Every supported variant must expose the EEPROM to MiSTer NVRAM.
+
+        System 32 high scores live in the board's 93C46-backed persistent
+        storage.  The core's loader and EEPROM model use index 3 as the
+        upload/save image; a missing tag makes a title appear to work while
+        silently losing its score table between launches.
+        """
+        for mra_dir in (
+            Path(__file__).parents[1] / "mra",
+            Path(__file__).parents[1] / "releases",
+        ):
+            paths = sorted(mra_dir.glob("*.mra"))
+            self.assertEqual(len(paths), 19, str(mra_dir))
+            for path in paths:
+                root = ElementTree.parse(path).getroot()
+                self.assertEqual(len(root.findall("nvram")), 1, path.name)
+                nvram = root.find("nvram[@index='3']")
+                self.assertIsNotNone(nvram, path.name)
+                self.assertEqual(nvram.attrib, {"index": "3", "size": "128"}, path.name)
+
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "mra"
         paths = sorted(mra_dir.glob("*.mra"))
@@ -205,6 +226,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             root = ElementTree.parse(path).getroot()
             descriptor = bytes.fromhex(root.findall("rom")[-1].findtext("part", ""))
             self.assertEqual(descriptor[0] & 0x08, 0x08, path.name)   # ADC
+            self.assertEqual(descriptor[0] & 0x40, 0x40, path.name)   # 837-7753 HLE
             self.assertEqual((descriptor[1] >> 4) & 0x03, 0x01, path.name)
             self.assertEqual(descriptor[2], 0x00, path.name)          # no prot
             self.assertEqual(descriptor[4], 0x01, path.name)          # RADM

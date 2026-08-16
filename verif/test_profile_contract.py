@@ -17,7 +17,7 @@ class GlobalProfileContractTests(unittest.TestCase):
             "alien3", "brival", "jpark", "sonic", "sonicp",
             "kokoroj", "kokoroj2",
             "dbzvrvs", "f1en", "f1lap",
-            "svf", "jleague",
+            "jleague", "jleagueo", "svf", "svfo",
         }
         self.assertTrue(removed.isdisjoint(GAMES))
         self.assertIn("holo", GAMES)
@@ -217,30 +217,35 @@ class GlobalProfileContractTests(unittest.TestCase):
             text,
         )
 
-    def test_production_video_path_excludes_optional_geometry(self) -> None:
+    def test_production_video_path_includes_core_side_crt_adjust(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         files_qip = (ROOT / "files.qip").read_text(encoding="utf-8")
-        for removed in (
-            '"O[9],CRT Adjust,Off,On;"',
-            '"H1O[14:10],CRT H-Size,',
-            '"H1O[21:15],CRT H-Position,',
-            '"H1O[26:22],CRT V-Shift,',
-            "crt_adjust #(",
-        ):
-            self.assertNotIn(removed, text)
+        regression = (ROOT / "verif/run_regression.ps1").read_text(encoding="utf-8")
+        shell_regression = (ROOT / "verif/run_regression.sh").read_text(encoding="utf-8")
+        self.assertIn('"O[9],CRT Adjust,Off,On;"', text)
+        self.assertIn('"H1O[14:10],CRT H-Size,', text)
+        self.assertIn('"H1O[21:15],CRT H-Position,', text)
+        self.assertIn('"H1O[26:22],CRT V-Shift,', text)
+        self.assertIn(".status_menumask({14'd0, ~status[9], 1'b0})", text)
+        self.assertIn("crt_adjust #(\n", text)
+        self.assertIn("crt_adjust_active", text)
+        self.assertIn("crt_hs_ref_rise", text)
+        self.assertIn(".vb_in     (core_vb)", text)
+        self.assertIn(".AW        (10)", text)
+        self.assertIn("crt_hpos_native", text)
+        self.assertIn("- 9'sd97", text)
         self.assertIn('"O[28:27],Scale,Normal,V-Integer,HV-Integer;"', text)
         self.assertIn("video_freak s32_video_freak", text)
         self.assertIn("status[28:27]", text)
-        self.assertNotIn("SYSTEMVERILOG_FILE rtl/crt_adjust.sv", files_qip)
-        for direct in (
-            ".VIDEO_ARX (VIDEO_ARX)",
-            ".VIDEO_ARY (VIDEO_ARY)",
-            "assign CE_PIXEL = ce_pix_core;",
-            "assign VGA_HS = core_hs;",
-            "assign VGA_VS = core_vs;",
-            "assign VGA_DE = ~(core_hb | core_vb);",
-        ):
-            self.assertIn(direct, text)
+        self.assertIn("SYSTEMVERILOG_FILE rtl/crt_adjust.sv", files_qip)
+        self.assertIn('"rtl/crt_adjust.sv",', regression)
+        self.assertIn("rtl/video/*.sv rtl/crt_adjust.sv rtl/audio/", shell_regression)
+        self.assertIn("wire hdmi_output_active", text)
+        self.assertIn("!hdmi_output_active", text)
+        self.assertIn("scandoubler_fx == 3'd0", text)
+        self.assertIn("assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : ce_pix_core;", text)
+        self.assertIn("assign VGA_HS = crt_adjust_active ? crt_hs : core_hs;", text)
+        self.assertIn("assign VGA_VS = crt_adjust_active ? crt_vs : core_vs;", text)
 
     def test_universal_memory_storage_targets_m10k(self) -> None:
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
@@ -296,11 +301,14 @@ class GlobalProfileContractTests(unittest.TestCase):
                 encoding="utf-8")
             shell = (ROOT / "verif/v25" / f"run_v25_{stem}.sh").read_text(
                 encoding="utf-8")
-            self.assertIn(r"C:\msys64\usr\bin\bash.exe", ps1)
+            self.assertIn(r"D:\vibes\fpga\toolchains\msys64", ps1)
+            self.assertIn("R:\\Verilator\\", ps1)
             self.assertNotIn("& wsl", ps1)
             self.assertIn("$env:S32_V25_BUILD_ONLY = '1'", ps1)
             self.assertIn("& $safeSimulator -- $firmwareExe", ps1)
             self.assertIn("-CFLAGS -D_GLIBCXX_USE_CXX11_ABI=0", shell)
+            self.assertIn("s32_verilator_workspace", shell)
+            self.assertNotIn("scratch/tmp", shell.replace("\\", "/"))
             self.assertIn(f"{marker} EXE:", shell)
             self.assertIn(f"{marker} BUILD DIR:", shell)
 

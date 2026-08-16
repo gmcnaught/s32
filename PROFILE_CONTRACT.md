@@ -2,6 +2,25 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-17: Rad Mobile moving-controller response
+
+Rad Mobile's Deluxe cabinet uses the 837-7753 moving controller over the first
+315-5296: port G selects shared byte `C000-C010` as address `80-90`, port C is
+the bidirectional data bus, and port D bit 4 is the active-low transfer strobe.
+The EPR-13686 firmware uses `C008` bit 0 for a main-board request and bit 1 for
+the controller response.  The universal core now implements the 315-5296's
+per-port output latches/direction behavior and a descriptor-selected stationary,
+healthy mailbox responder.  It does not model the Deluxe cabinet's analog motor
+plant or energize physical motion.
+
+Rad Mobile descriptor byte 0 is now `48`: bit 3 selects the MSM6253 ADC and bit
+6 selects the moving-controller responder.  A guarded headless 40-frame
+Verilator replay read `C008=02`, advanced from the old retry boundary at
+`0x068236` through success PCs `0x068243` and `0x068251`, and repeated with an
+identical normalized mailbox event stream.  The same model with descriptor bit
+6 disabled did not reach `0x068243`.  Pinned MAME is retained as a reference-gap
+lane because its driver explicitly does not emulate the motor board.
+
 ## 2026-08-14: Rad Mobile restored to the supported set
 
 Rad Mobile (`radm`, `radmu`) is a first-class System 32 analog driving board
@@ -10,14 +29,15 @@ profile was temporarily narrowed to `ga2`+`arabfgt`; the narrowing was
 explicitly temporary and the other standard parents have since been returned
 one at a time (`holo`, `radr`, `spidman`, `slipstrm`, `darkedge`).
 
-Restoring it required no RTL change: the universal profile compiled with
+The 2026-08-14 scope restoration itself required no RTL change: the universal profile compiled with
 `S32_GAME_ONLY_STD=1` already keeps the descriptor-gated MSM6253 driving ADC,
 the shared driving analog defaults, and the `DIGITAL_RADM` player-port layout
 in `Arcade-SegaSystem32.sv` (`radm_p1a`, `s32_pkg.sv:DIGITAL_RADM`). MAME's
-`init_radm` installs no protection handler, no ROM poke, and no communication
-link, so the descriptor asks for nothing the shipped image lacks.
+`init_radm` installs no protection handler or ROM poke.  Its lack of a moving
+controller is a known MAME emulation gap addressed by the 2026-08-17 work above.
 
-Descriptor: `08 10 00 81 01` — b0 bit3 = MSM6253 ADC; b1[5:4] = `ANALOG_DRIVING`;
+Descriptor: `48 10 00 81 01` — b0 bit3 = MSM6253 ADC and bit6 = 837-7753
+mailbox responder; b1[5:4] = `ANALOG_DRIVING`;
 b2 = no protection and no EPR-14084 link; b3 = sprite metadata valid with a
 2-bank (`0x800000`) sprite region; byte 4 = `DIGITAL_RADM`.
 
@@ -217,11 +237,13 @@ macro after a specific game.
 
 ## User-requested exclusions (2026-08-03)
 
-The following parents are intentionally ignored and must not be emitted as
-MRAs, staged by the active profile sweep, or treated as supported in future
+The following parents/sets are intentionally ignored and must not be emitted
+as MRAs, staged by the active profile sweep, or treated as supported in future
 profile work: `alien3`, `arescue`, `brival`, `dbzvrvs`, `f1en`, `f1lap`,
-`jpark`, `sonic`, `svf`, and `jleague`. Local private media and historical
-captures may remain on disk; they are outside the production profile.
+`jleague`, `jleagueo`, `jpark`, `sonic`, `svf`, and `svfo`. Local private media
+and historical captures may remain on disk; they are outside the production
+profile. The `svs` North American clone is also excluded through its `svf`
+parent.
 
 ## Source of truth
 
@@ -302,8 +324,8 @@ HLE titles).
 The current user-directed gameplay/attract acceptance matrix covers true parent
 sets only. Clone and regional revisions and all excluded or Multi 32 parents
 are outside this audit. The active parents are `arabfgt`, `darkedge`, `ga2`,
-`holo`, `radm`, `radr`, `slipstrm`, and `spidman`.  (`radm` was added to this
-list on 2026-08-14 when it was restored to the supported set; it has no
+`holo`, `radm`, `radr`, `slipstrm`, and `spidman`. (`radm` was added to
+this list on 2026-08-14 when it was restored to the supported set; it has no
 attract-gate evidence yet.)
 
 ## Universal-profile attract evidence (2026-08-01, in progress)
@@ -338,7 +360,7 @@ scene-matched MAME image comparison, but is outside the current audit.
 |---|---|---|---|
 | `holo` | standard | 85 frames; frame 80 shows the FBI anti-drug attract screen; `scratch/vromboot_out/holo_frame80.png`; exact MAME RGB match after documented crop and -1 scanline alignment | proven |
 | `radr` | standard | 420-frame full-core Verilator run; frame 360 retained PPM/PNG shows the Rad Rally `Free Play`/SEGA attract screen; `ROMBOOT DONE`, `VERILATOR SCREENSHOT PASS` with 71,680 non-black pixels, IRQ-only vectors 40/41, zero freeze/tile/FB overruns; `scratch/radr_attract_win_20260801p/dump360.ppm` | proven |
-| `radm` | standard | restored to scope 2026-08-14; descriptor and MRAs regenerated, no attract/frame-diff run performed yet | pending |
+| `radm` | standard | 2026-08-17 deterministic motor-mailbox closure: `C008=02`, old `0x068236` retry boundary advances through `0x068243`/`0x068251`; MAME motor-board lane is a documented reference gap; full attract/frame-diff remains pending | partial |
 | `ga2` | real V25 | staged parent image and MAME attract references; universal-profile attract/frame-diff gate pending | pending |
 | `arabfgt` | real V25 | staged parent image and MAME attract references; universal-profile attract/frame-diff gate pending | pending |
 | all other in-scope media-present parents | standard/HLE | staged sweep or media/structural triage exists, but the attract gate is not yet closed | pending |
@@ -389,12 +411,11 @@ Before editing:
 4. Run the source/profile validation commands in `AGENTS.md`.
 5. Only run either build wrapper after explicit user authorization.
 
-The next Rad Mobile acceptance run is a single safe Verilator simulation after
-`verilator-safe status` reports no active or waiting tasks:
+The next Rad Mobile acceptance run uses the repository adapter, which allocates
+a unique `R:\Verilator` workspace and routes both build and simulation through
+the installed safe launchers:
 
-```powershell
-verilator-sim-safe -- scratch/vromboot_obj_win_abi0/romboot_win_abi0.exe `
-  +IMG=D:/Arcade/AI/s32/roms/sim/radm `
-  +DESC=D:/Arcade/AI/s32/roms/sim/radm/desc.txt `
-  +FRAMES=660 +DUMPAT=600 +DUMPN=1 +REQUIRE_VERILATOR_SCREENSHOT +QUIET
+```bash
+bash verif/verilator/run_romboot.sh radm 660 \
+  +DUMPAT=600 +DUMPN=1 +REQUIRE_VERILATOR_SCREENSHOT +QUIET
 ```
