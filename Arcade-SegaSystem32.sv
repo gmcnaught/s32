@@ -361,8 +361,10 @@ wire ps2_mouse_strobe = ps2_mouse[24] ^ ps2_mouse_event_d;
 // standalone sign.
 wire signed [8:0] ps2_mouse_dx9 = $signed({ps2_mouse[4], ps2_mouse[15:8]});
 wire signed [8:0] ps2_mouse_dy9 = $signed({ps2_mouse[5], ps2_mouse[23:16]});
-wire        [7:0] ps2_mouse_dx_jt = ps2_mouse_dx9 >>> 1;
-wire        [7:0] ps2_mouse_dy_jt = ps2_mouse_dy9 >>> 1;
+wire signed [8:0] ps2_mouse_dx_jt9 = ps2_mouse_dx9 >>> 1;
+wire signed [8:0] ps2_mouse_dy_jt9 = ps2_mouse_dy9 >>> 1;
+wire        [7:0] ps2_mouse_dx_jt = ps2_mouse_dx_jt9[7:0];
+wire        [7:0] ps2_mouse_dy_jt = ps2_mouse_dy_jt9[7:0];
 always @(posedge clk_sys) begin
     ps2_mouse_event_d <= ps2_mouse[24];
 end
@@ -668,7 +670,7 @@ function automatic [8:0] lightgun_adc_to_screen(
     reg [16:0] product;
     begin
         product = adc * dimension;
-        lightgun_adc_to_screen = product >> 8;
+        lightgun_adc_to_screen = product[16:8];
     end
 endfunction
 
