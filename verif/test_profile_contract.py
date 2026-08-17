@@ -14,15 +14,17 @@ MRA_DIR = ROOT / "mra"
 class GlobalProfileContractTests(unittest.TestCase):
     def test_declined_games_are_not_routed_or_emitted(self) -> None:
         removed = {
-            "alien3", "brival", "jpark", "sonic", "sonicp",
+            "sonic", "sonicp",
             "kokoroj", "kokoroj2",
             "dbzvrvs", "f1en", "f1lap",
         }
         self.assertTrue(removed.isdisjoint(GAMES))
+        self.assertIn("alien3", GAMES)
+        self.assertIn("jpark", GAMES)
         self.assertIn("holo", GAMES)
         self.assertIn("spidman", GAMES)
         self.assertIn("slipstrm", GAMES)
-        for promoted in ("darkedge", "radm", "radr"):
+        for promoted in ("brival", "darkedge", "radm", "radr"):
             self.assertIn(promoted, GAMES)
         for path in MRA_DIR.glob("*.mra"):
             root = ElementTree.parse(path).getroot()
@@ -184,18 +186,31 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("dump_nonblack_seen", text)
         self.assertIn("VERILATOR SCREENSHOT FAIL", text)
 
-    def test_removed_game_controls_are_absent(self) -> None:
+    def test_positional_gun_controls_are_present_without_framebuffer_blend(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         io = (ROOT / "rtl/io/s32_io.sv").read_text(encoding="utf-8")
         prot = (ROOT / "rtl/prot/s32_prot.sv").read_text(encoding="utf-8")
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
-        combined = "\n".join((text, core, io, prot, fb_if))
+        snac = (ROOT / "rtl/io/s32_guncon_snac.sv").read_text(encoding="utf-8")
+        combined = "\n".join((text, core, io, prot, fb_if, snac))
+        self.assertIn("gun_aim", combined)
+        self.assertIn("coin_swap", combined)
+        self.assertIn("s32_guncon_snac", combined)
+        self.assertNotIn("alien3_hud_blend", combined)
+        self.assertNotIn("rd_blend_buf", combined)
+        self.assertIn("wire [7:0] alien3_p1a = {6'h3f, gun_p1a[1]", text)
+        self.assertIn("wire [7:0] jpark_p1a = {7'h7f, gun_p1a[0]}", text)
+        self.assertIn("wire snac_p1_gun = p1_snac_mode && snac_p1_connected", text)
+        self.assertIn("~(VGA_HS ^ VGA_VS) : 1'b1", text)
+        self.assertIn("wire gun_snac_trigger_p1 = snac_p1_gun && snac_p1_buttons[13]", text)
+        self.assertIn("wire gun_snac_button2_p1 = snac_p1_gun && snac_p1_buttons[12]", text)
+        self.assertIn("wire gun_snac_coin_p2 = snac_p2_gun && snac_p2_buttons[14]", text)
+        self.assertIn("joystick_0[11] | gun_snac_coin_p1", text)
+        self.assertIn("joystick_1[11] | gun_snac_coin_p2", text)
         for removed in (
-            "has_track", "gun_aim", "coin_swap", "PROT_SONIC",
-            "PROT_BRIVAL", "s32_trackball_stick", "s32_upd4701",
-            "s32_gun_aim", "s32_prot_brival", "alien3_hud_blend",
-            "rd_blend_buf",
+            "has_track", "PROT_SONIC", "s32_trackball_stick", "s32_upd4701",
+            "s32_gun_aim",
         ):
             self.assertNotIn(removed, combined)
 
@@ -207,6 +222,8 @@ class GlobalProfileContractTests(unittest.TestCase):
             text,
         )
         self.assertIn("wire [7:0] darkedge_ppi_pb", text)
+        self.assertIn("wire [7:0] brival_ppi_pb", text)
+        self.assertIn("wire brival_inputs = active_board.prot_sel == PROT_BRIVAL", text)
         self.assertIn(
             "wire darkedge_inputs = active_board.prot_sel == PROT_DARKEDGE",
             text,
@@ -339,8 +356,8 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("stick_y > 0", controls)
         self.assertIn("digital_accel ? 8'hff", controls)
         self.assertIn("digital_brake ? 8'hff", controls)
-        self.assertIn("assign adc_ch[1] = driving_accel", text)
-        self.assertIn("assign adc_ch[2] = driving_brake", text)
+        self.assertIn("active_board.gun_aim ? gun_adc_p1_y : driving_accel", text)
+        self.assertIn("active_board.gun_aim ? gun_adc_p2_x : driving_brake", text)
 
     def test_rad_mobile_light_wiper_layout_is_descriptor_selected(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
@@ -356,7 +373,7 @@ class GlobalProfileContractTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn(".left_x(joystick_l_analog_0[7:0])", text)
         self.assertIn(".right_y(joystick_r_analog_0[15:8])", text)
-        self.assertIn("assign adc_ch[0] = driving_wheel", text)
+        self.assertIn("active_board.gun_aim ? gun_adc_p1_x : driving_wheel", text)
         self.assertIn("assign wheel = wheel_deadzone(left_x)", controls)
         for stale_state in ("wheel_sm", "wheel_div", "wheel_tick"):
             self.assertNotIn(stale_state, text)
@@ -374,8 +391,9 @@ class GlobalProfileContractTests(unittest.TestCase):
         core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         self.assertNotIn("s32_arescue_dsp dsp (", core)
-        for removed in ("brival", "alien3", "gun_aim", "trackball"):
+        for removed in ("trackball",):
             self.assertNotIn(removed, (core + top).lower())
+        self.assertIn("s32_prot_brival brival (", core)
 
     def test_attract_sweep_preserves_gate_and_capture_tail(self) -> None:
         """The matrix runner must request and finish every attract capture."""
@@ -384,8 +402,8 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("run_args+=(+REQUIRE_VERILATOR_SCREENSHOT)", text)
         self.assertIn("slipstrm", text)
         self.assertNotIn("dbzvrvs", text)
-        self.assertNotIn("jpark", text)
         self.assertNotIn("sonic", text)
+        self.assertIn("alien3 darkedge holo jpark radm", text)
         self.assertIn("spidman", text)
         self.assertIn("radm", text)
 

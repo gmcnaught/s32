@@ -212,17 +212,19 @@ initial begin
     board.has_motor_hle = b0[6];
     board.dual_pcb    = b1[0];
     board.flip_y      = b1[1];
+    board.gun_aim     = b1[2];
+    board.coin_swap   = b1[3];
     board.analog_profile = b1[5:4];
     board.dual_comm_ff = b1[6];
     board.comm_link_hle = b2[7];
     board.prot_sel    = b2[6:0];
     board.sprite_bank_valid = 1'b1;
     board.sprite_bank_mask  = sbm[1:0];
-    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d ppi=%0d motor=%0d dual=%0d prot=%0d flip_y=%0d analog=%0d sbm=%0d",
+    $display("[desc] board: multi32=%0d v25=%0d/%0d ga2=%0d adc=%0d ppi=%0d motor=%0d dual=%0d prot=%0d flip_y=%0d gun=%0d coin_swap=%0d analog=%0d sbm=%0d",
              board.multi32, board.has_v25, board.v25_table,
              ga2_qualification, board.has_adc, board.has_ppi,
              board.has_motor_hle, board.dual_pcb,
-             board.prot_sel, board.flip_y,
+             board.prot_sel, board.flip_y, board.gun_aim, board.coin_swap,
              board.analog_profile,
              board.sprite_bank_mask);
 end

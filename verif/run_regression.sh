@@ -15,6 +15,11 @@ iverilog -g2012 -DSIMULATION -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_PC
   rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
   verif/common/jt12_stub.v rtl/s32_core.sv verif/common/tb_core_lint.sv
 vvp /tmp/s32_lint_s32 | grep -q "CORE STANDARD PROFILE LINT PASS" && echo "CORE BUILD PROFILES: PASS" || { echo "CORE STANDARD LINT: FAIL"; exit 1; }
+echo "[1b] GunCon-only SNAC transport"
+iverilog -g2012 -s tb_guncon_snac -o /tmp/s32_guncon_snac \
+  rtl/io/s32_guncon_snac.sv verif/common/tb_guncon_snac.sv
+vvp /tmp/s32_guncon_snac | grep -q "GUNCON SNAC PASS" && \
+  echo "GUNCON SNAC: PASS" || { echo "GUNCON SNAC: FAIL"; exit 1; }
 echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv

@@ -362,7 +362,22 @@ wire [15:0] pr_wdata;
 wire [1:0]  pr_be;
 wire [15:0] pr_q;
 reg         pr_ack;
+wire        br_pram_we;
+wire [7:0]  br_pram_addr;
+wire [7:0]  br_pram_wdata;
 wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
+wire        work_pr_we = (pr_req && pr_we) || br_pram_we;
+wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
+                                         ? {{(WRAM_ADDR_WIDTH-7){1'b0}},
+                                            br_pram_addr[7:1]}
+                                         : pr_wram_a;
+wire [15:0] work_pr_wdata = br_pram_we
+                           ? (br_pram_addr[0] ? {br_pram_wdata, 8'h00}
+                                              : {8'h00, br_pram_wdata})
+                           : pr_wdata;
+wire [1:0] work_pr_be = br_pram_we
+                      ? (br_pram_addr[0] ? 2'b10 : 2'b01)
+                      : pr_be;
 
 s32_big_dpram #(
     .ADDR_WIDTH(WRAM_ADDR_WIDTH), .NUM_WORDS(WRAM_WORDS)
@@ -370,9 +385,9 @@ s32_big_dpram #(
     .clock_a(clk_sys), .address_a(wram_a),
     .data_a(m_wdata), .byteena_a(m_be),
     .wren_a(m_req && m_we && sel_wram), .q_a(wram_q),
-    .clock_b(clk_sys), .address_b(pr_wram_a),
-    .data_b(pr_wdata), .byteena_b(pr_be),
-    .wren_b(pr_req && pr_we), .q_b(pr_q)
+    .clock_b(clk_sys), .address_b(work_pr_addr),
+    .data_b(work_pr_wdata), .byteena_b(work_pr_be),
+    .wren_b(work_pr_we), .q_b(pr_q)
 );
 
 always @(posedge clk_sys)
@@ -1134,16 +1149,28 @@ wire [15:0] jl_pr_addr, jl_pr_wdata;
 wire [1:0]  jl_pr_be;
 wire        jl_rom_req, jl_rom_ack;
 wire [20:0] jl_rom_addr;
-wire [15:0] jl_rom_data;
+wire        br_trap;
+wire [15:0] br_trap_q;
+wire        br_rom_req, br_rom_ack;
+wire [23:0] br_rom_addr;
+wire [15:0] prot_rom_data;
+wire        prot_rom_req;
+wire [20:0] prot_rom_addr;
+wire        prot_rom_ack;
+
+// J.League and Burning Rival are mutually exclusive descriptor-selected
+// protection clients sharing the cache's single protected-ROM lookup port.
+assign prot_rom_req  = jl_rom_req | br_rom_req;
+assign prot_rom_addr = br_rom_req ? br_rom_addr[20:0] : jl_rom_addr;
+assign jl_rom_ack    = prot_rom_ack && !br_rom_req;
+assign br_rom_ack    = prot_rom_ack && br_rom_req;
 
 // The accepted write pulse is deliberately taken from wr_stb rather than
 // raw m_req: the V60 bus holds a write request until ack, while the original
 // write16 handler runs once per accepted transaction.
 wire jl_cpu_write = wr_stb && m_we && sel_wram && m_be[0];
 
-// Dark Edge's VBlank work-RAM protection sequence. Responders for excluded
-// titles are deliberately absent from the universal image. J.League's
-// responder is the only protection path that also consumes a main-ROM read.
+// Descriptor-selected standard-board protection responders.
 generate
 `ifdef S32_UNIVERSAL_DISABLED
     begin : g_no_generic_prot
@@ -1175,13 +1202,39 @@ generate
             .enable(cfg_prot_sel == PROT_JLEAGUE),
             .cpu_write(jl_cpu_write), .cpu_addr(A), .cpu_wdata(m_wdata),
             .rom_req(jl_rom_req), .rom_addr(jl_rom_addr),
-            .rom_data(jl_rom_data), .rom_ack(jl_rom_ack),
+            .rom_data(prot_rom_data), .rom_ack(jl_rom_ack),
             .wram_req(jl_pr_req), .wram_we(jl_pr_we), .wram_addr(jl_pr_addr),
             .wram_wdata(jl_pr_wdata), .wram_be(jl_pr_be),
             .wram_ack(pr_ack)
         );
     end
 `endif
+endgenerate
+
+generate
+    if (GAME_ONLY && !GAME_ONLY_STD) begin : g_game_no_brival
+        assign br_trap       = 1'b0;
+        assign br_trap_q     = 16'hffff;
+        assign br_rom_req    = 1'b0;
+        assign br_rom_addr   = 24'h000000;
+        assign br_pram_we    = 1'b0;
+        assign br_pram_addr  = 8'h00;
+        assign br_pram_wdata = 8'h00;
+    end
+    else begin : g_brival
+        s32_prot_brival brival (
+            .clk(clk_sys), .rst(rst),
+            .enable(cfg_prot_sel == PROT_BRIVAL),
+            .cpu_wr(m_req && m_we && sel_prot_a),
+            .cpu_addr(A), .cpu_wdata(m_wdata),
+            .cpu_rd(m_req && !m_we && sel_wram), .cpu_be(m_be),
+            .trap_active(br_trap), .trap_data(br_trap_q),
+            .pram_we(br_pram_we), .pram_addr(br_pram_addr),
+            .pram_wdata(br_pram_wdata),
+            .rom_req(br_rom_req), .rom_addr(br_rom_addr),
+            .rom_data(prot_rom_data), .rom_ack(br_rom_ack)
+        );
+    end
 endgenerate
 
 assign pr_req   = (cfg_prot_sel == PROT_JLEAGUE) ? jl_pr_req   : dke_pr_req;
@@ -1280,10 +1333,10 @@ s32_ga_rom_cache ga_rom_cache (
     .data_addr(sel_romhi ? {1'b0, A[19:0]} : A[20:0]),
     .data_data(rom_word_r),
     .data_ack(rom_ready),
-    .prot_req(jl_rom_req),
-    .prot_addr(jl_rom_addr),
-    .prot_data(jl_rom_data),
-    .prot_ack(jl_rom_ack),
+    .prot_req(prot_rom_req),
+    .prot_addr(prot_rom_addr),
+    .prot_data(prot_rom_data),
+    .prot_ack(prot_rom_ack),
     .rom_req(rom_req_r),
     .rom_burst(rom_burst_r),
     .rom_addr(rom_addr_r),
@@ -1291,6 +1344,8 @@ s32_ga_rom_cache ga_rom_cache (
     .rom_ack(sdr_p0_ack)
 );
 `else
+assign prot_rom_data = 16'hffff;
+assign prot_rom_ack = 1'b0;
 // Non-production/general fallback.  Its original 32-line geometry is retained
 // deliberately: every production profile selects s32_ga_rom_cache above, and
 // the measured 64-line conflict win/resource evidence applies to that flat,
@@ -1411,7 +1466,8 @@ always @(posedge clk_sys) begin
             rd_wait <= 1'b0;
             ack_r <= 1'b1;   // BRAM/regs
             casez (1'b1)
-                sel_wram:    rmux <= wram_q;
+                br_trap:      rmux <= br_trap_q;
+                sel_wram:     rmux <= wram_q;
                 sel_vram:    rmux <= vram_cpu_q;
                 sel_sprram:  rmux <= sprram_q;
                 sel_sprctl:  rmux <= {8'hff, sprctl_q};

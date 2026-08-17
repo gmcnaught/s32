@@ -2,6 +2,47 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-17: Burning Rival restored to the universal profile
+
+Burning Rival (`brival`, `brivalj`) is restored to the one universal standard-
+board profile. MAME's `sega_system32_4p` I/O device is used with Burning Rival's
+two-player, six-action-button input contract. The descriptor is `20 00 02` (PPI present,
+`PROT_BRIVAL=2`), and the MRA controls are `Button 1` through `Button 6`,
+followed by Start/Coin/Test/Service with defaults `A,B,X,Y,R,L,Start,Select`.
+
+The restoration is descriptor-selected RTL: the Burning Rival upper-button PPI
+lane, the documented ROM-string protection copy/read trap, and its shared
+protected-ROM cache client. No new profile, macro, clock, reset, memory block,
+or constraint was added. Focused protection and profile/MRA tests cover this
+scope; no Quartus build, RBF, or MiSTer hardware run was performed.
+
+## 2026-08-17: Alien3 and Jurassic Park positional-gun restoration
+
+Alien3: The Gun (`alien3`, `alien3u`, `alien3j`) and Jurassic Park (`jpark`,
+`jparkj`, `jparkja`, `jparkjc`) are restored to the one universal standard-board
+profile. Their descriptors select the existing MSM6253 ADC plus a direct
+positional-gun path: MiSTer USB lightgun analog reports or the optional
+GunCon-only SNAC transport adapted from the System11 Point Blank 2 reference
+([pinned donor commit](https://github.com/misteraddons/SYSTEM11_MiSTer/commit/c2f2374386c28923d98588d25d509ea075ef9746)).
+The adapter stores only a nine-byte response packet in registers and adds no
+framebuffer or M10K-backed HUD state.
+
+Alien3 keeps descriptor byte 1 bit 3 for its special SERVICE12 coin layout and
+the Trigger/Button MRA assignment. Jurassic Park keeps its distinct one-button
+Shoot assignment and the existing MAME compatibility patch at `0xC15A8`. GunCon
+B/Cross is an additive coin source in the generic and Alien3 service maps; Alien3
+retains its swapped COIN1/COIN2 positions. No Alien3 framebuffer/HUD blending
+workaround is present or reintroduced.
+
+This is a source, descriptor, MRA, and focused-regression restoration. No RBF
+was built in this iteration and no CRT/lightgun hardware validation is claimed;
+the first hardware test should verify SNAC pin polarity, GunCon calibration,
+and the USB axis orientation on both titles.
+
+Burning Rival is also present in the current universal descriptor/MRA tables
+with its existing PPI/protection path; that pre-existing restoration is kept
+separate from the gun transport above.
+
 ## 2026-08-17: direct positional driving wheel
 
 Rad Mobile hardware testing reported that continuous left-stick sweeps could
@@ -64,15 +105,13 @@ This restoration is a scope/packaging change. No RBF was built and no hardware
 run was performed, so Rad Mobile carries no attract/frame-diff acceptance
 evidence yet — see the acceptance matrix below.
 
-## 2026-08-13: four game families removed
+## 2026-08-13: four game families removed (historical)
 
-Alien3: The Gun, Burning Rival, Jurassic Park, and SegaSonic The Hedgehog are
-outside the production profile. Their parents and clones are not emitted as
-MRAs or swept as supported software. The production RTL no longer contains
-their gun/aim and coin wiring, trackball/uPD4701 path, protection responders,
-Jurassic Park ROM patch, Burning Rival PPI map, or Alien3 framebuffer blend.
-Historical evidence below is retained only as an engineering record and does
-not indicate current support.
+Alien3: The Gun, Burning Rival, Jurassic Park, and SegaSonic The Hedgehog were
+temporarily outside the production profile. That scope decision and its
+evidence remain historical; the 2026-08-17 entry above restores Alien3 and
+Jurassic Park while the current working profile also carries Burning Rival.
+SegaSonic remains excluded.
 
 ## 2026-08-12: universal-profile memory-budget reduction
 
@@ -267,13 +306,12 @@ European and Soccer sets retain `PROT_NONE`.
 The production RBF remains `Arcade-SegaSystem32.rbf`; this is a descriptor and
 shared protection-path extension, not a new Quartus revision or game macro.
 
-## User-requested exclusions (2026-08-03)
+## User-requested exclusions (2026-08-03, superseded for Alien3/Jurassic Park)
 
-The following parents/sets are intentionally ignored and must not be emitted
-as MRAs, staged by the active profile sweep, or treated as supported in future
-profile work: `alien3`, `arescue`, `brival`, `dbzvrvs`, `f1en`, `f1lap`,
-`jpark`, and `sonic`. Local private media and historical captures may remain
-on disk; they are outside the production profile.
+The original exclusion list covered `alien3`, `arescue`, `brival`, `dbzvrvs`,
+`f1en`, `f1lap`, `jpark`, and `sonic`. Later source work supersedes the
+`alien3`, `brival`, and `jpark` entries; the remaining parents stay excluded
+from MRA generation and the production profile.
 
 ## Source of truth
 
@@ -293,6 +331,7 @@ timing and never selects a game or RBF.
 |---|---:|---:|
 | Shared V60, video, sprite, audio, I/O, loader, and dedicated V60 ROM cache | yes |
 | MSM6253 driving ADC, PPI, Dark Edge, and J.League protection | descriptor-driven |
+| Alien3/Jurassic Park USB lightgun and GunCon SNAC input | descriptor + OSD mode driven |
 | Rad Rally communication HLE | descriptor-driven |
 | Real NEC V25 core, program SDRAM, cache, FIFO, internal data RAM | compiled in via `rtl/cpu/v25/v25.qip` (`S32_V25_HW=1`), enabled by `has_v25` |
 | V25 table/cadence selection | descriptor-driven (`v25_table`) |

@@ -92,7 +92,6 @@ module emu
 
 // unused framework peripherals
 assign ADC_BUS  = 'Z;
-assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 
@@ -117,8 +116,9 @@ wire  [5:0] eep_rd_addr;
 wire [15:0] eep_rd_data;
 wire [31:0] joystick_0, joystick_1, joystick_2, joystick_3, joystick_4, joystick_5;
 wire [15:0] joystick_l_analog_0;
+wire [15:0] joystick_l_analog_1;
 wire [15:0] joystick_r_analog_0;
-wire        core_vs;
+wire        core_hs, core_vs;
 // The single universal RBF accepts every supported single-screen System 32
 // descriptor. Runtime fields select the real V25 path for GA2/Arabian Fight;
 // all other supported sets retain the standard-board peripherals and HLEs.
@@ -164,6 +164,10 @@ localparam CONF_STR = {
     "O[6],Screen (Multi32),A,B;",
 `endif
     "O[7],Service Mode,Off,On;",
+    // GunCon is a descriptor-gated input path.  The first option is the
+    // existing MiSTer USB lightgun/analog report; SNAC is opt-in per port.
+    "P1O[31:30],P1 Gun Input,USB Lightgun,SNAC Port 1,Off;",
+    "P1O[33:32],P2 Gun Input,USB Lightgun,SNAC Port 2,Off;",
     // status[29] is RESERVED and intentionally unused.  It used to select
     // "V60 Fetch,Fast,PCB (Reset)"; the Fast instruction-fetch transport has
     // been removed and the core always uses the PCB fetch path.  The bit is
@@ -328,7 +332,7 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_4(joystick_4),
     .joystick_5(joystick_5),
     .joystick_l_analog_0(joystick_l_analog_0),
-    .joystick_l_analog_1(),
+    .joystick_l_analog_1(joystick_l_analog_1),
     .joystick_l_analog_2(),
     .joystick_r_analog_0(joystick_r_analog_0),
     .paddle_0(),
@@ -483,13 +487,114 @@ wire [7:0] gear_toggle_p1a = {p1a_dig[7:1], ~radr_gear};
 // this remains a shared universal-profile implementation, not a game build.
 wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
                            ~joystick_0[5], ~joystick_0[4], 1'b1};
-wire [7:0] core_p1a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
+wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
+                           ~joystick_1[5], ~joystick_1[4], 1'b1};
+
+// The System11 Point Blank 2 transport is used only when a gun descriptor is
+// active and its per-player OSD selection is SNAC. USB lightguns continue to
+// use MiSTer's ordinary signed analog-stick report. SNAC responses are
+// normalized to the same 8-bit ADC endpoints, with USB values as the safe
+// fallback until a GunCon identification packet has arrived.
+wire p1_snac_mode = active_board.gun_aim && (status[31:30] == 2'b01);
+wire p2_snac_mode = active_board.gun_aim && (status[33:32] == 2'b01);
+wire snac_enabled = p1_snac_mode | p2_snac_mode;
+wire snac_select1_n, snac_select2_n, snac_command, snac_serial_clk;
+wire snac_p1_connected, snac_p2_connected;
+wire snac_p1_sample_valid, snac_p2_sample_valid;
+wire [7:0] snac_p1_device_id, snac_p2_device_id;
+wire [15:0] snac_p1_buttons, snac_p2_buttons;
+wire [8:0] snac_p1_raw_x, snac_p1_raw_y, snac_p2_raw_x, snac_p2_raw_y;
+wire snac_p1_gun_aim_valid, snac_p2_gun_aim_valid;
+wire [9:0] snac_p1_gun_x, snac_p2_gun_x;
+wire [7:0] snac_p1_gun_y, snac_p2_gun_y;
+// Match the donor's GunCon identification gate: a valid PSX response is not
+// enough to claim a positional gun until the returned device ID is 0x63.
+// Button routing intentionally uses this gate, not optical-coordinate range;
+// a real gun can report an off-screen aim while its trigger/Cross remain live.
+wire snac_p1_gun = p1_snac_mode && snac_p1_connected &&
+                   (snac_p1_device_id == 8'h63);
+wire snac_p2_gun = p2_snac_mode && snac_p2_connected &&
+                   (snac_p2_device_id == 8'h63);
+
+s32_guncon_snac guncon_snac (
+    .clk(clk_sys), .rst(reset),
+    .enable_p1(p1_snac_mode), .enable_p2(p2_snac_mode),
+    .frame_sync(VGA_VS),
+    .data_in(USER_IN[4]), .ack_in(USER_IN[3]),
+    .select1_n(snac_select1_n), .select2_n(snac_select2_n),
+    .command(snac_command), .serial_clk(snac_serial_clk),
+    .p1_connected(snac_p1_connected), .p2_connected(snac_p2_connected),
+    .p1_sample_valid(snac_p1_sample_valid),
+    .p2_sample_valid(snac_p2_sample_valid),
+    .p1_device_id(snac_p1_device_id), .p2_device_id(snac_p2_device_id),
+    .p1_buttons(snac_p1_buttons), .p2_buttons(snac_p2_buttons),
+    .p1_raw_x(snac_p1_raw_x), .p1_raw_y(snac_p1_raw_y),
+    .p2_raw_x(snac_p2_raw_x), .p2_raw_y(snac_p2_raw_y),
+    .p1_gun_aim_valid(snac_p1_gun_aim_valid),
+    .p2_gun_aim_valid(snac_p2_gun_aim_valid),
+    .p1_gun_x(snac_p1_gun_x), .p2_gun_x(snac_p2_gun_x),
+    .p1_gun_y(snac_p1_gun_y), .p2_gun_y(snac_p2_gun_y)
+);
+
+// USER_OUT follows the standard GunCon SNAC wiring used by the donor:
+// bit0=P2 select, bit1=P1 select, bit2=COMMAND, bit5=serial clock, and bit6
+//=composite sync. CSYNC is asserted only after a connected GunCon is
+// identified, matching the Point Blank 2 integration; a generic SNAC device
+// on an accidentally selected port sees the idle-high line. Keep the bus
+// idle-high unless SNAC is explicitly selected.
+assign USER_OUT = snac_enabled ?
+                  {(snac_p1_gun || snac_p2_gun) ? ~(VGA_HS ^ VGA_VS) : 1'b1,
+                   snac_serial_clk, 2'b11, snac_command,
+                   snac_select1_n, snac_select2_n} : 7'h7f;
+
+wire [7:0] usb_gun_p1_x = joystick_l_analog_0[7:0] ^ 8'h80;
+wire [7:0] usb_gun_p1_y = joystick_l_analog_0[15:8] ^ 8'h80;
+wire [7:0] usb_gun_p2_x = joystick_l_analog_1[7:0] ^ 8'h80;
+wire [7:0] usb_gun_p2_y = joystick_l_analog_1[15:8] ^ 8'h80;
+wire [7:0] gun_adc_p1_x = (p1_snac_mode && snac_p1_gun_aim_valid) ?
+                          snac_p1_gun_x[9:2] : usb_gun_p1_x;
+wire [7:0] gun_adc_p1_y = (p1_snac_mode && snac_p1_gun_aim_valid) ?
+                          snac_p1_gun_y : usb_gun_p1_y;
+wire [7:0] gun_adc_p2_x = (p2_snac_mode && snac_p2_gun_aim_valid) ?
+                          snac_p2_gun_x[9:2] : usb_gun_p2_x;
+wire [7:0] gun_adc_p2_y = (p2_snac_mode && snac_p2_gun_aim_valid) ?
+                          snac_p2_gun_y : usb_gun_p2_y;
+wire gun_snac_trigger_p1 = snac_p1_gun && snac_p1_buttons[13];
+wire gun_snac_trigger_p2 = snac_p2_gun && snac_p2_buttons[13];
+wire gun_snac_button2_p1 = snac_p1_gun && snac_p1_buttons[12];
+wire gun_snac_button2_p2 = snac_p2_gun && snac_p2_buttons[12];
+wire gun_snac_coin_p1 = snac_p1_gun && snac_p1_buttons[14];
+wire gun_snac_coin_p2 = snac_p2_gun && snac_p2_buttons[14];
+
+// GunCon trigger is the same active-low P1_A bit used by MRA button A. Keep
+// ordinary MiSTer A/B controls additive when SNAC is connected. Alien3's
+// second live P1_A/P2_A bit is the gun's attached Button, so GunCon A (the
+// donor's Start-side auxiliary button) is mapped there for that descriptor.
+// Alien3 cabinet Start is still retained as the trigger alias from its special
+// coin/trigger wiring; Jurassic Park does not use that alias.
+wire gun_p1_button1 = p1a_dig[0] & ~(snac_p1_gun && gun_snac_trigger_p1);
+wire gun_p2_button1 = p2a_dig[0] & ~(snac_p2_gun && gun_snac_trigger_p2);
+wire gun_p1_button2 = p1a_dig[1] & ~(snac_p1_gun && gun_snac_button2_p1);
+wire gun_p2_button2 = p2a_dig[1] & ~(snac_p2_gun && gun_snac_button2_p2);
+wire [7:0] gun_p1a = {p1a_dig[7:2], gun_p1_button2, gun_p1_button1};
+wire [7:0] gun_p2a = {p2a_dig[7:2], gun_p2_button2, gun_p2_button1};
+// MAME's Alien3 P1_A/P2_A masks leave only BUTTON1/2 (the trigger and the
+// second cabinet button) connected; direction and BUTTON3 bits are physically
+// unused. Start remains a convenience alias for the trigger bit.
+wire [7:0] alien3_p1a = {6'h3f, gun_p1a[1], gun_p1a[0] & ~joystick_0[10]};
+wire [7:0] alien3_p2a = {6'h3f, gun_p2a[1], gun_p2a[0] & ~joystick_1[10]};
+// Jurassic Park's port mask leaves only BUTTON1 (Shoot) connected.
+wire [7:0] jpark_p1a = {7'h7f, gun_p1a[0]};
+wire [7:0] jpark_p2a = {7'h7f, gun_p2a[0]};
+wire [7:0] core_p1a = active_board.gun_aim ?
+                       (active_board.coin_swap ? alien3_p1a : jpark_p1a) :
+                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p1a :
                        active_board.gear_toggle ? gear_toggle_p1a :
                        (active_board.digital_profile == DIGITAL_RADM) ? radm_p1a :
                        p1a_dig;
-wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
-                           ~joystick_1[5], ~joystick_1[4], 1'b1};
-wire [7:0] core_p2a = (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
+wire [7:0] core_p2a = active_board.gun_aim ?
+                       (active_board.coin_swap ? alien3_p2a : jpark_p2a) :
+                       (active_board.prot_sel == PROT_DARKEDGE) ? darkedge_p2a :
                        p2a_dig;
 
 wire [7:0] adc_ch [0:7];
@@ -514,10 +619,10 @@ s32_driving_controls driving_controls (
 // are the analog pedals, with A/B as full-scale digital fallbacks. The wheel
 // follows the current deadzoned stick coordinate directly; retaining an IIR
 // history here made continuous sweeps pause at stale intermediate positions.
-assign adc_ch[0] = driving_wheel;
-assign adc_ch[1] = driving_accel;
-assign adc_ch[2] = driving_brake;
-assign adc_ch[3] = 8'hff;
+assign adc_ch[0] = active_board.gun_aim ? gun_adc_p1_x : driving_wheel;
+assign adc_ch[1] = active_board.gun_aim ? gun_adc_p1_y : driving_accel;
+assign adc_ch[2] = active_board.gun_aim ? gun_adc_p2_x : driving_brake;
+assign adc_ch[3] = active_board.gun_aim ? gun_adc_p2_y : 8'hff;
 assign adc_ch[4] = 8'h80;
 assign adc_ch[5] = 8'h80;
 assign adc_ch[6] = 8'h80;
@@ -529,10 +634,22 @@ assign adc_ch[7] = 8'h80;
 wire [7:0] portc = 8'hff;
 wire test_btn = status[7] | joystick_0[12] | joystick_1[12];
 wire svc_btn  = joystick_0[13] | joystick_1[13];
-wire [7:0] svc12 = ~{
-                     2'b00,
-                     joystick_1[10], joystick_0[10],
-                     joystick_1[11], joystick_0[11], test_btn, svc_btn};
+wire [7:0] svc12_generic = ~{
+                      2'b00,
+                      joystick_1[10] | (snac_p2_gun && snac_p2_buttons[12]),
+                      joystick_0[10] | (snac_p1_gun && snac_p1_buttons[12]),
+                      joystick_1[11] | gun_snac_coin_p2,
+                      joystick_0[11] | gun_snac_coin_p1,
+                      test_btn, svc_btn};
+// Alien3 routes only the two cabinet coin switches through SERVICE12: the
+// generic Start fields are physically absent on that gun cabinet. SNAC
+// GunCon B/Cross is the second coin source, matching the Point Blank donor.
+wire [7:0] svc12_alien3 = ~{
+                     2'b00, 2'b00,
+                     joystick_0[11] | gun_snac_coin_p1,
+                     joystick_1[11] | gun_snac_coin_p2,
+                     test_btn, svc_btn};
+wire [7:0] svc12 = active_board.coin_swap ? svc12_alien3 : svc12_generic;
 // Port F/SERVICE34: bits 3:0 = DIP SW1:1-4 (Off), bit4 = PCB Push SW1
 // (Service), bit5 = PCB Push SW2 (Test), bit6 unknown; bit7 is replaced by the
 // EEPROM DO line inside s32_core.  Some games poll the PCB push switches
@@ -551,21 +668,27 @@ wire [7:0] svc34 = ~{2'b00, test_btn, svc_btn, 4'b0000};
 // eliminating that needs a board-descriptor US flag, deferred by choice.
 wire [7:0] ga2_ppi_pc = ~{4'b0, joystick_0[11], joystick_1[11],
                           joystick_3[10], joystick_2[10]};
-// Dark Edge uses the physical i8255 differently from GA2: A/C are pulled high
-// and B carries the upper action buttons.
+// Burning Rival and Dark Edge use the physical i8255 differently from GA2:
+// A/C are pulled high and B carries the upper action buttons.  Their first
+// three action buttons remain on the descriptor-selected player A ports.
+wire [7:0] brival_ppi_pb = {~joystick_0[9], 1'b1,
+                            ~joystick_0[7], ~joystick_0[8], 1'b1,
+                            ~joystick_1[9], ~joystick_1[8], ~joystick_1[7]};
 wire [7:0] darkedge_ppi_pb = {~joystick_0[8], 1'b1,
                               ~joystick_0[6], ~joystick_0[7], 1'b1,
                               ~joystick_1[8], ~joystick_1[7], ~joystick_1[6]};
+wire brival_inputs = active_board.prot_sel == PROT_BRIVAL;
 wire darkedge_inputs = active_board.prot_sel == PROT_DARKEDGE;
-wire [7:0] core_ppi_pa = darkedge_inputs ? 8'hff :
+wire [7:0] core_ppi_pa = (brival_inputs || darkedge_inputs) ? 8'hff :
                           p_dig(joystick_2);
-wire [7:0] core_ppi_pb = darkedge_inputs ? darkedge_ppi_pb : p_dig(joystick_3);
-wire [7:0] core_ppi_pc = darkedge_inputs ? 8'hff :
+wire [7:0] core_ppi_pb = brival_inputs ? brival_ppi_pb :
+                          darkedge_inputs ? darkedge_ppi_pb : p_dig(joystick_3);
+wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
                           ga2_ppi_pc;
 
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
-wire ce_pix_core, core_hs, core_hb, core_vb, mode_416_active;
+wire ce_pix_core, core_hb, core_vb, mode_416_active;
 wire signed [15:0] aud_l, aud_r;
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),

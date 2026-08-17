@@ -42,20 +42,21 @@ REGION_INDEX = dict(zip(STREAM_ORDER, range(4, 10)))
 #   b0: flags {multi32,v25,v25table,adc,reserved,ppi,motor_hle}
 #       multi32 is retained because the RTL still parses the bit, but it is
 #       always 0 here: this repository emits no Multi 32 set.
-#   b1: bit0=dual_pcb, bit1=vertical orientation flip, bits3:2=reserved,
-#       bits5:4=analog profile;
+#   b1: bit0=dual_pcb, bit1=vertical orientation flip, bit2=positional gun,
+#       bit3=Alien3 SERVICE12 coin layout, bits5:4=analog profile;
 #       bit6=dual-PCB comm RAM reset-to-FF
 #   b2: bits6:0=prot_sel; bit7=descriptor-selected EPR-14084 link HLE
 #   b3: bit7=physical sprite-bank metadata valid; bits1:0=bank mask
-PROT = dict(NONE=0, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
+PROT = dict(NONE=0, BRIVAL=2, DARKEDGE=3, F1LAP=4, DBZVRVS=5, JLEAGUE=6)
 ANALOG = dict(CENTERED=0, DRIVING=1, ALL_FF=2)
 DIGITAL = dict(GENERIC=0, RADM=1)
 def desc(multi32=0, v25=0, v25table=0, adc=0, ppi=0,
-         dual=0, flip_y=0, prot=0, analog=0, dual_ff=0,
+         dual=0, flip_y=0, gun=0, coin_swap=0, prot=0, analog=0, dual_ff=0,
          comm_hle=0, gear_toggle=0, digital=0, motor_hle=0):
     b0 = (multi32 | v25 << 1 | v25table << 2 | adc << 3 |
           ppi << 5 | motor_hle << 6)
-    b1 = (dual | (flip_y << 1) | (analog << 4) |
+    b1 = (dual | (flip_y << 1) | (gun << 2) | (coin_swap << 3) |
+          (analog << 4) |
           (dual_ff << 6) | (gear_toggle << 7))
     b2 = prot | (comm_hle << 7)
     # Byte 3 is populated from the physical sprite region by gen(); byte 4 is
@@ -69,9 +70,17 @@ GAMES = {
     # peripherals and the real V25 implementation. Runtime descriptor fields
     # select the hardware used by each supported parent.
     "arabfgt":  desc(v25=1, v25table=1, ppi=1),
+    "brival":   desc(ppi=1, prot=PROT["BRIVAL"]),
     "darkedge": desc(ppi=1, prot=PROT["DARKEDGE"]),
     "ga2":      desc(v25=1, v25table=0, ppi=1),
     "holo":     desc(flip_y=1),
+    # Alien3 and Jurassic Park are standard System 32 analog gun boards. The
+    # gun flag selects direct USB/SNAC coordinates into the existing MSM6253
+    # ADC; it does not select a framebuffer/HUD blend path. Alien3's cabinet
+    # uses the alternate SERVICE12 coin/start wiring, while Jurassic Park does
+    # not.
+    "alien3":   desc(adc=1, gun=1, coin_swap=1),
+    "jpark":    desc(adc=1, gun=1),
     # Rad Mobile Deluxe adds the 837-7753 moving-controller mailbox on the
     # 315-5296 C/G/D port group. MAME does not emulate that board, but the Sega
     # manual, main ROM transaction loop and EPR-13686 handshake establish it.
@@ -106,8 +115,7 @@ GAMES = {
 # Keep the exclusion explicit so a future source refresh cannot re-emit them by
 # accident simply because MAME still contains their ROM definitions.
 IGNORED_PARENTS = {
-    "alien3", "arescue", "brival", "dbzvrvs", "f1en", "f1lap",
-    "jpark", "sonic",
+    "arescue", "dbzvrvs", "f1en", "f1lap", "sonic",
 }
 
 # Per-game button labels/defaults are part of the MRA contract, not the board
@@ -128,6 +136,10 @@ BUTTONS = {
         "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,Start,Select,R,L,Y",
     ),
+    "brival": (
+        "Button 1,Button 2,Button 3,Button 4,Button 5,Button 6,Start,Coin,Test,Service",
+        "A,B,X,Y,R,L,Start,Select",
+    ),
     "darkedge": (
         "Light Punch,Heavy Punch,Jump,Light Kick,Heavy Kick,-,Start,Coin,Test,Service",
         "A,B,R,X,Y,Start,Select,L",
@@ -135,6 +147,16 @@ BUTTONS = {
     "holo": (
         "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service",
         "A,B,Start,Select,R,L",
+    ),
+    # Alien3's cabinet has a trigger plus a second gun button. Keep its
+    # button assignment separate from Jurassic Park's single Shoot input.
+    "alien3": (
+        "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
+        "A,B,Start,Select,R,L",
+    ),
+    "jpark": (
+        "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
+        "A,Start,Select,R,L",
     ),
     # Every driving cabinet gets the shared digital Accelerate/Brake fallbacks
     # on B1/B2 -- they drive the MSM6253 accelerator and brake channels to full
@@ -176,9 +198,12 @@ BUTTONS = {
 
 BUTTON_COUNTS = {
     "arabfgt": 2,
+    "brival": 6,
     "darkedge": 5,
     "ga2": 2,
     "holo": 2,
+    "alien3": 2,
+    "jpark": 1,
     "radm": 4,
     "radr": 3,
     "spidman": 2,
@@ -192,7 +217,12 @@ UNSUPPORTED = {"as1", "as1a", "as1b", "as1c", "sonicp"}
 
 # MAME init_* ROM pokes the hardware cannot supply, keyed by parent and applied
 # to every set of that parent. Offsets are local to the maincpu index-4 stream.
-PATCHES = {}
+PATCHES = {
+    # MAME's init_jpark applies this compatibility poke for an unmodelled
+    # moving-controller/drive-board response. Preserve it in the MRA stream;
+    # it is not an Alien3 video workaround and does not add framebuffer RAM.
+    "jpark": [(0xC15A8, "70 CD CD D8")],
+}
 
 def parse(src):
     """Return {setname: {'regions': [(region, size, loads)], 'title', 'parent'}}"""

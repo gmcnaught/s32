@@ -16,6 +16,8 @@ Commercial ROMs are not included. Multi 32 and AS-1 hardware are not supported.
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset
 - Per-game remappable controls defined by each MRA
+- Alien3: The Gun and Jurassic Park positional-gun inputs via MiSTer USB
+  lightgun reports or optional GunCon SNAC ports (descriptor-selected)
 
 ## PCB Accuracy
 
@@ -38,12 +40,15 @@ detailed source record.
 
 ## Supported games
 
-The 24 tracked MRA variants use the same universal RBF:
+The 33 tracked MRA variants use the same universal RBF:
 
 - **Arabian Fight:** World, US, Japan
+- **Burning Rival:** World, Japan
 - **Dark Edge:** World, Japan
 - **Golden Axe: The Revenge of Death Adder:** World Rev B, US Rev A, Japan
 - **Holosseum:** US Rev A
+- **Alien3: The Gun:** World, US Rev A, Japan
+- **Jurassic Park:** World Rev A, Japan Rev A Deluxe, Japan Deluxe, Japan Rev A Conversion
 - **Rad Mobile:** World, US
 - **Rad Rally:** World, US, Japan
 - **Slip Stream:** Brazil, Hispanic
@@ -51,9 +56,11 @@ The 24 tracked MRA variants use the same universal RBF:
 - **Super Visual Football / Soccer:** European, European Rev A, US Rev A
 - **The J.League 1994:** Japan, Japan Rev A
 
-Alien3: The Gun, Burning Rival, Jurassic Park, SegaSonic The Hedgehog, Hard
-Dunk, OutRunners, Stadium Cross, Title Fight, AS-1, and other Multi 32 games
-remain outside the production profile.
+SegaSonic The Hedgehog, Hard Dunk, OutRunners, Stadium Cross, Title Fight, AS-1,
+and other Multi 32 games remain outside the production profile. Alien3 retains
+its special SERVICE12 coin wiring; Jurassic Park keeps its one-button Shoot
+assignment and MRA compatibility patch. Neither game uses the retired
+framebuffer/HUD blending workaround.
 
 ## **Hardware emulated**
 
@@ -66,7 +73,8 @@ remain outside the production profile.
 | Sega 315-5388 / 315-5242 video | Palette, priority, RGB | [`s32_mixer.sv`](rtl/video/s32_mixer.sv); schematic and silicon evidence |
 | Sega 315-5296 I/O | JAMMA, DIP, service, coin | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 |
 | BR93C46 EEPROM | Serial NVRAM | `s32_io.sv`; MiSTer NVRAM upload/download |
-| MSM6253 ADC / 8255 PPI | Driving and parallel I/O | Descriptor-selected interfaces in `s32_io.sv` |
+| MSM6253 ADC / 8255 PPI | Driving and parallel I/O, including Burning Rival's two-player six-button map | Descriptor-selected interfaces in `s32_io.sv`, `Arcade-SegaSystem32.sv`, and `s32_prot.sv` |
+| GunCon / USB positional-gun input | SNAC serial pins or MiSTer USB analog reports | [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv), descriptor-selected ADC channels |
 | NEC V25 protection | Program/cache and mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv); [s80x86 provenance](rtl/cpu/v25/s80x86/README.system32.md) |
 | Z80 sound CPU | ~8.054 MHz | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv); vendored [`T80`](rtl/audio/T80/) |
 | 2 × YM3438 | Z80 register bus | [`JT12`](rtl/audio/jt12/) |
@@ -90,6 +98,9 @@ remain outside the production profile.
 - **furrtek / SiliconRE** - Sega 315-5242 and 315-5385 silicon research.
 - **Umberto Parisi (rmonic79) and Andrea Bogazzi (@asturur)** -
   [MiSTer-CRT-Adjust](https://github.com/rmonic79/MiSTer-CRT-Adjust/tree/c682de9f4acc61d8f4c7779efb48149d3baa3a8e).
+- **misteraddons / SYSTEM11_MiSTer** - GunCon-only PSX/SNAC transport reference
+  ([pinned commit c2f2374](https://github.com/misteraddons/SYSTEM11_MiSTer/commit/c2f2374386c28923d98588d25d509ea075ef9746)); GPL-2.0-or-later source
+  attribution is retained in [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv).
 - **MiSTer-devel and reference-core authors** - MiSTer framework, MRA tooling,
   and the audited S32X, Irem M92, WonderSwan, and MegaCD integration references
   listed in [reference-cores.md](docs/reference-cores.md).
@@ -105,6 +116,7 @@ components retain their own terms and notices:
 - JT8255 conformance reference: MIT ([LICENSE](verif/donors/LICENSE.jt8255))
 - T80: BSD-style terms in [`rtl/audio/T80/`](rtl/audio/T80/)
 - CRT Adjust: GPLv3 or later; provenance in [`verif/donors/README.md`](verif/donors/README.md)
+- GunCon SNAC transport reference: GPL-2.0-or-later; pinned source and notice in [`rtl/io/s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv)
 - SiliconRE material: [SiliconRE licence](docs/references/siliconre/315-5385/SiliconRE-LICENSE)
 - MiSTer framework and Intel/Altera IP: retained upstream/vendor notices
 

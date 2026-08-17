@@ -57,9 +57,11 @@ OUT="${OUT:-scratch/library-sweep}"
 # Every active standard-profile parent in the current user-directed acceptance
 # scope. Multi 32 left this repo in a7e280f; AS-1 is out of scope (laserdisc).
 # ga2 and arabfgt remain production-supported by the real V25 path but are
-# explicitly excluded from this goal's
-# sweep because they are V25 games.
-SETS="${SETS:-darkedge holo radm radr slipstrm spidman}"
+# explicitly excluded from this goal's sweep because they are V25 games.
+# Alien3 and Jurassic Park are included here so a future simulation-image
+# refresh exercises their restored descriptor/input routes as well as their
+# generated MRAs.
+SETS="${SETS:-alien3 darkedge holo jpark radm radr slipstrm spidman}"
 
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.md"

@@ -702,11 +702,22 @@ try {
     Run-HdlTest "t35_driving_controls" "tb_driving_controls" @(
         "rtl/io/s32_driving_controls.sv", "verif/common/tb_driving_controls.sv"
     ) "PASS: System 32 driving controls"
+    # GunCon is a small, descriptor-gated transport and deliberately has its
+    # own focused protocol check; it does not depend on the full core or a
+    # framebuffer model.
+    Run-HdlTest "t35_guncon_snac" "tb_guncon_snac" @(
+        "rtl/io/s32_guncon_snac.sv", "verif/common/tb_guncon_snac.sv"
+    ) "GUNCON SNAC PASS" @("SIMULATION")
 
     Write-Tier 36 "Dark Edge protection contract"
     Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"
     ) "DARK EDGE HLE PASS"
+
+    Write-Tier 36 "Burning Rival ROM-string protection contract"
+    Run-HdlTest "t36_brival_hle" "tb_brival_protection" @(
+        "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_brival_protection.sv"
+    ) "BRIVAL PROTECTION PASS"
 
     Write-Tier 36 "J.League protection contract"
     Run-HdlTest "t36_jleague_hle" "tb_jleague_hle" @(

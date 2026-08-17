@@ -101,6 +101,112 @@ end
 endmodule
 
 // ---------------------------------------------------------------------------
+// Burning Rival ROM-string protection copy (MAME init_brival).
+// ---------------------------------------------------------------------------
+module s32_prot_brival (
+    input             clk,
+    input             rst,
+    input             enable,
+
+    input             cpu_wr,
+    input      [23:0] cpu_addr,
+    input      [15:0] cpu_wdata,
+
+    // Read trap: the MAME handler is installed for word reads at 0x20BA00-07.
+    input             cpu_rd,
+    input       [1:0] cpu_be,
+    output reg        trap_active,
+    output reg [15:0] trap_data,
+
+    // Protection RAM bytes are overlaid onto the work-RAM second port.
+    output reg        pram_we,
+    output reg  [7:0] pram_addr,
+    output reg  [7:0] pram_wdata,
+
+    // Main-ROM read client.
+    output reg        rom_req,
+    output reg [23:0] rom_addr,
+    input      [15:0] rom_data,
+    input             rom_ack
+);
+
+function automatic [23:0] slot_rom(input [2:0] s);
+    case (s)
+        3'd0: slot_rom = 24'h109517;
+        3'd5: slot_rom = 24'h109617;
+        default: slot_rom = 24'h109597;
+    endcase
+endfunction
+
+reg [2:0] slot;
+reg [3:0] cnt;
+typedef enum logic [2:0] { B_IDLE, B_RD, B_GAP, B_WR } brival_state_t;
+brival_state_t state;
+
+always @(posedge clk) begin
+    if (rst) begin
+        state       <= B_IDLE;
+        rom_req     <= 1'b0;
+        pram_we     <= 1'b0;
+        trap_active <= 1'b0;
+        trap_data   <= 16'h0000;
+    end
+    else begin
+        pram_we <= 1'b0;
+        // Byte reads fall through to work RAM; only full-word accesses are
+        // handled by the protection device.
+        trap_active <= enable && cpu_rd && (cpu_be == 2'b11) &&
+                       (cpu_addr[23:4] == 20'h20BA0) &&
+                       (cpu_addr[3:1] == 3'd0 ||
+                        cpu_addr[3:1] == 3'd2 ||
+                        cpu_addr[3:1] == 3'd3);
+        trap_data <= 16'h0000;
+
+        case (state)
+        B_IDLE: begin
+            rom_req <= 1'b0;
+            if (enable && cpu_wr && cpu_addr[23:12] == 12'hA00 &&
+                cpu_addr[11:4] == 8'h80 && cpu_addr[3:1] <= 3'd5) begin
+                slot     <= cpu_addr[3:1];
+                cnt      <= 4'd0;
+                rom_req  <= 1'b1;
+                rom_addr <= slot_rom(cpu_addr[3:1]);
+                state    <= B_RD;
+            end
+        end
+        B_RD: if (rom_ack) begin
+            rom_req    <= 1'b0;
+            pram_we    <= 1'b1;
+            pram_addr  <= {slot, 4'b0} + {3'b0, cnt};
+            // The cache returns a word containing the requested byte.  The
+            // odd source address selects its upper lane.
+            pram_wdata <= rom_addr[0] ? rom_data[15:8] : rom_data[7:0];
+            if (cnt == 4'd15) begin
+                state <= B_IDLE;
+            end
+            else begin
+                cnt   <= cnt + 1'b1;
+                state <= B_GAP;
+            end
+        end
+        B_GAP: begin
+            // The ROM client is edge-triggered.  Keep one complete low cycle
+            // between consecutive byte requests.
+            rom_req  <= 1'b1;
+            rom_addr <= slot_rom(slot) + {19'b0, cnt};
+            state    <= B_RD;
+        end
+        default: begin
+            state   <= B_IDLE;
+            rom_req <= 1'b0;
+        end
+        endcase
+    end
+end
+
+endmodule
+
+// ---------------------------------------------------------------------------
 // The J.League 1994 protection write handler.
 //
 // MAME's init_jleague installs a write16 handler at 0x20f700-0x20f705:

@@ -27,16 +27,26 @@ class BoardDescriptorTests(unittest.TestCase):
         # bit0 unused and puts Light/Wiper on bits 1/2 (DIGITAL_RADM = 1).
         self.assertEqual(GAMES["radm"][4], 0x01)
 
+    def test_positional_gun_descriptors_keep_adc_and_alien3_coin_layout(self) -> None:
+        # b0 bit 3 selects the existing MSM6253 ADC. b1 bit 2 selects the
+        # direct USB/SNAC positional-gun input adapter and bit 3 is Alien3's
+        # special SERVICE12 coin layout.
+        self.assertEqual(GAMES["alien3"][:2], bytes.fromhex("080c"))
+        self.assertEqual(GAMES["jpark"][:2], bytes.fromhex("0804"))
+
     def test_football_family_uses_standard_board_and_jleague_protection(self) -> None:
         self.assertEqual(GAMES["svf"][:3], bytes.fromhex("000000"))
         self.assertEqual(GAMES["jleague"][:3], bytes.fromhex("000006"))
         self.assertEqual(GAMES["jleagueo"][:3], bytes.fromhex("000006"))
 
+    def test_burning_rival_selects_ppi_and_protection(self) -> None:
+        self.assertEqual(GAMES["brival"][:3], bytes.fromhex("200002"))
+
     def test_every_supported_four_player_parent_selects_the_ppi(self) -> None:
         # b0[5] is the descriptor's i8255-present flag.  Keep this list
         # explicit: Arabian Fight and Golden Axe II use the same 4-player
         # board as the ordinary PPI parents even though they also select V25.
-        expected = {"arabfgt", "darkedge", "ga2", "spidman"}
+        expected = {"arabfgt", "brival", "darkedge", "ga2", "spidman"}
         actual = {name for name, descriptor in GAMES.items()
                   if descriptor[0] & 0x20}
         self.assertEqual(actual, expected)
@@ -112,12 +122,25 @@ class ButtonMetadataTests(unittest.TestCase):
                          ["A", "B", "X", "Start", "Select", "R", "L"])
 
     def test_promoted_games_keep_cabinet_button_counts(self) -> None:
-        expected = {"darkedge": 5, "holo": 2, "radm": 4, "radr": 3}
+        expected = {
+            "alien3": 2, "brival": 6, "darkedge": 5, "holo": 2, "jpark": 1,
+            "radm": 4, "radr": 3,
+        }
         for parent, count in expected.items():
             with self.subTest(parent=parent):
                 names, _ = BUTTONS[parent]
                 self.assertEqual(sum(name != "-" for name in names.split(",")[:6]),
                                  count)
+
+    def test_positional_gun_button_assignments_are_not_shared(self) -> None:
+        self.assertEqual(BUTTONS["alien3"], (
+            "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
+            "A,B,Start,Select,R,L",
+        ))
+        self.assertEqual(BUTTONS["jpark"], (
+            "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
+            "A,Start,Select,R,L",
+        ))
 
     def test_slip_stream_maps_pedals_and_gear_to_a_b_x(self) -> None:
         names, defaults = BUTTONS["slipstrm"]
@@ -134,6 +157,15 @@ class ButtonMetadataTests(unittest.TestCase):
                           "Start", "Coin", "Test", "Service"])
         self.assertEqual(defaults.split(","),
                          ["A", "B", "X", "Start", "Select", "R", "L"])
+
+    def test_burning_rival_controls_are_named_and_mapped_as_six_buttons(self) -> None:
+        names, defaults = BUTTONS["brival"]
+        self.assertEqual(names.split(","),
+                         ["Button 1", "Button 2", "Button 3", "Button 4",
+                          "Button 5", "Button 6", "Start", "Coin", "Test",
+                          "Service"])
+        self.assertEqual(defaults.split(","),
+                         ["A", "B", "X", "Y", "R", "L", "Start", "Select"])
 
 
 class EepromArchiveSourceTests(unittest.TestCase):
@@ -219,7 +251,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             Path(__file__).parents[1] / "releases",
         ):
             paths = sorted(mra_dir.glob("*.mra"))
-            self.assertEqual(len(paths), 24, str(mra_dir))
+            self.assertEqual(len(paths), 33, str(mra_dir))
             for path in paths:
                 root = ElementTree.parse(path).getroot()
                 self.assertEqual(len(root.findall("nvram")), 1, path.name)
@@ -232,7 +264,7 @@ class OptimizedLayoutTests(unittest.TestCase):
         paths = sorted(mra_dir.glob("*.mra"))
         # Air Rescue is intentionally excluded because its second PCB is not
         # part of the production core.
-        self.assertEqual(len(paths), 24)
+        self.assertEqual(len(paths), 33)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
@@ -269,6 +301,47 @@ class OptimizedLayoutTests(unittest.TestCase):
             self.assertEqual(len(eeprom), 1, path.name)
             self.assertEqual(eeprom[0].find("part").attrib["name"],
                              "eeprom-radm.ic76", path.name)
+
+    def test_gun_games_ship_descriptor_and_distinct_button_assignments(self) -> None:
+        mra_dir = Path(__file__).parents[1] / "mra"
+        expected = {
+            "Alien3 The Gun (World).mra": ("alien3", 0x08, 0x0C, 2,
+                                            "Trigger,Button,-,-,-,-,Start,Coin,Test,Service"),
+            "Jurassic Park (World, Rev A).mra": ("jpark", 0x08, 0x04, 1,
+                                                  "Shoot,-,-,-,-,-,Start,Coin,Test,Service"),
+        }
+        for filename, (setname, b0, b1, count, names) in expected.items():
+            with self.subTest(filename=filename):
+                root = ElementTree.parse(mra_dir / filename).getroot()
+                self.assertEqual(root.findtext("setname"), setname)
+                descriptor = bytes.fromhex(root.findall("rom")[-1].findtext("part", ""))
+                self.assertEqual(descriptor[0], b0)
+                self.assertEqual(descriptor[1], b1)
+                buttons = root.find("buttons")
+                self.assertIsNotNone(buttons)
+                self.assertEqual(buttons.attrib["count"], str(count))
+                self.assertEqual(buttons.attrib["names"], names)
+                if setname == "jpark":
+                    patch = root.find("rom[@index='4']/patch")
+                    self.assertIsNotNone(patch)
+                    self.assertEqual(patch.attrib["offset"], "0xC15A8")
+                    self.assertEqual(patch.text, "70 CD CD D8")
+
+    def test_burning_rival_variants_ship_descriptor_and_six_named_buttons(self) -> None:
+        mra_dir = Path(__file__).parents[1] / "mra"
+        paths = sorted(mra_dir.glob("Burning Rival*.mra"))
+        self.assertEqual([path.name for path in paths],
+                         ["Burning Rival (Japan).mra", "Burning Rival (World).mra"])
+        for path in paths:
+            root = ElementTree.parse(path).getroot()
+            self.assertEqual(root.findtext("rbf"), "Arcade-SegaSystem32")
+            descriptor = bytes.fromhex(root.findall("rom")[-1].findtext("part", ""))
+            self.assertEqual(descriptor[:3], bytes.fromhex("200002"), path.name)
+            buttons = root.find("buttons")
+            self.assertIsNotNone(buttons, path.name)
+            self.assertEqual(buttons.attrib["count"], "6", path.name)
+            self.assertEqual(buttons.attrib["names"], BUTTONS["brival"][0], path.name)
+            self.assertEqual(buttons.attrib["default"], BUTTONS["brival"][1], path.name)
 
     def test_rad_rally_uses_behavioral_link_without_diagnostic_firmware(self) -> None:
         for path in (Path(__file__).parents[1] / "mra").glob("Rad Rally*.mra"):

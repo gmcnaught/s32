@@ -201,6 +201,8 @@ always @(posedge clk) begin
                             desc_r.sprite_bank_valid <= desc_bytes[3][7];
                             desc_r.sprite_bank_mask  <= desc_bytes[3][1:0];
                             desc_r.flip_y            <= desc_bytes[1][1];
+                            desc_r.gun_aim           <= desc_bytes[1][2];
+                            desc_r.coin_swap         <= desc_bytes[1][3];
                             desc_r.analog_profile    <= desc_bytes[1][5:4];
                             desc_r.dual_comm_ff      <= desc_bytes[1][6];
                             desc_r.gear_toggle       <= desc_bytes[1][7];
@@ -251,6 +253,8 @@ always @(posedge clk) begin
                             desc_r.sprite_bank_valid <= desc_bytes[3][7];
                             desc_r.sprite_bank_mask  <= desc_bytes[3][1:0];
                             desc_r.flip_y            <= desc_bytes[1][1];
+                            desc_r.gun_aim           <= desc_bytes[1][2];
+                            desc_r.coin_swap         <= desc_bytes[1][3];
                             desc_r.analog_profile    <= desc_bytes[1][5:4];
                             desc_r.dual_comm_ff      <= desc_bytes[1][6];
                             desc_r.gear_toggle       <= desc_bytes[1][7];
