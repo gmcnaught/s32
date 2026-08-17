@@ -142,6 +142,27 @@ begin
 end
 endtask
 
+task automatic read_two_words(
+    input [5:0] address,
+    output reg [15:0] first,
+    output reg [15:0] second
+);
+integer n;
+begin
+    begin_command(8'h80 | address);
+    check(dout === 1'b0, "streaming READ dummy bit");
+    for (n = 15; n >= 0; n = n - 1) begin
+        serial_bit(1'b0);
+        first[n] = dout;
+    end
+    for (n = 15; n >= 0; n = n - 1) begin
+        serial_bit(1'b0);
+        second[n] = dout;
+    end
+    end_command();
+end
+endtask
+
 task automatic wait_bulk_write;
 begin
     wait (dut.bulk_active === 1'b1);
@@ -254,6 +275,12 @@ initial begin
     read_word(6'd5, serial_readback);
     check(serial_readback === 16'hFFFF, "serial READ returns erased word");
     check(!modified, "READ does not dirty");
+
+    // System 32 software clocks beyond one word without dropping CS. The
+    // 93C46 must continue at the next address instead of returning pull-ups.
+    read_two_words(6'd0, serial_readback, ld_data);
+    check(serial_readback === 16'h1234, "streaming READ first word");
+    check(ld_data === 16'hA5C3, "streaming READ advances to next word");
     command_only(8'h00); // EWDS
     check(!modified, "EWDS does not dirty");
     command_only(8'h30); // EWEN again

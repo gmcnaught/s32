@@ -405,7 +405,8 @@ module s32_eeprom93c46 #(
 // Writes/erases commit to the NVRAM shadow as before, then the device reports
 // the real part's self-timed busy/READY handshake: with CS high DO is low while
 // busy and high when programming completes. New commands are ignored while
-// busy; DO otherwise idles high except during the data phase of a READ.
+// busy; DO otherwise idles high except during READ. 93C46 READ streams across
+// consecutive words while CS remains asserted, wrapping after word 63.
 typedef enum logic [2:0] { E_IDLE, E_CMD, E_READ, E_WRDATA, E_DONE } est_t;
 est_t es;
 reg [6:0]  sr;
@@ -551,8 +552,13 @@ always @(posedge clk) begin
             end
             bitcnt <= bitcnt + 1'd1;
             if (bitcnt == 4'd15) begin
-                es <= E_DONE;        // further clocks ignored until CS falls
-                // (dout returns high once the final bit has been clocked)
+                // Sequential READ is streaming on the 93C46. Keep the dummy
+                // zero only at command entry, then advance directly into the
+                // next word while CS remains asserted. The serial clock is
+                // much slower than clk, leaving the synchronous RAM read time
+                // to settle before the next rising SK edge.
+                eaddr  <= eaddr + 1'd1;
+                bitcnt <= 0;
             end
         end
         E_WRDATA: begin

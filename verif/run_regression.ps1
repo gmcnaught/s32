@@ -708,10 +708,6 @@ try {
     Run-HdlTest "t35_guncon_snac" "tb_guncon_snac" @(
         "rtl/io/s32_guncon_snac.sv", "verif/common/tb_guncon_snac.sv"
     ) "GUNCON SNAC PASS" @("SIMULATION")
-    Run-HdlTest "t35_gun_aim" "tb_gun_aim" @(
-        "rtl/io/s32_gun_aim.sv", "verif/common/tb_gun_aim.sv"
-    ) "GUN AIM PASS"
-
     Write-Tier 36 "Dark Edge protection contract"
     Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"

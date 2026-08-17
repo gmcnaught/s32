@@ -187,14 +187,19 @@ initial begin
     // mark the EEPROM initialized, but must never release the main boot gate.
     send_byte(8'd2, 27'd0, 8'h34);
     send_byte(8'd2, 27'd1, 8'h12);
-    check(eep_wr && eep_waddr === 6'd0 && eep_wdata === 16'h1234,
-          "index-2 EEPROM little-endian word");
+    check(eep_wr && eep_waddr === 6'd0 && eep_wdata === 16'h3412,
+          "index-2 factory EEPROM big-endian cell");
     check(eep_loaded && !rom_loaded, "index 2 must not set rom_loaded");
     @(negedge clk);
     ioctl_download = 1'b0;
     repeat (3) @(posedge clk);
     #1;
     check(!rom_loaded, "ending index 2 must not set rom_loaded");
+
+    send_byte(8'd3, 27'd0, 8'h34);
+    send_byte(8'd3, 27'd1, 8'h12);
+    check(eep_wr && eep_waddr === 6'd0 && eep_wdata === 16'h1234,
+          "index-3 persisted EEPROM word round-trips unchanged");
 
     // A minimal index-0 transaction proves the explicit start/end gate.  Its
     // address-zero write also clears an earlier EEPROM-loaded indication.

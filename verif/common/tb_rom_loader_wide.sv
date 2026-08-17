@@ -109,8 +109,12 @@ initial begin
     check(rom_loaded, "wide download releases boot gate");
 
     send_word(8'd2, 27'd0, 16'h1234);
+    check(eep_wr && eep_waddr === 6'd0 && eep_wdata === 16'h3412 &&
+          eep_loaded, "wide factory EEPROM big-endian cell");
+
+    send_word(8'd3, 27'd0, 16'h1234);
     check(eep_wr && eep_waddr === 6'd0 && eep_wdata === 16'h1234 &&
-          eep_loaded, "wide EEPROM word");
+          eep_loaded, "wide persisted EEPROM word round-trips unchanged");
 
     if (errors == 0) $display("WIDE ROM LOADER PASS");
     else $display("WIDE ROM LOADER FAIL (%0d errors)", errors);

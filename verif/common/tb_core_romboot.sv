@@ -556,24 +556,12 @@ initial begin
     if (!$value$plusargs("GUNP2Y=%h", gun_p2_y)) gun_p2_y = 8'h80;
 end
 wire [7:0] sim_gun_p1_x, sim_gun_p1_y, sim_gun_p2_x, sim_gun_p2_y;
-wire [7:0] sim_alien3_p1_x, sim_alien3_p1_y;
-wire [7:0] sim_alien3_p2_x, sim_alien3_p2_y;
-s32_gun_aim sim_gun_aim (
-    .clk(clk_sys), .rst(rst), .enable(board.gun_aim && board.coin_swap),
-    // GUNP* plusargs are expressed as cabinet ADC coordinates. Convert them
-    // back to MiSTer's signed host-axis representation before conditioning.
-    .p1_raw_x(gun_p1_x[7:0] ^ 8'h80),
-    .p1_raw_y(gun_p1_y[7:0] ^ 8'h80),
-    .p2_raw_x(gun_p2_x[7:0] ^ 8'h80),
-    .p2_raw_y(gun_p2_y[7:0] ^ 8'h80),
-    .invert_x(1'b0), .invert_y(1'b0),
-    .p1_aim_x(sim_alien3_p1_x), .p1_aim_y(sim_alien3_p1_y),
-    .p2_aim_x(sim_alien3_p2_x), .p2_aim_y(sim_alien3_p2_y)
-);
-assign sim_gun_p1_x = board.coin_swap ? sim_alien3_p1_x : gun_p1_x[7:0];
-assign sim_gun_p1_y = board.coin_swap ? sim_alien3_p1_y : gun_p1_y[7:0];
-assign sim_gun_p2_x = board.coin_swap ? sim_alien3_p2_x : gun_p2_x[7:0];
-assign sim_gun_p2_y = board.coin_swap ? sim_alien3_p2_y : gun_p2_y[7:0];
+// GUNP* values are cabinet ADC coordinates for both gun titles. Alien 3 now
+// shares Jurassic Park's direct mapping instead of a title-specific curve.
+assign sim_gun_p1_x = gun_p1_x[7:0];
+assign sim_gun_p1_y = gun_p1_y[7:0];
+assign sim_gun_p2_x = gun_p2_x[7:0];
+assign sim_gun_p2_y = gun_p2_y[7:0];
 assign adc_a[0] = board.gun_aim ? sim_gun_p1_x :
                   (adc0_override >= 0) ? adc0_override[7:0] :
                   (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
@@ -603,8 +591,8 @@ reg  [5:0] eep_ld_addr = 6'd0;
 reg [15:0] eep_ld_data = 16'hffff;
 
 // Reproduce the live loader's index-2 default transfer before reset releases.
-// eeprom.hex already contains the little-endian 16-bit words that ioctl_dout
-// presents to s32_rom_loader in WIDE mode.
+// eeprom.hex contains the little-endian packing presented by WIDE hps_io; the
+// index-2 loader swaps each raw big-endian 93C46 cell before storing it.
 integer eep_load_i;
 `ifndef S32_EXTERNAL_CLOCKS
 initial begin
@@ -613,7 +601,7 @@ initial begin
         repeat (2) @(posedge clk_sys);
         for (eep_load_i = 0; eep_load_i < 64; eep_load_i = eep_load_i + 1) begin
             eep_ld_addr = eep_load_i[5:0];
-            eep_ld_data = eep_img[eep_load_i];
+            eep_ld_data = {eep_img[eep_load_i][7:0], eep_img[eep_load_i][15:8]};
             eep_ld_wr = 1'b1;
             @(posedge clk_sys);
         end
@@ -628,7 +616,8 @@ always @(posedge clk_sys) begin
         eep_load_state = eep_present ? 1 : 67;
     else if (eep_load_state >= 1 && eep_load_state <= 64) begin
         eep_ld_addr = eep_load_state - 1;
-        eep_ld_data = eep_img[eep_load_state - 1];
+        eep_ld_data = {eep_img[eep_load_state - 1][7:0],
+                       eep_img[eep_load_state - 1][15:8]};
         eep_ld_wr = 1'b1;
         eep_load_state = eep_load_state + 1;
     end
@@ -889,6 +878,37 @@ always @(posedge clk_sys) begin
         $display("[iow] f=%0d pc=%08x A=%06x addr=%02x data=%04x be=%b cnt=%b/%b/%b",
             cur_frame, core.v60.pc, core.A, core.A[5:1], core.m_wdata,
             core.m_be, core.io0_cnt2, core.io0_cnt1, core.io0.cnt0);
+    end
+end
+// +ADCLOG=<n>: reconstruct bounded, accepted MSM6253 samples exactly as the
+// V60 receives them. Unlike IOLOG, this ignores held request cycles and logs
+// only the load transaction plus eight acknowledged D7 reads.
+integer adclog = 0, adclog_n = 0;
+integer adc_trace_bits = 0;
+reg [1:0] adc_trace_channel = 2'd0;
+reg [7:0] adc_trace_shift = 8'd0;
+initial if (!$value$plusargs("ADCLOG=%d", adclog)) adclog = 0;
+always @(posedge clk_sys) begin
+    if (adclog && adclog_n < adclog && core.m_req && core.m_ack &&
+        !core.ack_d && core.sel_adc && core.m_be[0]) begin
+        if (core.m_we) begin
+            adc_trace_channel = core.A[2:1];
+            adc_trace_bits = 0;
+            adc_trace_shift = 8'd0;
+            $display("[adc-select] f=%0d pc=%08x ch=%0d source=%02x",
+                cur_frame, core.v60.pc, core.A[2:1],
+                adc_a[core.A[2:1]]);
+        end
+        else begin
+            adc_trace_shift = {adc_trace_shift[6:0], core.m_rdata[7]};
+            adc_trace_bits = adc_trace_bits + 1;
+            if (adc_trace_bits == 8) begin
+                adclog_n = adclog_n + 1;
+                $display("[adc-sample] n=%0d f=%0d pc=%08x ch=%0d value=%02x",
+                    adclog_n, cur_frame, core.v60.pc, adc_trace_channel,
+                    adc_trace_shift);
+            end
+        end
     end
 end
 integer snd_rom_reqs = 0, snd_opcodes = 0;
@@ -1768,7 +1788,7 @@ always @(posedge clk_sys) if (ce_cpu) begin
     r0check_prev_pc <= core.v60.pc;
 end
 
-// DIAGNOSTIC (radm/radr goal): has the CPU ever reached a specific PC?
+// DIAGNOSTIC: has the CPU ever reached a specific PC, and with which registers?
 // docs/radm-radr-bringup.md: confirm/deny whether radm's demo-object
 // allocator (MAME PC 0x070dbc/0x070dfc, first hit at MAME frame 897) ever
 // executes in the RTL.
@@ -1781,7 +1801,9 @@ integer pcwatch_last_frame = -1;
 always @(posedge clk_sys) if (ce_cpu) begin
     if (pcwatch_a >= 0 && core.v60.pc == pcwatch_a[31:0] &&
         cur_frame != pcwatch_last_frame && pcwatch_n < pcwatch_max) begin
-        $display("[pcwatch] HIT f=%0d pc=%08x", cur_frame, core.v60.pc);
+        $display("[pcwatch] HIT f=%0d pc=%08x r0=%08x r1=%08x r2=%08x r3=%08x r4=%08x r5=%08x r25=%08x",
+            cur_frame, core.v60.pc, core.v60.r[0], core.v60.r[1], core.v60.r[2],
+            core.v60.r[3], core.v60.r[4], core.v60.r[5], core.v60.r[25]);
         pcwatch_n = pcwatch_n + 1;
         pcwatch_last_frame = cur_frame;
     end

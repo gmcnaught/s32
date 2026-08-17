@@ -2,6 +2,77 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-17: Alien 3 aiming fixed at the EEPROM producer
+
+Real-ROM tracing proved the MiSTer analog byte reached Alien 3's MSM6253 and
+V60 read loop unchanged. The game then applied its own calibrated coordinate
+formula, `(2*raw-max-min)*160/(max-min)`, using fallback X bounds `0x7f..0x81`.
+That two-count span converted one stick count into approximately 160 pixels;
+the disappearing crosshair was therefore an off-screen coordinate, not a
+sprite, texture, flicker-blend, GunCon, deadzone, or host-axis sensitivity bug.
+
+The first causal failure was the shared 93C46 path. System 32 software uses
+sequential READ while CS remains asserted, but the RTL stopped after one word
+and returned pull-ups. In addition, factory index 2 had been conflated with
+persisted index 3: raw factory x16 cells are big-endian, while index-3 NVRAM is
+the core's internal-word stream. The EEPROM now streams and wraps through all
+64 words; factory index 2 alone swaps each cell into serial-word order, while
+index 3 remains byte-for-byte round-trip compatible.
+
+The pre-fix Alien 3 receipt read `0xffff`, selected the ROM fallback, and
+reported `min=0x7f max=0x81 span=2`. The rebuilt strict Verilator replay read
+factory header word `0x3353`, did not execute the fallback write, and reported
+`min=0x00 max=0xff span=255`; raw `0x81` then produced a 1--2-pixel result.
+Directed narrow/WIDE loader tests distinguish index 2 from index 3, and the
+EEPROM test now proves two-word streaming. No ADC scaling, renderer, raster,
+clock, reset, CDC, SDC, PLL, audio, GunCon, MRA, or framework behavior changed.
+Physical MiSTer gameplay remains the final hardware acceptance gate.
+
+## 2026-08-17: Alien 3 GunCon support removed
+
+MiSTer hardware testing continued to show unusably high Alien 3 analog-stick
+sensitivity after the title-specific conditioner was removed. At user
+direction, GunCon SNAC is no longer an Alien 3 capability. The existing
+`coin_swap` descriptor bit identifies Alien 3's distinct gun-cabinet wiring;
+the universal top now permits SNAC only when `gun_aim && !coin_swap`, which is
+the Jurassic Park route. For Alien 3 this holds both SNAC enables false, keeps
+`USER_OUT` idle, prevents packet coordinates from overriding the host axes,
+and excludes GunCon buttons and coins. Alien 3 retains only the direct signed
+MiSTer analog-stick/USB-lightgun bytes converted to the MSM6253 coordinate.
+
+No ADC serialization, host-axis scaling, framebuffer, raster, clock, reset,
+CDC, memory, MRA, SDC, PLL, or framework behavior changes. The profile
+contract pins the Jurassic-only gate; focused profile, ADC, GunCon, and cold
+game checks cover the affected shared path. Because the former coordinate
+override already required explicit SNAC selection plus a valid packet, Alien
+3 EEPROM calibration remains an open causal lead if hardware sensitivity does
+not change after this removal.
+
+## 2026-08-17: Alien 3 uses Jurassic Park's direct analog mapping
+
+Physical MiSTer testing identified the actual disappearing-sight symptom as an
+input-range problem: very small left-stick motion in Alien 3 drove the sight
+off-screen, while the same controller had correct sensitivity in Jurassic
+Park and worked normally in the service menu.  The first differing producer
+was the Alien 3-only `s32_gun_aim` path added by commit `e31647aa`; it inserted
+a nonlinear radial response, early endpoint saturation and adaptive filtering.
+Jurassic Park instead converted each signed MiSTer host-axis byte directly to
+the cabinet ADC coordinate with `axis ^ 8'h80`.
+
+Alien 3 now uses that exact Jurassic Park host-axis mapping for both players
+and both axes.  The title-specific conditioner and its focused test are
+removed from the production manifest and regression list.  GunCon SNAC remains
+an independent calibrated-coordinate override after a valid sample.  The
+earlier uncommitted three-field sprite persistence experiment was also removed:
+the crosshair was being moved outside the visible coordinate range, not lost
+by the renderer.  No framebuffer, raster, ADC serialization, MRA, clock,
+reset, CDC, memory, SDC, PLL, framework or pin behavior changes in this fix.
+
+The source contract asserts all four host-axis fallbacks are direct and that
+no Alien 3 conditioner remains.  Focused profile, GunCon, ADC and cold game
+checks cover the shared route.  A physical MiSTer gameplay pass remains the
+final sensitivity and on-screen-crosshair acceptance gate.
+
 ## 2026-08-17: additive Alien 3 analog-stick and GunCon input restoration
 
 Post-change MiSTer testing proved that the endpoint-clamp-only correction

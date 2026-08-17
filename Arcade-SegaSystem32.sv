@@ -490,12 +490,14 @@ wire [7:0] darkedge_p1a = {p1a_dig[7:4], 1'b1,
 wire [7:0] darkedge_p2a = {p2a_dig[7:4], 1'b1,
                            ~joystick_1[5], ~joystick_1[4], 1'b1};
 
-// The System11 Point Blank 2 transport is used only when a gun descriptor is
-// active and its per-player OSD selection is SNAC. Analog sticks and USB
-// lightguns remain an independent source, and are the safe fallback until a
-// GunCon identification packet has arrived.
-wire p1_snac_mode = active_board.gun_aim && (status[31:30] == 2'b01);
-wire p2_snac_mode = active_board.gun_aim && (status[33:32] == 2'b01);
+// The System11 Point Blank 2 transport is a Jurassic Park-only option.
+// Alien 3 is identified by the gun descriptor's distinct coin_swap cabinet
+// wiring and must remain a pure analog-stick/USB-lightgun path: SNAC polling,
+// coordinate overrides, buttons, coins, and USER_OUT activity are all held
+// inactive for that title regardless of saved OSD status bits.
+wire gun_snac_supported = active_board.gun_aim && !active_board.coin_swap;
+wire p1_snac_mode = gun_snac_supported && (status[31:30] == 2'b01);
+wire p2_snac_mode = gun_snac_supported && (status[33:32] == 2'b01);
 wire snac_enabled = p1_snac_mode | p2_snac_mode;
 wire snac_select1_n, snac_select2_n, snac_command, snac_serial_clk;
 wire snac_p1_connected, snac_p2_connected;
@@ -550,37 +552,18 @@ wire [7:0] host_gun_p1_x = joystick_l_analog_0[7:0] ^ 8'h80;
 wire [7:0] host_gun_p1_y = joystick_l_analog_0[15:8] ^ 8'h80;
 wire [7:0] host_gun_p2_x = joystick_l_analog_1[7:0] ^ 8'h80;
 wire [7:0] host_gun_p2_y = joystick_l_analog_1[15:8] ^ 8'h80;
-wire [7:0] alien3_stick_p1_x, alien3_stick_p1_y;
-wire [7:0] alien3_stick_p2_x, alien3_stick_p2_y;
-wire alien3_gun_profile = active_board.gun_aim && active_board.coin_swap;
-
-// Restore Alien 3's pre-GunCon analog-stick conditioner. Its input is the
-// signed MiSTer host-axis report (centre 0x00); its output is the cabinet ADC
-// coordinate (centre 0x80). Jurassic Park keeps the direct full-range host
-// mapping that already works, while GunCon retains its own calibration.
-s32_gun_aim gun_aim (
-    .clk(clk_sys), .rst(reset), .enable(alien3_gun_profile),
-    .p1_raw_x(joystick_l_analog_0[7:0]),
-    .p1_raw_y(joystick_l_analog_0[15:8]),
-    .p2_raw_x(joystick_l_analog_1[7:0]),
-    .p2_raw_y(joystick_l_analog_1[15:8]),
-    .invert_x(1'b0), .invert_y(1'b0),
-    .p1_aim_x(alien3_stick_p1_x), .p1_aim_y(alien3_stick_p1_y),
-    .p2_aim_x(alien3_stick_p2_x), .p2_aim_y(alien3_stick_p2_y)
-);
-
-wire [7:0] stick_gun_p1_x = alien3_gun_profile ? alien3_stick_p1_x : host_gun_p1_x;
-wire [7:0] stick_gun_p1_y = alien3_gun_profile ? alien3_stick_p1_y : host_gun_p1_y;
-wire [7:0] stick_gun_p2_x = alien3_gun_profile ? alien3_stick_p2_x : host_gun_p2_x;
-wire [7:0] stick_gun_p2_y = alien3_gun_profile ? alien3_stick_p2_y : host_gun_p2_y;
+// Alien 3 and Jurassic Park use the same direct host-axis conversion.  The
+// title-specific nonlinear conditioner made Alien 3 react differently to the
+// same physical stick and could drive its sight off-screen on small motion.
+// GunCon SNAC retains its independent calibrated-coordinate override.
 wire [7:0] gun_adc_p1_x = (p1_snac_mode && snac_p1_gun_aim_valid)
-                           ? snac_p1_gun_x[9:2] : stick_gun_p1_x;
+                           ? snac_p1_gun_x[9:2] : host_gun_p1_x;
 wire [7:0] gun_adc_p1_y = (p1_snac_mode && snac_p1_gun_aim_valid)
-                           ? snac_p1_gun_y : stick_gun_p1_y;
+                           ? snac_p1_gun_y : host_gun_p1_y;
 wire [7:0] gun_adc_p2_x = (p2_snac_mode && snac_p2_gun_aim_valid)
-                           ? snac_p2_gun_x[9:2] : stick_gun_p2_x;
+                           ? snac_p2_gun_x[9:2] : host_gun_p2_x;
 wire [7:0] gun_adc_p2_y = (p2_snac_mode && snac_p2_gun_aim_valid)
-                           ? snac_p2_gun_y : stick_gun_p2_y;
+                           ? snac_p2_gun_y : host_gun_p2_y;
 wire gun_snac_trigger_p1 = snac_p1_gun && snac_p1_buttons[13];
 wire gun_snac_trigger_p2 = snac_p2_gun && snac_p2_buttons[13];
 wire gun_snac_button2_p1 = snac_p1_gun && snac_p1_buttons[12];

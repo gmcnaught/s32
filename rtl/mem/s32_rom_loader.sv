@@ -294,11 +294,15 @@ always @(posedge clk) begin
                 end
             end
             else if (ioctl_index == 8'd2 || ioctl_index == 8'd3) begin
-                // Factory image (2) or persisted NVRAM (3), 128 bytes.
+                // The factory ROM image (2) stores each 93C46 x16 cell
+                // big-endian. Persisted NVRAM (3) is our internal-word stream
+                // and must round-trip unchanged.
                 if (WIDE) begin
                     eep_wr     <= 1'b1;
                     eep_waddr  <= ioctl_addr[6:1];
-                    eep_wdata  <= ioctl_dout;
+                    eep_wdata  <= (ioctl_index == 8'd2)
+                                ? {ioctl_dout[7:0], ioctl_dout[15:8]}
+                                : ioctl_dout;
                     eep_loaded <= 1'b1;
                 end
                 else begin
@@ -306,7 +310,9 @@ always @(posedge clk) begin
                     else begin
                         eep_wr     <= 1'b1;
                         eep_waddr  <= ioctl_addr[6:1];
-                        eep_wdata  <= {ioctl_dout[7:0], byte_lo};
+                        eep_wdata  <= (ioctl_index == 8'd2)
+                                    ? {byte_lo, ioctl_dout[7:0]}
+                                    : {ioctl_dout[7:0], byte_lo};
                         eep_loaded <= 1'b1;
                     end
                 end

@@ -193,15 +193,26 @@ class GlobalProfileContractTests(unittest.TestCase):
         prot = (ROOT / "rtl/prot/s32_prot.sv").read_text(encoding="utf-8")
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
         snac = (ROOT / "rtl/io/s32_guncon_snac.sv").read_text(encoding="utf-8")
-        gun_aim = (ROOT / "rtl/io/s32_gun_aim.sv").read_text(encoding="utf-8")
         romboot = (ROOT / "verif/common/tb_core_romboot.sv").read_text(
             encoding="utf-8"
         )
-        combined = "\n".join((text, core, io, prot, fb_if, snac, gun_aim, romboot))
+        combined = "\n".join((text, core, io, prot, fb_if, snac, romboot))
         self.assertIn("gun_aim", combined)
         self.assertIn("coin_swap", combined)
         self.assertIn("s32_guncon_snac", combined)
-        self.assertIn("s32_gun_aim", combined)
+        self.assertNotIn("s32_gun_aim", combined)
+        self.assertIn(
+            "wire gun_snac_supported = active_board.gun_aim && !active_board.coin_swap;",
+            text,
+        )
+        self.assertIn(
+            "wire p1_snac_mode = gun_snac_supported && (status[31:30] == 2'b01);",
+            text,
+        )
+        self.assertIn(
+            "wire p2_snac_mode = gun_snac_supported && (status[33:32] == 2'b01);",
+            text,
+        )
         self.assertIn(
             '"O[31:30],P1 Gun Input,Analog Stick / USB Lightgun,SNAC Port 1;"',
             text,
@@ -211,9 +222,14 @@ class GlobalProfileContractTests(unittest.TestCase):
             text,
         )
         self.assertNotIn('"P1O[31:30],P1 Gun Input', text)
-        self.assertIn("alien3_gun_profile ? alien3_stick_p1_x : host_gun_p1_x", text)
-        self.assertIn("? snac_p1_gun_x[9:2] : stick_gun_p1_x", text)
-        self.assertIn("s32_gun_aim sim_gun_aim", romboot)
+        self.assertIn("? snac_p1_gun_x[9:2] : host_gun_p1_x", text)
+        self.assertIn("? snac_p1_gun_y : host_gun_p1_y", text)
+        self.assertIn("? snac_p2_gun_x[9:2] : host_gun_p2_x", text)
+        self.assertIn("? snac_p2_gun_y : host_gun_p2_y", text)
+        self.assertIn("assign sim_gun_p1_x = gun_p1_x[7:0]", romboot)
+        self.assertIn("assign sim_gun_p2_y = gun_p2_y[7:0]", romboot)
+        self.assertNotIn("alien3_stick", combined)
+        self.assertNotIn("alien3_gun_profile", combined)
         self.assertNotIn("alien3_hud_blend", combined)
         self.assertNotIn("rd_blend_buf", combined)
         self.assertIn("wire [7:0] alien3_p1a = {6'h3f, gun_p1a[1]", text)
