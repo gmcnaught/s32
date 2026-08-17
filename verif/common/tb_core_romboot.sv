@@ -556,16 +556,24 @@ initial begin
     if (!$value$plusargs("GUNP2Y=%h", gun_p2_y)) gun_p2_y = 8'h80;
 end
 wire [7:0] sim_gun_p1_x, sim_gun_p1_y, sim_gun_p2_x, sim_gun_p2_y;
-s32_gun_adc_adapter sim_gun_adc_adapter (
-    .alien3_range(board.gun_aim && board.coin_swap),
-    .p1_snac_valid(1'b0), .p2_snac_valid(1'b0),
-    .p1_snac_x(8'h00), .p1_snac_y(8'h00),
-    .p2_snac_x(8'h00), .p2_snac_y(8'h00),
-    .p1_x_in(gun_p1_x[7:0]), .p1_y_in(gun_p1_y[7:0]),
-    .p2_x_in(gun_p2_x[7:0]), .p2_y_in(gun_p2_y[7:0]),
-    .p1_x(sim_gun_p1_x), .p1_y(sim_gun_p1_y),
-    .p2_x(sim_gun_p2_x), .p2_y(sim_gun_p2_y)
+wire [7:0] sim_alien3_p1_x, sim_alien3_p1_y;
+wire [7:0] sim_alien3_p2_x, sim_alien3_p2_y;
+s32_gun_aim sim_gun_aim (
+    .clk(clk_sys), .rst(rst), .enable(board.gun_aim && board.coin_swap),
+    // GUNP* plusargs are expressed as cabinet ADC coordinates. Convert them
+    // back to MiSTer's signed host-axis representation before conditioning.
+    .p1_raw_x(gun_p1_x[7:0] ^ 8'h80),
+    .p1_raw_y(gun_p1_y[7:0] ^ 8'h80),
+    .p2_raw_x(gun_p2_x[7:0] ^ 8'h80),
+    .p2_raw_y(gun_p2_y[7:0] ^ 8'h80),
+    .invert_x(1'b0), .invert_y(1'b0),
+    .p1_aim_x(sim_alien3_p1_x), .p1_aim_y(sim_alien3_p1_y),
+    .p2_aim_x(sim_alien3_p2_x), .p2_aim_y(sim_alien3_p2_y)
 );
+assign sim_gun_p1_x = board.coin_swap ? sim_alien3_p1_x : gun_p1_x[7:0];
+assign sim_gun_p1_y = board.coin_swap ? sim_alien3_p1_y : gun_p1_y[7:0];
+assign sim_gun_p2_x = board.coin_swap ? sim_alien3_p2_x : gun_p2_x[7:0];
+assign sim_gun_p2_y = board.coin_swap ? sim_alien3_p2_y : gun_p2_y[7:0];
 assign adc_a[0] = board.gun_aim ? sim_gun_p1_x :
                   (adc0_override >= 0) ? adc0_override[7:0] :
                   (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;

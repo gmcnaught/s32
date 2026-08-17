@@ -11,11 +11,9 @@ for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
     'FITTER_EFFORT "STANDARD FIT"',
-    # 2026-08-17: the current universal-profile netlist (including the
-    # restored gun-game I/O path) closes the clean full fit at seed 6.  The
-    # previous seed-2 assertion described an older pre-I/O netlist and no
-    # longer matched the production QSF or its measured STA result.
-    "SEED 6",
+    # 2026-08-17: the current universal-profile netlist closes the clean full
+    # fit at seed 2; seed 6 missed slow-corner setup by 0.083 ns.
+    "SEED 2",
     "ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF",

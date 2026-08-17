@@ -2,9 +2,55 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-17: additive Alien 3 analog-stick and GunCon input restoration
+
+Post-change MiSTer testing proved that the endpoint-clamp-only correction
+recorded below was insufficient: Alien 3's crosshair still disappeared as soon
+as an analog stick moved, while the same stick remained usable in Jurassic
+Park. Source history identifies the causal regression. Commit `acda56f2`
+introduced GunCon by routing the raw MiSTer signed host-axis bytes directly to
+the cabinet ADC conversion, replacing the previously passing `s32_gun_aim`
+conditioner from commit `05d5f52b`. The GunCon transport is an additional input
+source; it must not replace the analog-stick/USB source behavior.
+
+The universal top now restores that exact conditioner for Alien 3's analog-
+stick/USB branch. Its radial deadzone, response curve, pulled-in `0x08..0xf8`
+endpoints, and error-sensitive settling are retained. Jurassic Park keeps its
+already-working direct `0x00..0xff` host-axis mapping. GunCon remains a separate
+per-player SNAC branch with its own normalization and overrides only the
+selected player after a valid coordinate sample; until then the analog/USB
+branch remains active.
+
+The missing OSD choices were independently caused by `P1O...` prefixes without
+a declared MiSTer subpage. Both gun-source selectors are now top-level entries;
+P2 uses the lowercase `o` status bank required for bits 32 and 33. Focused
+regressions execute the restored analog conditioner and the unchanged GunCon
+transport, and the profile contract asserts the visible menu syntax and the
+two independent mux branches. This supersedes the clamp-only implementation
+below. No framebuffer, raster, ADC serialization, clock, reset, CDC, SDC,
+memory, Quartus build, or RBF changed. A post-fix MiSTer run of both titles and
+both source types remains the hardware acceptance gate.
+
+Evidence identity: pre-change repository HEAD
+`3e5d3caaf0b2ed4c4f1b93222d3a747cebd1553a`; GunCon regression commit
+`acda56f279f3b31478b9327db553d26447eb2624`; last known working conditioner
+commit `05d5f52b080b5d2c90d8cc3397a6af2bf27a27ca`; MAME 0.289 System 32 source
+SHA-256 `D5438E3EC1CD5AB1A551041AA4C94E805E02D7B137754055AC0A7A7D46C34A98`.
+The final focused receipts are `GUN AIM PASS`, `GUNCON SNAC PASS`, 28/28
+profile-contract tests, and zero diagnostics from strict Verilator 5.050 lint
+of `s32_gun_aim`. The native ModelSim suite passed full-core profile lint,
+integration boot, 50/50 V60 differential seeds, extended soak, and V60 audit
+tests before stopping at the pre-existing user-owned Arabian Fight MRA move
+(two root MRAs found, three expected). The full Verilator ROM-boot closure
+elaborated the new module/harness but could not produce generated C++ because
+two fresh `R:` workspaces rejected the same file write; no RTL error preceded
+that environment failure.
+
 ## 2026-08-17: Alien 3 positional-gun endpoint restoration
 
-MiSTer hardware testing reproduced an Alien 3 cabinet-calibration failure: a
+MiSTer hardware testing reproduced an Alien 3 cabinet-calibration failure. This
+entry is retained as iteration history; the later additive-source restoration
+above supersedes its endpoint-clamp-only implementation. A
 full analog-stick excursion drove the MSM6253 gun channels to `0x00`/`0xff`,
 placing the game's sight beyond its visible border. Jurassic Park remained
 correct with that complete range. The earlier measured Alien 3 envelope of

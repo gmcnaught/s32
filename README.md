@@ -16,8 +16,8 @@ Commercial ROMs are not included. Multi 32 and AS-1 hardware are not supported.
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset
 - Per-game remappable controls defined by each MRA
-- Alien3: The Gun and Jurassic Park positional-gun inputs via MiSTer USB
-  lightgun reports or optional GunCon SNAC ports (descriptor-selected)
+- Alien3: The Gun and Jurassic Park positional-gun inputs via analog sticks,
+  MiSTer USB lightguns, or optional GunCon SNAC ports (descriptor-selected)
 
 ## PCB Accuracy
 
@@ -74,7 +74,7 @@ framebuffer/HUD blending workaround.
 | Sega 315-5296 I/O | JAMMA, DIP, service, coin | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 |
 | BR93C46 EEPROM | Serial NVRAM | `s32_io.sv`; MiSTer NVRAM upload/download |
 | MSM6253 ADC / 8255 PPI | Driving and parallel I/O, including Burning Rival's two-player six-button map | Descriptor-selected interfaces in `s32_io.sv`, `Arcade-SegaSystem32.sv`, and `s32_prot.sv` |
-| GunCon / USB positional-gun input | SNAC serial pins or MiSTer USB analog reports | [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv), descriptor-selected ADC channels |
+| Analog-stick / USB / GunCon positional-gun input | MiSTer analog reports or SNAC serial pins | [`s32_gun_aim.sv`](rtl/io/s32_gun_aim.sv), [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv), descriptor-selected ADC channels |
 | NEC V25 protection | Program/cache and mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv); [s80x86 provenance](rtl/cpu/v25/s80x86/README.system32.md) |
 | Z80 sound CPU | ~8.054 MHz | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv); vendored [`T80`](rtl/audio/T80/) |
 | 2 × YM3438 | Z80 register bus | [`JT12`](rtl/audio/jt12/) |

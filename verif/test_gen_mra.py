@@ -255,7 +255,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             Path(__file__).parents[1] / "mra",
             Path(__file__).parents[1] / "releases",
         ):
-            paths = sorted(mra_dir.glob("*.mra"))
+            paths = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
             self.assertEqual(len(paths), 32, str(mra_dir))
             for path in paths:
                 root = ElementTree.parse(path).getroot()
@@ -398,7 +398,7 @@ class RegenerationFidelityTests(unittest.TestCase):
                  check=True, capture_output=True)
             generated = sorted(Path(tmp).glob("*.mra"))
             for mra_dir in (repo / "mra", repo / "releases"):
-                tracked = sorted(mra_dir.glob("*.mra"))
+                tracked = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
                 self.assertEqual([p.name for p in generated],
                                  [p.name for p in tracked],
                                  str(mra_dir))
