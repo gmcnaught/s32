@@ -193,6 +193,10 @@ class GlobalProfileContractTests(unittest.TestCase):
         prot = (ROOT / "rtl/prot/s32_prot.sv").read_text(encoding="utf-8")
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
         snac = (ROOT / "rtl/io/s32_guncon_snac.sv").read_text(encoding="utf-8")
+        lightgun = (ROOT / "rtl/io/s32_lightgun.sv").read_text(encoding="utf-8")
+        overlay = (ROOT / "rtl/video/s32_lightgun_overlay.sv").read_text(encoding="utf-8")
+        qip = (ROOT / "files.qip").read_text(encoding="utf-8")
+        regression = (ROOT / "verif/run_regression.ps1").read_text(encoding="utf-8")
         romboot = (ROOT / "verif/common/tb_core_romboot.sv").read_text(
             encoding="utf-8"
         )
@@ -200,6 +204,20 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("gun_aim", combined)
         self.assertIn("coin_swap", combined)
         self.assertIn("s32_guncon_snac", combined)
+        self.assertIn("module s32_lightgun", lightgun)
+        self.assertIn("module s32_lightgun_overlay", overlay)
+        self.assertIn(".ps2_mouse(ps2_mouse)", text)
+        self.assertIn("ps2_mouse_dx9 = $signed({ps2_mouse[4], ps2_mouse[15:8]})", text)
+        self.assertIn("ps2_mouse_dy9 = $signed({ps2_mouse[5], ps2_mouse[23:16]})", text)
+        self.assertIn("s32_lightgun #(.DEFAULT_WIDTH(320), .DEFAULT_HEIGHT(224)) generic_lightgun_p1", text)
+        self.assertIn("s32_lightgun #(.DEFAULT_WIDTH(320), .DEFAULT_HEIGHT(224)) generic_lightgun_p2", text)
+        self.assertIn('"O[8],Sinden Borders,Off,On;"', text)
+        self.assertIn('"O[34],Gun Crosshair,Off,On;"', text)
+        self.assertIn('"O[37:36],Gun Sensitivity,Normal,High,Low,Lowest;"', text)
+        self.assertIn("SYSTEMVERILOG_FILE rtl/io/s32_lightgun.sv", qip)
+        self.assertIn("SYSTEMVERILOG_FILE rtl/video/s32_lightgun_overlay.sv", qip)
+        self.assertIn('Run-HdlTest "t35_lightgun"', regression)
+        self.assertIn('Run-HdlTest "t35_lightgun_overlay"', regression)
         self.assertNotIn("s32_gun_aim", combined)
         self.assertIn(
             "wire gun_snac_supported = active_board.gun_aim && !active_board.coin_swap;",

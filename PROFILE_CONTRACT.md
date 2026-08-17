@@ -2,6 +2,35 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-18: generic JTFRAME lightgun layer for Alien 3 and Jurassic Park
+
+The universal `Arcade-SegaSystem32` profile now instantiates a project-owned
+generic MiSTer/JTFRAME-compatible positional-gun adapter for every descriptor
+with `gun_aim` (currently Alien3 and Jurassic Park).  It accepts the signed
+MiSTer analog axes, the HPS PS/2 relative-mouse packet and JTFRAME-ordered d-pad
+events, scales to the native 320/416 x 224 raster, clamps relative motion, and
+feeds the existing MSM6253 ADC channels.  P1 receives the shared PS/2 stream;
+P2 retains analog/d-pad support because MiSTer exposes one mouse packet path.
+
+The core-side RGB-only overlay preserves CE/HS/VS/DE and reproduces the
+JTFRAME 8x8 crosshair footprint.  status[8] follows the JTFRAME Sinden-border
+convention; status[34] enables the crosshair because status[9] is already the
+core's CRT Adjust option.  Jurassic Park's existing status[31:30]/[33:32]
+GunCon 2 SNAC selection remains a separate, descriptor-gated source override;
+Alien3's `coin_swap` gate still keeps SNAC inactive.  No `sys/`, PLL, SDC,
+MRA, descriptor, or generated artifact changed.
+
+Evidence and provenance are pinned in `verif/donors/README.md`: JTCORES
+`c990f843c7bd8eaf26179a0632bac1436cc05b52` and jlrh/taito-fpga
+`405a68eac741918e627cda563cc1a0c219ed18fd` were inspected for interface
+semantics only; no donor RTL was copied.  Focused `tb_lightgun`,
+`tb_lightgun_overlay`, and the existing `tb_guncon_snac` pass under Icarus.
+The Python profile suite retains its pre-existing release-staging failures
+(missing historical MRAs); full native Verilator/core and physical MiSTer
+lightgun acceptance remain pending.  CRT Adjust crosshair registration and
+the exact physical Sinden border geometry are known platform/presentation
+unknowns rather than silently compensated in RTL.
+
 ## 2026-08-17: Alien 3 aiming fixed at the EEPROM producer
 
 Real-ROM tracing proved the MiSTer analog byte reached Alien 3's MSM6253 and

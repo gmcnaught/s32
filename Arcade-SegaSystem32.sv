@@ -119,6 +119,8 @@ wire [15:0] joystick_l_analog_0;
 wire [15:0] joystick_l_analog_1;
 wire [15:0] joystick_r_analog_0;
 wire        core_hs, core_vs;
+wire        mode_416_active;
+wire [24:0] ps2_mouse;
 // The single universal RBF accepts every supported single-screen System 32
 // descriptor. Runtime fields select the real V25 path for GA2/Arabian Fight;
 // all other supported sets retain the standard-board peripherals and HLEs.
@@ -168,6 +170,12 @@ localparam CONF_STR = {
     // GunCon SNAC is an additional opt-in source for either player.
     "O[31:30],P1 Gun Input,Analog Stick / USB Lightgun,SNAC Port 1;",
     "o[1:0],P2 Gun Input,Analog Stick / USB Lightgun,SNAC Port 2;",
+    // JTFRAME-compatible generic lightgun presentation controls.  status[8]
+    // intentionally follows the MiSTer/JTFRAME Sinden-border convention;
+    // status[9] is already the established CRT Adjust option in this core.
+    "O[8],Sinden Borders,Off,On;",
+    "O[34],Gun Crosshair,Off,On;",
+    "O[37:36],Gun Sensitivity,Normal,High,Low,Lowest;",
     // status[29] is RESERVED and intentionally unused.  It used to select
     // "V60 Fetch,Fast,PCB (Reset)"; the Fast instruction-fetch transport has
     // been removed and the core always uses the PCB fetch path.  The bit is
@@ -337,8 +345,27 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io (
     .joystick_r_analog_0(joystick_r_analog_0),
     .paddle_0(),
     .paddle_1(),
-    .ps2_mouse()
+    .ps2_mouse(ps2_mouse)
 );
+
+// hps_io toggles ps2_mouse[24] for each host report.  Decode that toggle once
+// in the clk_sys domain so the P1 generic lightgun sees a one-clock event;
+// P2 deliberately receives no mouse stream because MiSTer exposes one shared
+// PS/2 mouse packet path.
+reg ps2_mouse_event_d;
+wire ps2_mouse_strobe = ps2_mouse[24] ^ ps2_mouse_event_d;
+// JTFRAME's MiSTer target sign-extends the PS/2 report with flags[4]/[5]
+// before its `cv` helper converts the 9-bit packet to an 8-bit two's-
+// complement delta (an arithmetic one-bit scale reduction).  Preserve that
+// exact packet interpretation instead of treating the raw byte's bit 7 as a
+// standalone sign.
+wire signed [8:0] ps2_mouse_dx9 = $signed({ps2_mouse[4], ps2_mouse[15:8]});
+wire signed [8:0] ps2_mouse_dy9 = $signed({ps2_mouse[5], ps2_mouse[23:16]});
+wire        [7:0] ps2_mouse_dx_jt = ps2_mouse_dx9 >>> 1;
+wire        [7:0] ps2_mouse_dy_jt = ps2_mouse_dy9 >>> 1;
+always @(posedge clk_sys) begin
+    ps2_mouse_event_d <= ps2_mouse[24];
+end
 
 // MiSTer MRA NVRAM is a byte stream at index 3. Convert the EEPROM's
 // 64x16 little-endian shadow into that stream for save uploads.
@@ -464,6 +491,62 @@ wire [7:0] p1a_dig = p_dig(joystick_0);
 wire [7:0] radm_p1a = {p1a_dig[7:3], ~joystick_0[7],
                         ~joystick_0[6], 1'b1};
 wire [7:0] p2a_dig = p_dig(joystick_1);
+
+// Generic JTFRAME-compatible gun sources.  MiSTer's joystick direction bits
+// are {right,left,down,up} in the HPS word; the adapter consumes JTFRAME's
+// {down,up,left,right} game_joy order.  The source is instantiated for both
+// players even though the shared PS/2 packet stream is assigned to P1.
+wire [8:0] lightgun_width  = mode_416_active ? 9'd416 : 9'd320;
+wire [8:0] lightgun_height = 9'd224;
+wire [3:0] lightgun_joy_p1 = {joystick_0[2], joystick_0[3],
+                               joystick_0[1], joystick_0[0]};
+wire [3:0] lightgun_joy_p2 = {joystick_1[2], joystick_1[3],
+                               joystick_1[1], joystick_1[0]};
+wire [8:0] generic_gun_p1_x, generic_gun_p1_y;
+wire [8:0] generic_gun_p2_x, generic_gun_p2_y;
+wire [7:0] generic_adc_p1_x, generic_adc_p1_y;
+wire [7:0] generic_adc_p2_x, generic_adc_p2_y;
+wire       generic_gun_p1_strobe, generic_gun_p2_strobe;
+
+s32_lightgun #(.DEFAULT_WIDTH(320), .DEFAULT_HEIGHT(224)) generic_lightgun_p1 (
+    .clk          (clk_sys),
+    .rst          (reset),
+    .vs           (core_vs),
+    .screen_width (lightgun_width),
+    .screen_height(lightgun_height),
+    .rotate       (2'b00),
+    .sensitivity  (status[37:36]),
+    .joyana       (joystick_l_analog_0),
+    .joy_dir      (lightgun_joy_p1),
+    .mouse_dx     (ps2_mouse_dx_jt),
+    .mouse_dy     (ps2_mouse_dy_jt),
+    .mouse_strobe (ps2_mouse_strobe),
+    .gun_x        (generic_gun_p1_x),
+    .gun_y        (generic_gun_p1_y),
+    .adc_x        (generic_adc_p1_x),
+    .adc_y        (generic_adc_p1_y),
+    .gun_strobe   (generic_gun_p1_strobe)
+);
+
+s32_lightgun #(.DEFAULT_WIDTH(320), .DEFAULT_HEIGHT(224)) generic_lightgun_p2 (
+    .clk          (clk_sys),
+    .rst          (reset),
+    .vs           (core_vs),
+    .screen_width (lightgun_width),
+    .screen_height(lightgun_height),
+    .rotate       (2'b00),
+    .sensitivity  (status[37:36]),
+    .joyana       (joystick_l_analog_1),
+    .joy_dir      (lightgun_joy_p2),
+    .mouse_dx     (8'd0),
+    .mouse_dy     (8'd0),
+    .mouse_strobe (1'b0),
+    .gun_x        (generic_gun_p2_x),
+    .gun_y        (generic_gun_p2_y),
+    .adc_x        (generic_adc_p2_x),
+    .adc_y        (generic_adc_p2_y),
+    .gun_strobe   (generic_gun_p2_strobe)
+);
 // Rad Rally and Slip Stream expose a single cabinet Gear Change toggle, not a
 // momentary switch or four-position encoding.  Keep this semantic independent
 // from Rad Rally's separate EPR-14084 communication-board selector.
@@ -548,14 +631,13 @@ assign USER_OUT = snac_enabled ?
                    snac_serial_clk, 2'b11, snac_command,
                    snac_select1_n, snac_select2_n} : 7'h7f;
 
-wire [7:0] host_gun_p1_x = joystick_l_analog_0[7:0] ^ 8'h80;
-wire [7:0] host_gun_p1_y = joystick_l_analog_0[15:8] ^ 8'h80;
-wire [7:0] host_gun_p2_x = joystick_l_analog_1[7:0] ^ 8'h80;
-wire [7:0] host_gun_p2_y = joystick_l_analog_1[15:8] ^ 8'h80;
-// Alien 3 and Jurassic Park use the same direct host-axis conversion.  The
-// title-specific nonlinear conditioner made Alien 3 react differently to the
-// same physical stick and could drive its sight off-screen on small motion.
-// GunCon SNAC retains its independent calibrated-coordinate override.
+wire [7:0] host_gun_p1_x = generic_adc_p1_x;
+wire [7:0] host_gun_p1_y = generic_adc_p1_y;
+wire [7:0] host_gun_p2_x = generic_adc_p2_x;
+wire [7:0] host_gun_p2_y = generic_adc_p2_y;
+// Alien 3 and Jurassic Park share the generic JTFRAME-compatible absolute
+// host path.  GunCon SNAC retains its independent calibrated-coordinate
+// override and remains descriptor-gated to Jurassic Park.
 wire [7:0] gun_adc_p1_x = (p1_snac_mode && snac_p1_gun_aim_valid)
                            ? snac_p1_gun_x[9:2] : host_gun_p1_x;
 wire [7:0] gun_adc_p1_y = (p1_snac_mode && snac_p1_gun_aim_valid)
@@ -571,13 +653,50 @@ wire gun_snac_button2_p2 = snac_p2_gun && snac_p2_buttons[12];
 wire gun_snac_coin_p1 = snac_p1_gun && snac_p1_buttons[14];
 wire gun_snac_coin_p2 = snac_p2_gun && snac_p2_buttons[14];
 
+// The shared HPS mouse's left button is the generic USB-lightgun trigger.
+// Once a valid GunCon is identified its trigger remains authoritative; a
+// selected-but-disconnected SNAC port still falls back to the host path.
+wire generic_mouse_trigger_p1 = active_board.gun_aim &&
+                                !snac_p1_gun && ps2_mouse[0];
+
+// Convert the normalized GunCon coordinate to the same native raster space as
+// the generic adapter for the optional core-side crosshair.
+function automatic [8:0] lightgun_adc_to_screen(
+    input [7:0] adc,
+    input [8:0] dimension
+);
+    reg [16:0] product;
+    begin
+        product = adc * dimension;
+        lightgun_adc_to_screen = product >> 8;
+    end
+endfunction
+
+wire [8:0] display_gun_p1_x =
+    (p1_snac_mode && snac_p1_gun_aim_valid)
+      ? lightgun_adc_to_screen(snac_p1_gun_x[9:2], lightgun_width)
+      : generic_gun_p1_x;
+wire [8:0] display_gun_p1_y =
+    (p1_snac_mode && snac_p1_gun_aim_valid)
+      ? lightgun_adc_to_screen(snac_p1_gun_y, lightgun_height)
+      : generic_gun_p1_y;
+wire [8:0] display_gun_p2_x =
+    (p2_snac_mode && snac_p2_gun_aim_valid)
+      ? lightgun_adc_to_screen(snac_p2_gun_x[9:2], lightgun_width)
+      : generic_gun_p2_x;
+wire [8:0] display_gun_p2_y =
+    (p2_snac_mode && snac_p2_gun_aim_valid)
+      ? lightgun_adc_to_screen(snac_p2_gun_y, lightgun_height)
+      : generic_gun_p2_y;
+
 // GunCon trigger is the same active-low P1_A bit used by MRA button A. Keep
 // ordinary MiSTer A/B controls additive when SNAC is connected. Alien3's
 // second live P1_A/P2_A bit is the gun's attached Button, so GunCon A (the
 // donor's Start-side auxiliary button) is mapped there for that descriptor.
 // Alien3 cabinet Start is still retained as the trigger alias from its special
 // coin/trigger wiring; Jurassic Park does not use that alias.
-wire gun_p1_button1 = p1a_dig[0] & ~(snac_p1_gun && gun_snac_trigger_p1);
+wire gun_p1_button1 = p1a_dig[0] & ~(snac_p1_gun && gun_snac_trigger_p1)
+                                  & ~generic_mouse_trigger_p1;
 wire gun_p2_button1 = p2a_dig[0] & ~(snac_p2_gun && gun_snac_trigger_p2);
 wire gun_p1_button2 = p1a_dig[1] & ~(snac_p1_gun && gun_snac_button2_p1);
 wire gun_p2_button2 = p2a_dig[1] & ~(snac_p2_gun && gun_snac_button2_p2);
@@ -698,7 +817,7 @@ wire [7:0] core_ppi_pc = (brival_inputs || darkedge_inputs) ? 8'hff :
 
 //////////////////////////////   CORE   ///////////////////////////////////////
 wire [23:0] rgb_a, rgb_b;
-wire ce_pix_core, core_hb, core_vb, mode_416_active;
+wire ce_pix_core, core_hb, core_vb;
 wire signed [15:0] aud_l, aud_r;
 s32_core core (
     .clk_sys(clk_sys), .clk_ram(clk_ram),
@@ -921,10 +1040,48 @@ always @(posedge clk_sys) begin
     end
 end
 
+// Generic JTFRAME-compatible crosshair/border decoration.  The framework's
+// ascal.vhd has no gun-border port in this repository revision, so keep the
+// native video timing untouched and decorate only the RGB stream.  CRT Adjust
+// can change the output geometry independently of the native gun coordinates;
+// suppress the crosshair in that optional mode rather than presenting a
+// silently misregistered sight.  The native (default) path is exact.
+wire [23:0] video_rgb_pre = crt_adjust_active ? {crt_r, crt_g, crt_b} : game_rgb;
+wire        video_ce_pre  = crt_adjust_active ? crt_rd_ce : ce_pix_core;
+wire        video_hs_pre  = crt_adjust_active ? crt_hs : core_hs;
+wire        video_vs_pre  = crt_adjust_active ? crt_vs : core_vs;
+wire        video_de_pre  = crt_adjust_active ? crt_de_osd : ~(core_hb | core_vb);
+wire [23:0] video_rgb_overlay;
+wire [8:0]  lightgun_raster_x, lightgun_raster_y;
+s32_lightgun_overlay #(.BORDER_WIDTH(4)) lightgun_overlay (
+    .clk          (clk_sys),
+    .rst          (video_reset),
+    .pxl_cen      (video_ce_pre),
+    .hs           (video_hs_pre),
+    .vs           (video_vs_pre),
+    .de           (video_de_pre),
+    .screen_width (lightgun_width),
+    .screen_height(lightgun_height),
+    .gun1_x       (display_gun_p1_x),
+    .gun1_y       (display_gun_p1_y),
+    .gun2_x       (display_gun_p2_x),
+    .gun2_y       (display_gun_p2_y),
+    .gun1_en      (active_board.gun_aim),
+    .gun2_en      (active_board.gun_aim),
+    .border_en    (active_board.gun_aim && status[8]),
+    // status[9] is CRT Adjust in this core, so status[34] is the explicit
+    // crosshair control while retaining the JTFRAME status[8] border meaning.
+    .crosshair_en (active_board.gun_aim && status[34] && !crt_adjust_active),
+    .rgb_in       (video_rgb_pre),
+    .rgb_out      (video_rgb_overlay),
+    .raster_x     (lightgun_raster_x),
+    .raster_y     (lightgun_raster_y)
+);
+
 assign CE_PIXEL = crt_adjust_active ? crt_rd_ce : ce_pix_core;
-assign VGA_R  = crt_adjust_active ? crt_r : game_rgb[23:16];
-assign VGA_G  = crt_adjust_active ? crt_g : game_rgb[15:8];
-assign VGA_B  = crt_adjust_active ? crt_b : game_rgb[7:0];
+assign VGA_R  = video_rgb_overlay[23:16];
+assign VGA_G  = video_rgb_overlay[15:8];
+assign VGA_B  = video_rgb_overlay[7:0];
 assign VGA_HS = crt_adjust_active ? crt_hs : core_hs;
 assign VGA_VS = crt_adjust_active ? crt_vs : core_vs;
 assign VGA_DE = crt_adjust_active ? crt_de_osd : ~(core_hb | core_vb);

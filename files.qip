@@ -23,6 +23,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_linebuf.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_mixer.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_palette.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_video.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/video/s32_lightgun_overlay.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/crt_adjust.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_audio_mix.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/audio/s32_soundsys.sv
@@ -34,6 +35,7 @@ set_global_assignment -name QIP_FILE rtl/audio/jt12/jt12.qip
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_io.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_driving_controls.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_lightgun.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/io/s32_guncon_snac.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/sdram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/mem/s32_sdram_write_mux2.sv

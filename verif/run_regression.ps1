@@ -445,6 +445,7 @@ $FullCoreSources = @(
     "rtl/audio/s32_audio_mix.sv",
     "rtl/audio/s32_soundsys.sv",
     "rtl/io/s32_io.sv",
+    "rtl/io/s32_lightgun.sv",
     "rtl/prot/s32_prot.sv",
     "verif/common/jt12_stub.v",
     "rtl/s32_core.sv"
@@ -698,7 +699,7 @@ try {
     Write-Tier 34 "System32 palette/mixer/I-O/V25 mirrored address decode"
     Run-HdlTest "t34_core_map" "tb_core_map_decode" ($FullCoreSources + "verif/common/tb_core_map_decode.sv") "CORE MAP DECODE PASS" @("SIMULATION")
 
-    Write-Tier 35 "direct positional wheel, right-stick pedals, and digital fallbacks"
+    Write-Tier 35 "direct positional wheel, generic lightgun, right-stick pedals, and digital fallbacks"
     Run-HdlTest "t35_driving_controls" "tb_driving_controls" @(
         "rtl/io/s32_driving_controls.sv", "verif/common/tb_driving_controls.sv"
     ) "PASS: System 32 driving controls"
@@ -708,6 +709,12 @@ try {
     Run-HdlTest "t35_guncon_snac" "tb_guncon_snac" @(
         "rtl/io/s32_guncon_snac.sv", "verif/common/tb_guncon_snac.sv"
     ) "GUNCON SNAC PASS" @("SIMULATION")
+    Run-HdlTest "t35_lightgun" "tb_lightgun" @(
+        "rtl/io/s32_lightgun.sv", "verif/common/tb_lightgun.sv"
+    ) "LIGHTGUN PASS" @("SIMULATION")
+    Run-HdlTest "t35_lightgun_overlay" "tb_lightgun_overlay" @(
+        "rtl/video/s32_lightgun_overlay.sv", "verif/common/tb_lightgun_overlay.sv"
+    ) "LIGHTGUN OVERLAY PASS" @("SIMULATION")
     Write-Tier 36 "Dark Edge protection contract"
     Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"

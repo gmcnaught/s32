@@ -16,8 +16,9 @@ Commercial ROMs are not included. Multi 32 and AS-1 hardware are not supported.
 - Persistent 128-byte 93C46 high-score/settings storage
 - Service mode and reset
 - Per-game remappable controls defined by each MRA
-- Alien3: The Gun and Jurassic Park positional-gun inputs via analog sticks,
-  MiSTer USB lightguns, or optional GunCon SNAC ports (descriptor-selected)
+- Alien3: The Gun and Jurassic Park positional-gun inputs through the generic
+  MiSTer/JTFRAME-compatible analog, USB-relative-mouse, and d-pad paths;
+  Jurassic Park additionally supports GunCon 2 over SNAC
 
 ## PCB Accuracy
 
@@ -74,7 +75,8 @@ framebuffer/HUD blending workaround.
 | Sega 315-5296 I/O | JAMMA, DIP, service, coin | [`s32_io.sv`](rtl/io/s32_io.sv); schematic sheet 6 |
 | BR93C46 EEPROM | Serial NVRAM | `s32_io.sv`; MiSTer NVRAM upload/download |
 | MSM6253 ADC / 8255 PPI | Driving and parallel I/O, including Burning Rival's two-player six-button map | Descriptor-selected interfaces in `s32_io.sv`, `Arcade-SegaSystem32.sv`, and `s32_prot.sv` |
-| Analog-stick / USB / GunCon positional-gun input | MiSTer analog reports or SNAC serial pins | Direct host-axis mapping in [`Arcade-SegaSystem32.sv`](Arcade-SegaSystem32.sv), [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv), descriptor-selected ADC channels |
+| Generic MiSTer/JTFRAME positional-gun input | Signed analog reports, PS/2 mouse packets, d-pad events, native raster overlay | [`s32_lightgun.sv`](rtl/io/s32_lightgun.sv) and [`s32_lightgun_overlay.sv`](rtl/video/s32_lightgun_overlay.sv); descriptor-selected ADC channels and core-side Sinden border/crosshair controls |
+| Jurassic Park GunCon 2 | SNAC serial pins, normalized optical coordinates and buttons | [`s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv); descriptor-gated Jurassic-only override |
 | NEC V25 protection | Program/cache and mailbox RAM | [`s32_v25_cpu.sv`](rtl/cpu/v25/s32_v25_cpu.sv); [s80x86 provenance](rtl/cpu/v25/s80x86/README.system32.md) |
 | Z80 sound CPU | ~8.054 MHz | [`s32_soundsys.sv`](rtl/audio/s32_soundsys.sv); vendored [`T80`](rtl/audio/T80/) |
 | 2 × YM3438 | Z80 register bus | [`JT12`](rtl/audio/jt12/) |
@@ -91,8 +93,12 @@ framebuffer/HUD blending workaround.
   V25 wrapper; pin and licence details are retained with the source.
 - **Jose Tejada Gomez / Jotego** - [JT12](https://github.com/jotego/jt12),
   [JT8255](https://github.com/jotego/jt8255/tree/3bb5f7ea461fc7d72b847ec55ce997e5d5bc1754),
-  and audited [JTCORES](https://github.com/jotego/jtcores/tree/1268a90e365c2520b412f224ae30d20c61aa0031)
-  reference work.
+  and audited [JTCORES](https://github.com/jotego/jtcores/tree/c990f843c7bd8eaf26179a0632bac1436cc05b52)
+  reference work, including the generic lightgun input/video contract used by
+  the project-owned adapter.
+- **jlrh** - [taito-fpga](https://github.com/jlrh/taito-fpga/tree/405a68eac741918e627cda563cc1a0c219ed18fd)
+  Operation Wolf lightgun integration, inspected for the core-side
+  `gun_1p_x/gun_1p_y` contract; no upstream RTL was copied.
 - **Daniel Wallner, MikeJ, Mike Johnson, TobiFlex, Sean Riddle, and Sorgelig**
   - the vendored T80 Z80 core.
 - **furrtek / SiliconRE** - Sega 315-5242 and 315-5385 silicon research.
@@ -116,6 +122,11 @@ components retain their own terms and notices:
 - JT8255 conformance reference: MIT ([LICENSE](verif/donors/LICENSE.jt8255))
 - T80: BSD-style terms in [`rtl/audio/T80/`](rtl/audio/T80/)
 - CRT Adjust: GPLv3 or later; provenance in [`verif/donors/README.md`](verif/donors/README.md)
+- JTFRAME/jlrh lightgun references: GPL-3.0-or-later upstream projects;
+  only interface semantics were adapted into the project-owned
+  [`s32_lightgun.sv`](rtl/io/s32_lightgun.sv) and
+  [`s32_lightgun_overlay.sv`](rtl/video/s32_lightgun_overlay.sv), with pinned
+  provenance in [`verif/donors/README.md`](verif/donors/README.md)
 - GunCon SNAC transport reference: GPL-2.0-or-later; pinned source and notice in [`rtl/io/s32_guncon_snac.sv`](rtl/io/s32_guncon_snac.sv)
 - SiliconRE material: [SiliconRE licence](docs/references/siliconre/315-5385/SiliconRE-LICENSE)
 - MiSTer framework and Intel/Altera IP: retained upstream/vendor notices

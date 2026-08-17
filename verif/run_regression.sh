@@ -20,6 +20,15 @@ iverilog -g2012 -s tb_guncon_snac -o /tmp/s32_guncon_snac \
   rtl/io/s32_guncon_snac.sv verif/common/tb_guncon_snac.sv
 vvp /tmp/s32_guncon_snac | grep -q "GUNCON SNAC PASS" && \
   echo "GUNCON SNAC: PASS" || { echo "GUNCON SNAC: FAIL"; exit 1; }
+echo "[1c] Generic JTFRAME-compatible lightgun input and RGB overlay"
+iverilog -g2012 -s tb_lightgun -o /tmp/s32_lightgun \
+  rtl/io/s32_lightgun.sv verif/common/tb_lightgun.sv
+vvp /tmp/s32_lightgun | grep -q "LIGHTGUN PASS" && \
+  echo "LIGHTGUN INPUT: PASS" || { echo "LIGHTGUN INPUT: FAIL"; exit 1; }
+iverilog -g2012 -s tb_lightgun_overlay -o /tmp/s32_lightgun_overlay \
+  rtl/video/s32_lightgun_overlay.sv verif/common/tb_lightgun_overlay.sv
+vvp /tmp/s32_lightgun_overlay | grep -q "LIGHTGUN OVERLAY PASS" && \
+  echo "LIGHTGUN OVERLAY: PASS" || { echo "LIGHTGUN OVERLAY: FAIL"; exit 1; }
 echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv
