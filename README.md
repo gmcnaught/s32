@@ -40,7 +40,7 @@ detailed source record.
 
 ## Supported games
 
-The 33 tracked MRA variants use the same universal RBF:
+The 32 tracked MRA variants use the same universal RBF:
 
 - **Arabian Fight:** World, US, Japan
 - **Burning Rival:** World, Japan
@@ -53,7 +53,7 @@ The 33 tracked MRA variants use the same universal RBF:
 - **Rad Rally:** World, US, Japan
 - **Slip Stream:** Brazil, Hispanic
 - **Spider-Man: The Videogame:** World, US Rev A, Japan
-- **Super Visual Football / Soccer:** European, European Rev A, US Rev A
+- **Super Visual Football / Soccer:** European Rev A, US Rev A
 - **The J.League 1994:** Japan, Japan Rev A
 
 SegaSonic The Hedgehog, Hard Dunk, OutRunners, Stadium Cross, Title Fight, AS-1,

@@ -118,6 +118,11 @@ IGNORED_PARENTS = {
     "arescue", "dbzvrvs", "f1en", "f1lap", "sonic",
 }
 
+# The non-Rev-A European Football clone is intentionally not a production
+# target. Keep this set-level exclusion explicit so a refresh of MAME's clone
+# list cannot re-emit it through the supported svf parent fallback.
+IGNORED_SETS = {"svfo"}
+
 # Per-game button labels/defaults are part of the MRA contract, not the board
 # descriptor. Keep them here so regenerating tracked MRAs preserves the
 # remapping UI metadata as well as the ROM stream.
@@ -188,7 +193,7 @@ BUTTONS = {
     # Arcade Museum's Super Visual Football panel labels the three game
     # buttons Shoot / Pass-A / Pass-B (see the linked machine record at
     # https://www.arcade-museum.com/Videogame/super-visual-football-european-sega-cup).
-    # All five football-family sets share this standard two-player,
+    # Supported football-family sets share this standard two-player,
     # three-button System 32 input port.
     "svf": (
         "Shoot,Pass-A,Pass-B,-,-,-,Start,Coin,Test,Service",
@@ -362,7 +367,8 @@ def interleave_parts(loads, region_size, ctx=""):
 
 def gen(setname, data, outdir):
     parent = data.get("parent") or setname
-    if setname in IGNORED_PARENTS or parent in IGNORED_PARENTS:
+    if (setname in IGNORED_SETS or setname in IGNORED_PARENTS or
+            parent in IGNORED_PARENTS):
         return False
     # A set-specific entry must override its parent's board descriptor when
     # MAME installs a different init/protection handler for the clone;

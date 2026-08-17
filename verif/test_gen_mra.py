@@ -4,12 +4,18 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS, gen
+from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS, IGNORED_SETS, gen
 
 
 class BoardDescriptorTests(unittest.TestCase):
     def test_ignored_parents_are_not_profile_descriptors(self) -> None:
         self.assertTrue(IGNORED_PARENTS.isdisjoint(GAMES))
+
+    def test_dropped_svfo_clone_is_not_regenerated(self) -> None:
+        self.assertIn("svfo", IGNORED_SETS)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertFalse(gen("svfo", {}, tmp))
+            self.assertEqual(list(Path(tmp).glob("*.mra")), [])
 
     def test_holo_and_spidman_are_standard_profile_descriptors(self) -> None:
         self.assertEqual(GAMES["holo"][0] & 0x06, 0x00)
@@ -221,7 +227,6 @@ class OptimizedLayoutTests(unittest.TestCase):
     def test_football_variants_have_the_parent_and_descriptor_split(self) -> None:
         expected = {
             "svf": ("Super Visual Football European Sega Cup (Rev A).mra", 0x00),
-            "svfo": ("Super Visual Football European Sega Cup.mra", 0x00),
             "svs": ("Super Visual Soccer Sega Cup (US, Rev A).mra", 0x00),
             "jleague": ("The J.League 1994 (Japan, Rev A).mra", 0x06),
             "jleagueo": ("The J.League 1994 (Japan).mra", 0x06),
@@ -251,7 +256,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             Path(__file__).parents[1] / "releases",
         ):
             paths = sorted(mra_dir.glob("*.mra"))
-            self.assertEqual(len(paths), 33, str(mra_dir))
+            self.assertEqual(len(paths), 32, str(mra_dir))
             for path in paths:
                 root = ElementTree.parse(path).getroot()
                 self.assertEqual(len(root.findall("nvram")), 1, path.name)
@@ -264,7 +269,7 @@ class OptimizedLayoutTests(unittest.TestCase):
         paths = sorted(mra_dir.glob("*.mra"))
         # Air Rescue is intentionally excluded because its second PCB is not
         # part of the production core.
-        self.assertEqual(len(paths), 33)
+        self.assertEqual(len(paths), 32)
         for path in paths:
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")

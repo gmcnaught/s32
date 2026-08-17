@@ -349,8 +349,9 @@ macro after a specific game.
 
 ## 2026-08-17: Super Visual Football family restored
 
-The universal profile now emits the five standard-board football sets `svf`,
-`svfo`, `svs`, `jleague`, and `jleagueo`. All use the `svf` two-player,
+The universal profile now emits the four supported standard-board football sets
+`svf`, `svs`, `jleague`, and `jleagueo`. The non-Rev-A `svfo` clone is
+intentionally excluded from production MRAs. All supported sets use the `svf` two-player,
 8-way/three-button input layout; the MRA labels are Shoot, Pass-A, and Pass-B.
 The two J.League sets select `PROT_JLEAGUE` in descriptor byte 2 because MAME's
 `init_jleague` installs the `0x20f700-0x20f705` protection write handler. The
