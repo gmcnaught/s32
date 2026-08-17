@@ -1,6 +1,10 @@
 // System 32 driving-cabinet input adapters.
 // MiSTer analog-stick axes are signed -128..+127 with zero at rest.
 module s32_driving_controls (
+    input         clk,
+    input         rst,
+    input         capture_wheel,
+    input         wheel_sample,
     input   [7:0] left_x,
     input   [7:0] right_y,
     input         digital_accel,
@@ -27,6 +31,21 @@ module s32_driving_controls (
         end
     endfunction
 
+    wire [7:0] wheel_live = wheel_deadzone(left_x);
+
+    function automatic [8:0] wheel_distance(
+        input [7:0] a,
+        input [7:0] b
+    );
+        wheel_distance = (a >= b) ? ({1'b0, a} - {1'b0, b})
+                                  : ({1'b0, b} - {1'b0, a});
+    endfunction
+
+    reg [7:0] wheel_latest;
+    reg [7:0] wheel_delivered;
+    reg [7:0] wheel_pending;
+    reg       wheel_pending_valid;
+
     wire signed [8:0] stick_y =
         $signed({right_y[7], right_y});
     wire [8:0] accel_mag = (stick_y < 0) ? -stick_y : 9'd0;
@@ -36,9 +55,50 @@ module s32_driving_controls (
         pedal = (magnitude >= 9'd127) ? 8'hff : {magnitude[6:0], 1'b0};
     endfunction
 
-    // Steering is positional. Do not retain or rate-limit an old coordinate:
-    // each HPS left-stick report must be the value sampled by the MSM6253.
-    assign wheel = wheel_deadzone(left_x);
+    // Rad Mobile polls the MSM6253 more slowly than a USB stick can report a
+    // complete out-and-back motion. Retain the strongest excursion between
+    // channel-0 loads, then present the latest coordinate on the following
+    // load. Other driving sets keep the direct positional path.
+    assign wheel = (capture_wheel && wheel_pending_valid)
+                 ? wheel_pending : wheel_live;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            wheel_latest       <= 8'h80;
+            wheel_delivered    <= 8'h80;
+            wheel_pending      <= 8'h80;
+            wheel_pending_valid <= 1'b0;
+        end
+        else if (!capture_wheel) begin
+            wheel_latest       <= wheel_live;
+            wheel_delivered    <= wheel_live;
+            wheel_pending      <= wheel_live;
+            wheel_pending_valid <= 1'b0;
+        end
+        else if (wheel_sample) begin
+            // The MSM6253 captures the pre-edge value of wheel. If the stick
+            // has already returned or moved elsewhere, retain that latest
+            // coordinate for the next conversion so steering cannot stick.
+            wheel_delivered <= wheel;
+            wheel_latest    <= wheel_live;
+            wheel_pending   <= wheel_live;
+            wheel_pending_valid <= (wheel_live != wheel);
+        end
+        else if (wheel_live != wheel_latest) begin
+            wheel_latest <= wheel_live;
+            if (!wheel_pending_valid) begin
+                if (wheel_live != wheel_delivered) begin
+                    wheel_pending       <= wheel_live;
+                    wheel_pending_valid <= 1'b1;
+                end
+            end
+            else if (wheel_distance(wheel_live, wheel_delivered) >=
+                     wheel_distance(wheel_pending, wheel_delivered)) begin
+                wheel_pending <= wheel_live;
+            end
+        end
+    end
+
     assign accel = digital_accel ? 8'hff : pedal(accel_mag);
     assign brake = digital_brake ? 8'hff : pedal(brake_mag);
 endmodule

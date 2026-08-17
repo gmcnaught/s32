@@ -374,7 +374,13 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn(".left_x(joystick_l_analog_0[7:0])", text)
         self.assertIn(".right_y(joystick_r_analog_0[15:8])", text)
         self.assertIn("active_board.gun_aim ? gun_adc_p1_x : driving_wheel", text)
-        self.assertIn("assign wheel = wheel_deadzone(left_x)", controls)
+        self.assertIn("wheel_pending_valid", controls)
+        self.assertIn("wheel_sample", controls)
+        self.assertIn("active_board.digital_profile == DIGITAL_RADM", text)
+        self.assertIn(".adc0_load(adc0_load)", text)
+        core = (ROOT / "rtl/s32_core.sv").read_text(encoding="utf-8")
+        self.assertIn("assign adc0_load = wr_stb && sel_adc", core)
+        self.assertIn("(A[2:1] == 2'd0)", core)
         for stale_state in ("wheel_sm", "wheel_div", "wheel_tick"):
             self.assertNotIn(stale_state, text)
 

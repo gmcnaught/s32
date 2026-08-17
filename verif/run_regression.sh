@@ -321,6 +321,10 @@ iverilog -g2012 -s tb_driving_controls -o /tmp/s32_driving_controls \
   rtl/io/s32_driving_controls.sv verif/common/tb_driving_controls.sv
 vvp /tmp/s32_driving_controls | grep -q "PASS: System 32 driving controls" && \
   echo "SLIP STREAM DRIVING CONTROLS: PASS" || { echo "SLIP STREAM DRIVING CONTROLS: FAIL"; exit 1; }
+iverilog -g2012 -s tb_gun_adc_adapter -o /tmp/s32_gun_adc_adapter \
+  rtl/io/s32_gun_adc_adapter.sv verif/common/tb_gun_adc_adapter.sv
+vvp /tmp/s32_gun_adc_adapter | grep -q "GUN ADC ADAPTER PASS" && \
+  echo "GUN ADC ADAPTER: PASS" || { echo "GUN ADC ADAPTER: FAIL"; exit 1; }
 echo "[36/38] J.League protection write handler"
 iverilog -g2012 -s tb_jleague_hle -o /tmp/s32_jleague_hle \
   rtl/s32_pkg.sv rtl/prot/s32_prot.sv verif/common/tb_jleague_hle.sv

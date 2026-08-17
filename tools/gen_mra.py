@@ -137,7 +137,7 @@ BUTTONS = {
         "A,B,Start,Select,R,L,Y",
     ),
     "brival": (
-        "Button 1,Button 2,Button 3,Button 4,Button 5,Button 6,Start,Coin,Test,Service",
+        "Light Punch,Medium Punch,Heavy Punch,Light Kick,Medium Kick,Heavy Kick,Start,Coin,Test,Service",
         "A,B,X,Y,R,L,Start,Select",
     ),
     "darkedge": (

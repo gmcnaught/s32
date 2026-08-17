@@ -551,14 +551,22 @@ wire [7:0] usb_gun_p1_x = joystick_l_analog_0[7:0] ^ 8'h80;
 wire [7:0] usb_gun_p1_y = joystick_l_analog_0[15:8] ^ 8'h80;
 wire [7:0] usb_gun_p2_x = joystick_l_analog_1[7:0] ^ 8'h80;
 wire [7:0] usb_gun_p2_y = joystick_l_analog_1[15:8] ^ 8'h80;
-wire [7:0] gun_adc_p1_x = (p1_snac_mode && snac_p1_gun_aim_valid) ?
-                          snac_p1_gun_x[9:2] : usb_gun_p1_x;
-wire [7:0] gun_adc_p1_y = (p1_snac_mode && snac_p1_gun_aim_valid) ?
-                          snac_p1_gun_y : usb_gun_p1_y;
-wire [7:0] gun_adc_p2_x = (p2_snac_mode && snac_p2_gun_aim_valid) ?
-                          snac_p2_gun_x[9:2] : usb_gun_p2_x;
-wire [7:0] gun_adc_p2_y = (p2_snac_mode && snac_p2_gun_aim_valid) ?
-                          snac_p2_gun_y : usb_gun_p2_y;
+wire [7:0] gun_adc_p1_x, gun_adc_p1_y, gun_adc_p2_x, gun_adc_p2_y;
+// coin_swap identifies Alien 3's distinct cabinet wiring within the gun
+// descriptors. Jurassic Park keeps the complete ADC range; Alien 3 uses the
+// measured analog-stick envelope that keeps its sight on the visible border.
+// GunCon SNAC has independent calibration and bypasses this host-axis adapter.
+s32_gun_adc_adapter gun_adc_adapter (
+    .alien3_range(active_board.gun_aim && active_board.coin_swap),
+    .p1_snac_valid(p1_snac_mode && snac_p1_gun_aim_valid),
+    .p2_snac_valid(p2_snac_mode && snac_p2_gun_aim_valid),
+    .p1_snac_x(snac_p1_gun_x[9:2]), .p1_snac_y(snac_p1_gun_y),
+    .p2_snac_x(snac_p2_gun_x[9:2]), .p2_snac_y(snac_p2_gun_y),
+    .p1_x_in(usb_gun_p1_x), .p1_y_in(usb_gun_p1_y),
+    .p2_x_in(usb_gun_p2_x), .p2_y_in(usb_gun_p2_y),
+    .p1_x(gun_adc_p1_x), .p1_y(gun_adc_p1_y),
+    .p2_x(gun_adc_p2_x), .p2_y(gun_adc_p2_y)
+);
 wire gun_snac_trigger_p1 = snac_p1_gun && snac_p1_buttons[13];
 wire gun_snac_trigger_p2 = snac_p2_gun && snac_p2_buttons[13];
 wire gun_snac_button2_p1 = snac_p1_gun && snac_p1_buttons[12];
@@ -605,7 +613,12 @@ wire [7:0] adc_ch [0:7];
 wire [7:0] driving_wheel;
 wire [7:0] driving_accel;
 wire [7:0] driving_brake;
+wire       adc0_load;
 s32_driving_controls driving_controls (
+    .clk(clk_sys),
+    .rst(reset),
+    .capture_wheel(active_board.digital_profile == DIGITAL_RADM),
+    .wheel_sample(adc0_load),
     .left_x(joystick_l_analog_0[7:0]),
     .right_y(joystick_r_analog_0[15:8]),
     .digital_accel(joystick_0[4]),
@@ -738,6 +751,7 @@ s32_core core (
     .in_portc_b(8'hff), .in_svc12_b(8'hff), .in_svc34_b(8'hff),
     .adc_ch(adc_ch),
     .ppi_pa(core_ppi_pa), .ppi_pb(core_ppi_pb), .ppi_pc(core_ppi_pc),
+    .adc0_load(adc0_load),
     .rgb_a(rgb_a), .rgb_b(rgb_b),
     .ce_pix(ce_pix_core),
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),

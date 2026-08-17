@@ -30,6 +30,8 @@
 //    +P1LEN<n>=<n>   event length in frames, default 1
 //    +P1MASK<n>=<h>  P1A bits to pull low: L/R/U/D=80/40/20/10,
 //                    B3/B2/B1 (Magic/Jump/Attack)=04/02/01
+//    +GUNP1X/Y=<h>   positional-gun ADC coordinates (default 80)
+//    +GUNP2X/Y=<h>   for descriptor-selected Alien 3/Jurassic Park runs
 //    +ARABPERFAT=<f>  first Arabian Fight frame-boundary performance sample
 //    +ARABPERFN=<n>   consecutive samples; each must be at FE4244/FE4248
 //    +ARABHEAVYAT=<f> first field in the heavy-sprite recurrence window
@@ -546,18 +548,41 @@ wire [7:0] adc_a [0:7];
 // diagnostic override while keeping the normal deterministic board defaults.
 integer adc0_override;
 initial if (!$value$plusargs("ADC0=%h", adc0_override)) adc0_override = -1;
-assign adc_a[0] = (adc0_override >= 0) ? adc0_override[7:0] :
+integer gun_p1_x, gun_p1_y, gun_p2_x, gun_p2_y;
+initial begin
+    if (!$value$plusargs("GUNP1X=%h", gun_p1_x)) gun_p1_x = 8'h80;
+    if (!$value$plusargs("GUNP1Y=%h", gun_p1_y)) gun_p1_y = 8'h80;
+    if (!$value$plusargs("GUNP2X=%h", gun_p2_x)) gun_p2_x = 8'h80;
+    if (!$value$plusargs("GUNP2Y=%h", gun_p2_y)) gun_p2_y = 8'h80;
+end
+wire [7:0] sim_gun_p1_x, sim_gun_p1_y, sim_gun_p2_x, sim_gun_p2_y;
+s32_gun_adc_adapter sim_gun_adc_adapter (
+    .alien3_range(board.gun_aim && board.coin_swap),
+    .p1_snac_valid(1'b0), .p2_snac_valid(1'b0),
+    .p1_snac_x(8'h00), .p1_snac_y(8'h00),
+    .p2_snac_x(8'h00), .p2_snac_y(8'h00),
+    .p1_x_in(gun_p1_x[7:0]), .p1_y_in(gun_p1_y[7:0]),
+    .p2_x_in(gun_p2_x[7:0]), .p2_y_in(gun_p2_y[7:0]),
+    .p1_x(sim_gun_p1_x), .p1_y(sim_gun_p1_y),
+    .p2_x(sim_gun_p2_x), .p2_y(sim_gun_p2_y)
+);
+assign adc_a[0] = board.gun_aim ? sim_gun_p1_x :
+                  (adc0_override >= 0) ? adc0_override[7:0] :
                   (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
-assign adc_a[1] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
+assign adc_a[1] = board.gun_aim ? sim_gun_p1_y :
+                  (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
                   (board.analog_profile == ANALOG_DRIVING) ?
                   (((((accel_at >= 0 && cur_frame >= accel_at &&
                      cur_frame < accel_at + accel_len) || input_mask_value[10]) &&
                     !input_mask_value[12])) ?
                    accel_value[7:0] : 8'h00) : 8'h80;
-assign adc_a[2] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
+assign adc_a[2] = board.gun_aim ? sim_gun_p2_x :
+                  (board.analog_profile == ANALOG_ALL_FF) ? 8'hff :
                   (board.analog_profile == ANALOG_DRIVING) ? 8'h00 : 8'h80;
+assign adc_a[3] = board.gun_aim ? sim_gun_p2_y :
+                  (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
 generate
-    for (genvar gi = 3; gi < 8; gi = gi + 1)
+    for (genvar gi = 4; gi < 8; gi = gi + 1)
         assign adc_a[gi] = (board.analog_profile == ANALOG_ALL_FF) ? 8'hff : 8'h80;
 endgenerate
 

@@ -11,11 +11,11 @@ for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
     'FITTER_EFFORT "STANDARD FIT"',
-    # 2026-08-14: measured on the current STANDARD FIT netlist -- seed 2 closes
-    # timing (worst setup +0.078 ns), seed 4 does not (-0.085 ns on a vendored
-    # sys/osd.v path at the Slow -40C corner).  This assertion previously read
-    # SEED 4, mirroring a stale QSF value rather than a measured result.
-    "SEED 2",
+    # 2026-08-17: the current universal-profile netlist (including the
+    # restored gun-game I/O path) closes the clean full fit at seed 6.  The
+    # previous seed-2 assertion described an older pre-I/O netlist and no
+    # longer matched the production QSF or its measured STA result.
+    "SEED 6",
     "ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF",

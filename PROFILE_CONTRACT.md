@@ -2,13 +2,66 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-17: Alien 3 positional-gun endpoint restoration
+
+MiSTer hardware testing reproduced an Alien 3 cabinet-calibration failure: a
+full analog-stick excursion drove the MSM6253 gun channels to `0x00`/`0xff`,
+placing the game's sight beyond its visible border. Jurassic Park remained
+correct with that complete range. The earlier measured Alien 3 envelope of
+`0x08..0xf8` was lost when the two games were restored onto one direct shared
+gun-coordinate path.
+
+The universal top now passes USB/analog-stick gun coordinates through a
+descriptor-selected adapter. Jurassic Park remains byte-exact across
+`0x00..0xff`; Alien 3 alone saturates each host axis at `0x08` and `0xf8`,
+leaving every interior coordinate unchanged. GunCon SNAC bypasses this adapter
+because its independent calibration was not part of the hardware observation.
+This is a cabinet input-boundary correction, not a
+renderer, crop, offset, smoothing, response-curve, or framebuffer workaround.
+It adds no state, clock, reset, CDC, memory, latency, or constraint change.
+
+An exhaustive focused regression checks all 256 coordinates on both players
+and axes, including the old endpoint fingerprint. The real full-core Alien 3
+and Jurassic Park headless replays and paired comparator receipts are retained
+with the iteration evidence. No Quartus build or RBF was produced; a post-fix
+MiSTer run remains required before claiming physical-hardware validation.
+
+## 2026-08-17: Rad Mobile fast steering-event capture
+
+MiSTer hardware testing established that a rapid left-stick excursion could
+leave centre and return before Rad Mobile started its next MSM6253 channel-0
+conversion. The former direct positional path then exposed only the final
+centre coordinate, so the game never received the intervening steering event.
+
+The universal top now feeds the existing accepted channel-0 load pulse back to
+the driving adapter. For `DIGITAL_RADM` only, three 8-bit registers retain the
+strongest excursion observed since the previous load and the latest coordinate
+that must follow it. This makes a short excursion visible for exactly one ADC
+conversion and then delivers the return coordinate, avoiding a new stuck
+direction. Rad Rally and Slip Stream retain the direct positional path because
+this behavior has only been observed and validated for Rad Mobile.
+
+No clock, CDC, ADC serialization, deadzone, MRA, constraint, framebuffer, or
+memory interface changed. The catcher costs 25 state bits and infers no M10K.
+A headless focused regression reproduces the old center-to-left-to-center loss,
+then checks left, right, strongest-of-several, return-to-centre, exhaustive
+coordinate, direct reversal, and pedal behavior. Full universal-profile
+Verilator lint and the Python profile/release suite pass. No Quartus build,
+RBF, or post-fix MiSTer hardware run was performed in this iteration.
+
 ## 2026-08-17: Burning Rival restored to the universal profile
 
 Burning Rival (`brival`, `brivalj`) is restored to the one universal standard-
 board profile. MAME's `sega_system32_4p` I/O device is used with Burning Rival's
 two-player, six-action-button input contract. The descriptor is `20 00 02` (PPI present,
-`PROT_BRIVAL=2`), and the MRA controls are `Button 1` through `Button 6`,
-followed by Start/Coin/Test/Service with defaults `A,B,X,Y,R,L,Start,Select`.
+`PROT_BRIVAL=2`), and the MRA controls are Light/Medium/Heavy Punch followed by
+Light/Medium/Heavy Kick and Start/Coin/Test/Service, with defaults
+`A,B,X,Y,R,L,Start,Select`. The names follow Sega's original instruction card,
+whose upper row is weak/middle/strong punch and lower row is
+weak/middle/strong kick; the English labels use the later guide's equivalent
+[Light/Medium/Heavy terminology](https://gamefaqs.gamespot.com/arcade/566791-burning-rival/faqs/74783).
+The scanned Sega card is preserved by LaunchBox as its
+[Burning Rival controls image](https://images.launchbox-app.com/68128e45-e6c9-477e-8645-9685d397fafe.jpg).
 
 The restoration is descriptor-selected RTL: the Burning Rival upper-button PPI
 lane, the documented ROM-string protection copy/read trap, and its shared

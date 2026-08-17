@@ -161,9 +161,9 @@ class ButtonMetadataTests(unittest.TestCase):
     def test_burning_rival_controls_are_named_and_mapped_as_six_buttons(self) -> None:
         names, defaults = BUTTONS["brival"]
         self.assertEqual(names.split(","),
-                         ["Button 1", "Button 2", "Button 3", "Button 4",
-                          "Button 5", "Button 6", "Start", "Coin", "Test",
-                          "Service"])
+                         ["Light Punch", "Medium Punch", "Heavy Punch",
+                          "Light Kick", "Medium Kick", "Heavy Kick",
+                          "Start", "Coin", "Test", "Service"])
         self.assertEqual(defaults.split(","),
                          ["A", "B", "X", "Y", "R", "L", "Start", "Select"])
 
