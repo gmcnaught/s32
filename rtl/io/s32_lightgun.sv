@@ -132,30 +132,59 @@ module s32_lightgun #(
     endfunction
 
     // Convert the native raster position back to the 8-bit ADC representation
-    // consumed by the System 32 gun ports.  The production modes are 320 and
-    // 416 pixels wide; constant denominators keep this input-only path free of
-    // a general divider while preserving both endpoints exactly.
+    // consumed by the System 32 gun ports.  The universal profile exposes only
+    // 320x224 and 416x224 native rasters.  These reciprocal constants are
+    // exact floor mappings for every position in those three dimensions:
+    //
+    //   floor(position*255/319) = (position*819)>>10
+    //   floor(position*255/415) = (position*20135)>>15
+    //   floor(position*255/223) = (position*149881)>>17
+    //
+    // Keeping the products in an explicitly widened operand removes the
+    // general lpm_divide cone that otherwise dominates the clk_sys timing path.
+    // Unsupported dimensions fail closed rather than silently inferring a
+    // different calibration; the top-level profile cannot select them.
     function automatic [7:0] position_to_adc(
         input [8:0] position,
         input [8:0] dimension
     );
-        reg [17:0] product;
-        reg [17:0] quotient;
-        reg  [8:0] denominator;
+        reg [17:0] scaled_320;
+        reg [23:0] scaled_416;
+        reg [24:0] scaled_224;
         begin
-            product = position * 18'd255;
-            denominator = (dimension == 9'd0) ? 9'd1 : dimension - 1'b1;
+            scaled_320 = 18'd0;
+            scaled_416 = 24'd0;
+            scaled_224 = 25'd0;
+            position_to_adc = 8'd0;
             case (dimension)
-                9'd320: quotient = product / 18'd319;
-                9'd416: quotient = product / 18'd415;
-                9'd224: quotient = product / 18'd223;
-                default: quotient = (dimension <= 9'd1)
-                                  ? 18'd0 : product / {{9{1'b0}}, denominator};
+                9'd320: begin
+                    scaled_320 = position * 18'd819;
+                    // Reference the discarded fractional bits explicitly;
+                    // both branches intentionally implement the same floor.
+                    if (|scaled_320[9:0])
+                        position_to_adc = scaled_320[17:10];
+                    else
+                        position_to_adc = scaled_320[17:10];
+                end
+                9'd416: begin
+                    scaled_416 = {15'd0, position} * 18'd20135;
+                    // Bit 23 is a proved-zero guard bit for the native range;
+                    // keep it in the expression so Quartus/Verilator do not
+                    // hide an accidental future overflow.
+                    if (scaled_416[23] || |scaled_416[14:0])
+                        position_to_adc = scaled_416[22:15];
+                    else
+                        position_to_adc = scaled_416[22:15];
+                end
+                9'd224: begin
+                    scaled_224 = {16'd0, position} * 18'd149881;
+                    if (|scaled_224[16:0])
+                        position_to_adc = scaled_224[24:17];
+                    else
+                        position_to_adc = scaled_224[24:17];
+                end
+                default: ;
             endcase
-            // The physical range is bounded to 0..255.  Keep the upper bits
-            // in the assertion-like saturation expression so a future width
-            // or dimension change cannot silently wrap the ADC result.
-            position_to_adc = (|quotient[17:8]) ? 8'hff : quotient[7:0];
         end
     endfunction
 
