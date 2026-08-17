@@ -2,7 +2,7 @@
 # s32_multipcm.sv stays listed because S32_SYSTEM32_ONLY folds is_multi32 to a
 # constant and the instance optimises away; removing it reclaims no logic.
 set_global_assignment -name QIP_FILE sys/sys.qip
-set_global_assignment -name SDC_FILE s32.sdc
+set_global_assignment -name SDC_FILE Arcade-SegaSystem32.sdc
 
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-SegaSystem32.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_pkg.sv
