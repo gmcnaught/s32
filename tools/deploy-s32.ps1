@@ -8,7 +8,7 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 if (-not $MraPath) {
-    $MraPath = Join-Path $repoRoot "mra\Holosseum (US, Rev A).mra"
+    $MraPath = Join-Path $repoRoot "releases\Holosseum (US, Rev A).mra"
 }
 
 & (Join-Path $PSScriptRoot "deploy-mister.ps1") `

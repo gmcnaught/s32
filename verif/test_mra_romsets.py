@@ -5,7 +5,7 @@ from xml.etree import ElementTree
 
 class CloneMraRomsetTests(unittest.TestCase):
     def test_clone_mras_accept_merged_nonmerged_and_split_archives(self) -> None:
-        mra_dir = Path(__file__).parents[1] / "mra"
+        mra_dir = Path(__file__).parents[1] / "releases"
         clone_count = 0
         for path in sorted(mra_dir.glob("*.mra")):
             root = ElementTree.parse(path).getroot()
@@ -24,7 +24,7 @@ class CloneMraRomsetTests(unittest.TestCase):
 
     def test_every_external_part_has_an_archive_source(self) -> None:
         """Named files must resolve from this rom or from the part itself."""
-        mra_dir = Path(__file__).parents[1] / "mra"
+        mra_dir = Path(__file__).parents[1] / "releases"
         checked = 0
         for path in sorted(mra_dir.glob("*.mra")):
             root = ElementTree.parse(path).getroot()

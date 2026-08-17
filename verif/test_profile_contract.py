@@ -8,7 +8,7 @@ from tools.gen_mra import GAMES, RBF_BY_PARENT
 
 
 ROOT = Path(__file__).parents[1]
-MRA_DIR = ROOT / "mra"
+MRA_DIR = ROOT / "releases"
 
 
 class GlobalProfileContractTests(unittest.TestCase):

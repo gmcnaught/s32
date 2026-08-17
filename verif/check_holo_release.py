@@ -18,7 +18,7 @@ assert 'VERILOG_MACRO "S32_V25_HW=1"' in qsf
 assert 'VERILOG_MACRO "S32_REAL_V25=1"' not in qsf
 
 matches = []
-for path in (ROOT / "mra").glob("*.mra"):
+for path in (ROOT / "releases").glob("*.mra"):
     tree = ET.parse(path)
     if tree.findtext("setname") == "holo":
         matches.append((path, tree))

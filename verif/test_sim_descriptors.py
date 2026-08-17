@@ -43,7 +43,7 @@ def _mra_descriptor(path: Path) -> bytes:
 def _parents() -> dict:
     """setname -> mra path, for every shipped MRA."""
     out = {}
-    for path in sorted((REPO / "mra").glob("*.mra")):
+    for path in sorted((REPO / "releases").glob("*.mra")):
         root = ElementTree.parse(path).getroot()
         setname = root.findtext("setname")
         assert setname, f"{path.name} has no setname"

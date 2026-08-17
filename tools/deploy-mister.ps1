@@ -35,7 +35,7 @@ if (-not $ReportRoot) {
 }
 $ReportRoot = (Resolve-Path -LiteralPath $ReportRoot).Path
 if (-not $MraPath) {
-    $MraPath = Join-Path $repoRoot "mra\Holosseum (US, Rev A).mra"
+    $MraPath = Join-Path $repoRoot "releases\Holosseum (US, Rev A).mra"
 }
 
 foreach ($command in @("ssh", "scp")) {

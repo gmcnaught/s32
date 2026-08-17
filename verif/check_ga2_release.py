@@ -21,7 +21,7 @@ assert 'VERILOG_MACRO "S32_RELEASE_MINIMAL=1"' not in standard_qsf, \
     "Arcade-SegaSystem32.qsf must not retain the retired debug/release macro"
 
 matches = []
-for path in (ROOT / "mra").glob("*.mra"):
+for path in (ROOT / "releases").glob("*.mra"):
     tree = ET.parse(path)
     if tree.findtext("setname") == "ga2":
         matches.append((path, tree))
@@ -31,7 +31,7 @@ path, tree = matches[0]
 root = tree.getroot()
 
 assert root.findtext("rbf") == "Arcade-SegaSystem32", "GA2 MRA must load Arcade-SegaSystem32.rbf"
-for regional_path in (ROOT / "mra").glob("Golden Axe The Revenge of Death Adder (*.mra"):
+for regional_path in (ROOT / "releases").glob("Golden Axe The Revenge of Death Adder (*.mra"):
     regional_tree = ET.parse(regional_path)
     assert regional_tree.findtext("rbf") == "Arcade-SegaSystem32", \
         f"{regional_path.name} must load Arcade-SegaSystem32.rbf"

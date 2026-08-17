@@ -51,7 +51,7 @@ assert '"O[16:15],CPU Turbo' not in top, \
     "CPU Turbo must not be offered in the merged profile (V60 timing relies on fixed CE)"
 
 matches = []
-for path in (ROOT / "mra").glob("Arabian Fight (*.mra"):
+for path in (ROOT / "releases").rglob("Arabian Fight (*.mra"):
     tree = ET.parse(path)
     matches.append((path, tree.getroot()))
 
