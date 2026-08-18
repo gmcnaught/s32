@@ -58,13 +58,18 @@ module s32_lightgun_overlay #(
             have_frame_line  <= 1'b0;
         end
         else begin
-            vs_d <= vs;
-            if (vs_d && !vs)
-                frame_pending <= 1'b1;
-
-            de_d <= de;
-            hs_d <= hs;
             if (pxl_cen) begin
+                // Sync and DE transitions are defined on pixel-enable edges.
+                // Sample their history at the same cadence as the raster
+                // counters; updating history on every clk_sys cycle can erase
+                // a fractional-CE transition before it is observed here.
+                vs_d <= vs;
+                de_d <= de;
+                hs_d <= hs;
+
+                if (vs_d && !vs)
+                    frame_pending <= 1'b1;
+
                 if (hs_d && !hs && !de) begin
                     x <= 9'd0;
                 end

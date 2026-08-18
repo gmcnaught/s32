@@ -227,6 +227,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn('Run-HdlTest "t35_lightgun"', regression)
         self.assertIn('Run-HdlTest "t35_jpark_gun_gain"', regression)
         self.assertIn('Run-HdlTest "t35_lightgun_overlay"', regression)
+        self.assertIn('Run-HdlTest "t35_lightgun_overlay_native"', regression)
         self.assertNotIn("s32_gun_aim", combined)
         self.assertIn(
             "wire gun_snac_supported = active_board.gun_aim && !active_board.coin_swap;",

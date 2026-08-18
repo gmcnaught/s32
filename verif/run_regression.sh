@@ -33,6 +33,11 @@ iverilog -g2012 -s tb_lightgun_overlay -o /tmp/s32_lightgun_overlay \
   rtl/video/s32_lightgun_overlay.sv verif/common/tb_lightgun_overlay.sv
 vvp /tmp/s32_lightgun_overlay | grep -q "LIGHTGUN OVERLAY PASS" && \
   echo "LIGHTGUN OVERLAY: PASS" || { echo "LIGHTGUN OVERLAY: FAIL"; exit 1; }
+iverilog -g2012 -s tb_lightgun_overlay_native -o /tmp/s32_lightgun_overlay_native \
+  rtl/video/s32_video.sv rtl/video/s32_lightgun_overlay.sv \
+  verif/common/tb_lightgun_overlay_native.sv
+vvp /tmp/s32_lightgun_overlay_native | grep -q "NATIVE OVERLAY PASS" && \
+  echo "NATIVE LIGHTGUN OVERLAY: PASS" || { echo "NATIVE LIGHTGUN OVERLAY: FAIL"; exit 1; }
 echo "[2/35] V60 smoke test"
 iverilog -g2012 -o /tmp/s32_v60_smoke \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smoke.sv

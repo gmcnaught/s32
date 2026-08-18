@@ -2,6 +2,20 @@
 
 This is the persistent cross-chat routing record for the core.
 
+## 2026-08-18: Sinden border raster tracking on fractional pixel CE
+
+The Sinden border overlay previously sampled HS/VS/DE history on every
+`clk_sys` edge while `s32_video` advances its raster on fractional `ce_pix`
+edges.  A native 320x224 diagnostic frame therefore missed the transitions,
+left the reconstructed coordinate at the active-window edge, and made every
+active pixel white (`143360/143360`).  The smallest fix samples sync/DE history
+only on `ce_pix`, matching the producer cadence; no raster, sync, blanking, or
+framework signal is changed.  The permanent native regression now proves two
+frames contain exactly `143360` active samples and `8576` perimeter-white
+samples, while the focused overlay, lightgun, GunCon, and gain tests remain
+passing.  This is a simulation-level closure; physical MiSTer Sinden output
+and a fresh Quartus/RBF build remain pending.
+
 ## 2026-08-18: generic JTFRAME lightgun layer for Alien 3 and Jurassic Park
 
 The universal `Arcade-SegaSystem32` profile now instantiates a project-owned

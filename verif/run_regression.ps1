@@ -718,6 +718,10 @@ try {
     Run-HdlTest "t35_lightgun_overlay" "tb_lightgun_overlay" @(
         "rtl/video/s32_lightgun_overlay.sv", "verif/common/tb_lightgun_overlay.sv"
     ) "LIGHTGUN OVERLAY PASS" @("SIMULATION")
+    Run-HdlTest "t35_lightgun_overlay_native" "tb_lightgun_overlay_native" @(
+        "rtl/video/s32_video.sv", "rtl/video/s32_lightgun_overlay.sv",
+        "verif/common/tb_lightgun_overlay_native.sv"
+    ) "NATIVE OVERLAY PASS" @("SIMULATION")
     Write-Tier 36 "Dark Edge protection contract"
     Run-HdlTest "t36_darkedge_hle" "tb_darkedge_hle" @(
         "rtl/s32_pkg.sv", "rtl/prot/s32_prot.sv", "verif/common/tb_darkedge_hle.sv"
