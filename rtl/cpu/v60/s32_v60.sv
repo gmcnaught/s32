@@ -474,6 +474,8 @@ reg        op2val_v;
 reg [2:0]  rmw_kind;   // 0=INC 1=DEC 2=SET1 3=CLR1 4=NOT1 5=TEST1
 reg [1:0]  rmw_dim;
 reg [31:0] xch_addr;
+reg [31:0] xch_addr2;
+reg [31:0] xch_val1, xch_val2;
 reg [31:0] task_mask, task_addr;
 reg [5:0]  task_phase;
 reg        task_reloaded;
@@ -533,7 +535,8 @@ typedef enum logic [6:0] {
     S_RESET, S_FILL, S_FILLW, S_DECODE,
     S_IF2,                       // have instflags, plan F12 operands
     S_EA_MODE, S_EA_IND, S_EA_IND2, S_EA_VAL,
-    S_EXEC, S_OP2_LD, S_MULDIV, S_DIVX, S_WB_MEM, S_NEXT, S_RMW_RD, S_RMW_EX, S_XCH1, S_XCH2, S_ROTC,
+    S_EXEC, S_OP2_LD, S_MULDIV, S_DIVX, S_WB_MEM, S_NEXT, S_RMW_RD, S_RMW_EX, S_XCH1, S_XCH2,
+    S_XCH_MMRD1, S_XCH_MMRD2, S_XCH_MMWR1, S_XCH_MMWR2, S_ROTC,
     S_MOVD_RL, S_MOVD_RH, S_MOVD_WL, S_MOVD_WH,   // MOVD qword read/write phases
     S_DIVXM_RH,                                   // DIVX memory dividend high-word read
     S_BR_TAKE,
@@ -2399,6 +2402,50 @@ else if (ce) begin
         end
         else if (dack) begin
             dbus_req <= 0; dbus_we <= 0;
+            st <= S_NEXT;
+        end
+    end
+    // XCH memory/memory: capture both source values before either destination
+    // is written. This is the V60 F12 sequence: load operand 1, load operand
+    // 2, store operand 1, store operand 2. Each state leaves dbus_req low on
+    // acknowledgement so the adapter sees a fresh request edge next state.
+    S_XCH_MMRD1: begin
+        if (!dbus_req) begin
+            dbus_req <= 1; dbus_we <= 0; dbus_size <= rmw_dim; dbus_addr <= xch_addr;
+        end
+        else if (dack) begin
+            dbus_req <= 0;
+            xch_val1 <= bus_rdata;
+            st <= S_XCH_MMRD2;
+        end
+    end
+    S_XCH_MMRD2: begin
+        if (!dbus_req) begin
+            dbus_req <= 1; dbus_we <= 0; dbus_size <= rmw_dim; dbus_addr <= xch_addr2;
+        end
+        else if (dack) begin
+            dbus_req <= 0;
+            xch_val2 <= bus_rdata;
+            st <= S_XCH_MMWR1;
+        end
+    end
+    S_XCH_MMWR1: begin
+        if (!dbus_req) begin
+            dbus_req <= 1; dbus_we <= 1; dbus_size <= rmw_dim;
+            dbus_addr <= xch_addr; dbus_wdata <= xch_val2;
+        end
+        else if (dack) begin
+            dbus_req <= 0;
+            st <= S_XCH_MMWR2;
+        end
+    end
+    S_XCH_MMWR2: begin
+        if (!dbus_req) begin
+            dbus_req <= 1; dbus_we <= 1; dbus_size <= rmw_dim;
+            dbus_addr <= xch_addr2; dbus_wdata <= xch_val1;
+        end
+        else if (dack) begin
+            dbus_req <= 0;
             st <= S_NEXT;
         end
     end
@@ -4461,9 +4508,9 @@ task automatic exec_op;
             else begin
                 // mem-mem (rare): read op1, read op2, cross-write
                 xch_addr <= op1;
-                wb_val   <= op2;
+                xch_addr2 <= op2;
                 rmw_dim  <= d2;
-                st <= S_XCH2;
+                st <= S_XCH_MMRD1;
             end
         end
     end

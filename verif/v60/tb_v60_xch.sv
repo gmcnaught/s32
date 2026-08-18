@@ -9,8 +9,9 @@
 //  (0x063BEB/0x063BF1) so the on-scale character never rendered.
 //
 //  Fix: XCH op1 in F2 D=0 is a register LVALUE (flag1=1). This test proves the
-//  reg<->reg swap is clean (and does NOT touch memory), and that the genuine
-//  reg<->memory XCH form still works.
+//  reg<->reg swap is clean (and does NOT touch memory), that the genuine
+//  reg<->memory XCH form still works, and that memory<->memory reads both
+//  operands before cross-writing them.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -88,6 +89,15 @@ initial begin
     // 45 <iflags=op1 reg 21=0x15> F3 <addr32=0x9000>
     ab(8'h45); ab(8'h15); ab(8'hF3); aw32(32'h0000_9000);
 
+    // F1 memory/memory forms: iflags=0x80, then direct-address F3 modes.
+    // Cover byte, halfword and word lane assembly independently.
+    ab(8'h41); ab(8'h80); ab(8'hF3); aw32(32'h0000_A000);
+    ab(8'hF3); aw32(32'h0000_A002);
+    ab(8'h43); ab(8'h80); ab(8'hF3); aw32(32'h0000_A010);
+    ab(8'hF3); aw32(32'h0000_A012);
+    ab(8'h45); ab(8'h80); ab(8'hF3); aw32(32'h0000_A020);
+    ab(8'hF3); aw32(32'h0000_A024);
+
     ab(8'h00);  // HALT
 
     // sentinels: mem[0x8000]=0x5A5A must survive the reg-reg swap (proves no
@@ -95,6 +105,15 @@ initial begin
     ram[32'h8000>>1] = 16'h5A5A;
     ram[32'h9000>>1] = 16'h7777;
     ram[(32'h9000>>1)+1] = 16'h0000;
+    ram[32'hA000>>1] = 16'h12A1;
+    ram[32'hA002>>1] = 16'h34B2;
+    ram[32'hA010>>1] = 16'h1122;
+    ram[(32'hA010>>1)+1] = 16'h0000;
+    ram[32'hA012>>1] = 16'h3344;
+    ram[32'hA020>>1] = 16'h5566;
+    ram[(32'hA020>>1)+1] = 16'h7788;
+    ram[32'hA024>>1] = 16'h99AA;
+    ram[(32'hA024>>1)+1] = 16'hBBCC;
 
     repeat (8) @(posedge clk);
     rst = 0;
@@ -114,6 +133,14 @@ initial begin
     chk(cpu.r[21] == 32'h0000_7777, "XCH.W reg-mem: R21 got mem");
     chk({ram[(32'h9000>>1)+1], ram[32'h9000>>1]} == 32'h1234_ABCD,
         "XCH.W reg-mem: mem got R21");
+    chk((ram[32'hA000>>1] & 16'h00ff) == 16'h00b2 &&
+        (ram[32'hA002>>1] & 16'h00ff) == 16'h00a1,
+        "XCH.B mem-mem: bytes swapped");
+    chk(ram[32'hA010>>1] == 16'h3344 && ram[32'hA012>>1] == 16'h1122,
+        "XCH.H mem-mem: halfwords swapped");
+    chk(ram[32'hA020>>1] == 16'h99AA && ram[(32'hA020>>1)+1] == 16'hBBCC &&
+        ram[32'hA024>>1] == 16'h5566 && ram[(32'hA024>>1)+1] == 16'h7788,
+        "XCH.W mem-mem: words swapped");
 
     if (fail == 0) $display("V60 XCH PASS (%0d checks)", pass);
     else           $display("V60 XCH FAIL (%0d/%0d failed)", fail, pass+fail);
