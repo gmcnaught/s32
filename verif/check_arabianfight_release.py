@@ -11,9 +11,9 @@ for assignment in (
     "SAVE_DISK_SPACE OFF",
     "SMART_RECOMPILE ON",
     'FITTER_EFFORT "STANDARD FIT"',
-    # 2026-08-17: the current universal-profile netlist closes the clean full
-    # fit at seed 2; seed 6 missed slow-corner setup by 0.083 ns.
-    "SEED 2",
+    # 2026-08-18: the current universal-profile netlist closes the clean full
+    # fit at seed 5; seed 2 and seed 6 both missed slow-corner setup.
+    "SEED 5",
     "ROUTER_TIMING_OPTIMIZATION_LEVEL NORMAL",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC OFF",
     "PHYSICAL_SYNTHESIS_COMBO_LOGIC_FOR_AREA OFF",

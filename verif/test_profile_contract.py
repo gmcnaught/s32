@@ -241,11 +241,11 @@ class GlobalProfileContractTests(unittest.TestCase):
             text,
         )
         self.assertIn(
-            '"O[31:30],P1 Gun Input,Analog Stick / USB Lightgun,SNAC Port 1;"',
+            '"O[31:30],P1 Gun Input,Stick/USB Gun/Sinden,SNAC Port 1;"',
             text,
         )
         self.assertIn(
-            '"o[1:0],P2 Gun Input,Analog Stick / USB Lightgun,SNAC Port 2;"',
+            '"o[1:0],P2 Gun Input,Stick/USB Gun/Sinden,SNAC Port 2;"',
             text,
         )
         self.assertNotIn('"P1O[31:30],P1 Gun Input', text)

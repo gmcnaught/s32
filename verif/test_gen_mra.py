@@ -242,6 +242,35 @@ class EepromArchiveSourceTests(unittest.TestCase):
 
 
 class OptimizedLayoutTests(unittest.TestCase):
+    def test_release_tree_has_one_canonical_mra_per_game(self) -> None:
+        release_dir = Path(__file__).parents[1] / "releases"
+        expected_root = {
+            "Alien3 The Gun (World).mra",
+            "Arabian Fight (World).mra",
+            "Burning Rival (World).mra",
+            "Dark Edge (World).mra",
+            "Golden Axe The Revenge of Death Adder (World, Rev B).mra",
+            "Holosseum (US, Rev A).mra",
+            "Jurassic Park (World, Rev A).mra",
+            "Rad Mobile (World).mra",
+            "Rad Rally (World).mra",
+            "Slip Stream (Brazil 950515).mra",
+            "Spider-Man The Videogame (World).mra",
+            "Super Visual Football European Sega Cup (Rev A).mra",
+            "Super Visual Soccer Sega Cup (US, Rev A).mra",
+            "The J.League 1994 (Japan).mra",
+        }
+        self.assertEqual(
+            {path.name for path in release_dir.glob("*.mra")},
+            expected_root,
+        )
+        alternatives = sorted((release_dir / "_alternatives").rglob("*.mra"))
+        self.assertEqual(len(alternatives), 18)
+        for path in alternatives:
+            with self.subTest(path=path.relative_to(release_dir)):
+                self.assertEqual(path.parent.parent.name, "_alternatives")
+                self.assertTrue(path.parent.name.startswith("_"))
+
     def test_football_variants_have_the_parent_and_descriptor_split(self) -> None:
         expected = {
             "svf": ("Super Visual Football European Sega Cup (Rev A).mra", 0x00),
@@ -252,7 +281,9 @@ class OptimizedLayoutTests(unittest.TestCase):
         mra_dir = Path(__file__).parents[1] / "releases"
         for setname, (filename, prot) in expected.items():
             with self.subTest(setname=setname):
-                root = ElementTree.parse(mra_dir / filename).getroot()
+                matches = list(mra_dir.rglob(filename))
+                self.assertEqual(len(matches), 1, filename)
+                root = ElementTree.parse(matches[0]).getroot()
                 self.assertEqual(root.findtext("setname"), setname)
                 if setname != "svf":
                     self.assertEqual(root.findtext("parent"), "svf")
@@ -269,22 +300,19 @@ class OptimizedLayoutTests(unittest.TestCase):
         upload/save image; a missing tag makes a title appear to work while
         silently losing its score table between launches.
         """
-        for mra_dir in (
-            Path(__file__).parents[1] / "releases",
-            Path(__file__).parents[1] / "releases",
-        ):
-            paths = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
-            self.assertEqual(len(paths), 32, str(mra_dir))
-            for path in paths:
-                root = ElementTree.parse(path).getroot()
-                self.assertEqual(len(root.findall("nvram")), 1, path.name)
-                nvram = root.find("nvram[@index='3']")
-                self.assertIsNotNone(nvram, path.name)
-                self.assertEqual(nvram.attrib, {"index": "3", "size": "128"}, path.name)
+        mra_dir = Path(__file__).parents[1] / "releases"
+        paths = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
+        self.assertEqual(len(paths), 32, str(mra_dir))
+        for path in paths:
+            root = ElementTree.parse(path).getroot()
+            self.assertEqual(len(root.findall("nvram")), 1, path.name)
+            nvram = root.find("nvram[@index='3']")
+            self.assertIsNotNone(nvram, path.name)
+            self.assertEqual(nvram.attrib, {"index": "3", "size": "128"}, path.name)
 
     def test_every_mra_commits_descriptor_after_region_downloads(self) -> None:
         mra_dir = Path(__file__).parents[1] / "releases"
-        paths = sorted(mra_dir.glob("*.mra"))
+        paths = sorted(mra_dir.rglob("*.mra"))
         # Air Rescue is intentionally excluded because its second PCB is not
         # part of the production core.
         self.assertEqual(len(paths), 32)
@@ -307,7 +335,7 @@ class OptimizedLayoutTests(unittest.TestCase):
 
     def test_rad_mobile_ships_both_regions_with_the_radm_port_layout(self) -> None:
         mra_dir = Path(__file__).parents[1] / "releases"
-        paths = sorted(mra_dir.glob("Rad Mobile*.mra"))
+        paths = sorted(mra_dir.rglob("Rad Mobile*.mra"))
         self.assertEqual([path.name for path in paths],
                          ["Rad Mobile (US).mra", "Rad Mobile (World).mra"])
         for path in paths:
@@ -352,7 +380,7 @@ class OptimizedLayoutTests(unittest.TestCase):
 
     def test_burning_rival_variants_ship_descriptor_and_six_named_buttons(self) -> None:
         mra_dir = Path(__file__).parents[1] / "releases"
-        paths = sorted(mra_dir.glob("Burning Rival*.mra"))
+        paths = sorted(mra_dir.rglob("Burning Rival*.mra"))
         self.assertEqual([path.name for path in paths],
                          ["Burning Rival (Japan).mra", "Burning Rival (World).mra"])
         for path in paths:
@@ -367,7 +395,7 @@ class OptimizedLayoutTests(unittest.TestCase):
             self.assertEqual(buttons.attrib["default"], BUTTONS["brival"][1], path.name)
 
     def test_rad_rally_uses_behavioral_link_without_diagnostic_firmware(self) -> None:
-        for path in (Path(__file__).parents[1] / "releases").glob("Rad Rally*.mra"):
+        for path in (Path(__file__).parents[1] / "releases").rglob("Rad Rally*.mra"):
             root = ElementTree.parse(path).getroot()
             roms = root.findall("rom")
             indexes = [int(rom.attrib["index"]) for rom in roms]
@@ -415,20 +443,19 @@ class RegenerationFidelityTests(unittest.TestCase):
                  str(self.MAME_SRC), tmp],
                  check=True, capture_output=True)
             generated = sorted(Path(tmp).glob("*.mra"))
-            for mra_dir in (repo / "releases", repo / "releases"):
-                tracked = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
-                self.assertEqual([p.name for p in generated],
-                                 [p.name for p in tracked],
-                                 str(mra_dir))
-                for want, got in zip(tracked, generated):
-                    # Compare text, not bytes: the tracked files carry CRLF
-                    # from git's autocrlf checkout while the generator emits
-                    # LF.
-                    self.assertEqual(
-                        want.read_text(encoding="utf-8").splitlines(),
-                        got.read_text(encoding="utf-8").splitlines(),
-                        want.name,
-                    )
+            mra_dir = repo / "releases"
+            tracked = sorted(mra_dir.rglob("*.mra"), key=lambda path: path.name)
+            self.assertEqual([p.name for p in generated],
+                             [p.name for p in tracked],
+                             str(mra_dir))
+            for want, got in zip(tracked, generated):
+                # Compare text, not bytes: the tracked files carry CRLF
+                # from git's autocrlf checkout while the generator emits LF.
+                self.assertEqual(
+                    want.read_text(encoding="utf-8").splitlines(),
+                    got.read_text(encoding="utf-8").splitlines(),
+                    want.name,
+                )
 
 
 class Multi32ExclusionTests(unittest.TestCase):
