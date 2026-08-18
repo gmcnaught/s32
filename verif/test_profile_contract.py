@@ -145,12 +145,17 @@ class GlobalProfileContractTests(unittest.TestCase):
             text = profile.read_text(encoding="utf-8")
             self.assertIn('VERILOG_MACRO "S32_PROFILE_STANDARD=1"', text)
 
-    def test_production_osd_has_no_debug_pause_or_aim_override(self) -> None:
+    def test_production_pause_is_mra_mappable_without_reusing_osd_bits(self) -> None:
         top = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
         self.assertNotIn("O[12],Pause", top)
         self.assertNotIn("Analog Aim Invert", top)
         self.assertNotIn("wire pause = status[12]", top)
-        self.assertIn(".pause(1'b0)", top)
+        self.assertIn("wire pause = joystick_0[14] | joystick_1[14]", top)
+        for enable in ("cpu", "z80", "fm", "pcm"):
+            self.assertIn(f"wire ce_{enable}_run = ce_{enable} & ~pause", top)
+        self.assertIn(".pause(pause)", top)
+        self.assertIn("assign AUDIO_L = pause ? 16'sd0 : aud_l", top)
+        self.assertIn("assign AUDIO_R = pause ? 16'sd0 : aud_r", top)
 
     def test_every_emitted_mra_routes_to_a_known_profile(self) -> None:
         self.assertEqual(RBF_BY_PARENT, {parent: "Arcade-SegaSystem32" for parent in GAMES})
@@ -194,6 +199,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         fb_if = (ROOT / "rtl/mem/s32_fb_if.sv").read_text(encoding="utf-8")
         snac = (ROOT / "rtl/io/s32_guncon_snac.sv").read_text(encoding="utf-8")
         lightgun = (ROOT / "rtl/io/s32_lightgun.sv").read_text(encoding="utf-8")
+        jpark_gain = (ROOT / "rtl/io/s32_jpark_gun_gain.sv").read_text(encoding="utf-8")
         overlay = (ROOT / "rtl/video/s32_lightgun_overlay.sv").read_text(encoding="utf-8")
         qip = (ROOT / "files.qip").read_text(encoding="utf-8")
         regression = (ROOT / "verif/run_regression.ps1").read_text(encoding="utf-8")
@@ -205,6 +211,7 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("coin_swap", combined)
         self.assertIn("s32_guncon_snac", combined)
         self.assertIn("module s32_lightgun", lightgun)
+        self.assertIn("module s32_jpark_gun_gain", jpark_gain)
         self.assertIn("module s32_lightgun_overlay", overlay)
         self.assertIn(".ps2_mouse(ps2_mouse)", text)
         self.assertIn("ps2_mouse_dx9 = $signed({ps2_mouse[4], ps2_mouse[15:8]})", text)
@@ -215,8 +222,10 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn('"O[34],Gun Crosshair,Off,On;"', text)
         self.assertIn('"O[37:36],Gun Sensitivity,Normal,High,Low,Lowest;"', text)
         self.assertIn("SYSTEMVERILOG_FILE rtl/io/s32_lightgun.sv", qip)
+        self.assertIn("SYSTEMVERILOG_FILE rtl/io/s32_jpark_gun_gain.sv", qip)
         self.assertIn("SYSTEMVERILOG_FILE rtl/video/s32_lightgun_overlay.sv", qip)
         self.assertIn('Run-HdlTest "t35_lightgun"', regression)
+        self.assertIn('Run-HdlTest "t35_jpark_gun_gain"', regression)
         self.assertIn('Run-HdlTest "t35_lightgun_overlay"', regression)
         self.assertNotIn("s32_gun_aim", combined)
         self.assertIn(
@@ -244,6 +253,11 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("? snac_p1_gun_y : host_gun_p1_y", text)
         self.assertIn("? snac_p2_gun_x[9:2] : host_gun_p2_x", text)
         self.assertIn("? snac_p2_gun_y : host_gun_p2_y", text)
+        self.assertIn(
+            "wire jpark_gun_gain_enable = active_board.gun_aim && !active_board.coin_swap;",
+            text,
+        )
+        self.assertIn("enable ? centered_half(p1_x_in) : p1_x_in", jpark_gain)
         self.assertIn("assign sim_gun_p1_x = gun_p1_x[7:0]", romboot)
         self.assertIn("assign sim_gun_p2_y = gun_p2_y[7:0]", romboot)
         self.assertNotIn("alien3_stick", combined)
@@ -406,8 +420,8 @@ class GlobalProfileContractTests(unittest.TestCase):
         self.assertIn("stick_y > 0", controls)
         self.assertIn("digital_accel ? 8'hff", controls)
         self.assertIn("digital_brake ? 8'hff", controls)
-        self.assertIn("active_board.gun_aim ? gun_adc_p1_y : driving_accel", text)
-        self.assertIn("active_board.gun_aim ? gun_adc_p2_x : driving_brake", text)
+        self.assertIn("active_board.gun_aim ? game_gun_p1_y : driving_accel", text)
+        self.assertIn("active_board.gun_aim ? game_gun_p2_x : driving_brake", text)
 
     def test_rad_mobile_light_wiper_layout_is_descriptor_selected(self) -> None:
         text = (ROOT / "Arcade-SegaSystem32.sv").read_text(encoding="utf-8")
@@ -423,7 +437,7 @@ class GlobalProfileContractTests(unittest.TestCase):
             encoding="utf-8")
         self.assertIn(".left_x(joystick_l_analog_0[7:0])", text)
         self.assertIn(".right_y(joystick_r_analog_0[15:8])", text)
-        self.assertIn("active_board.gun_aim ? gun_adc_p1_x : driving_wheel", text)
+        self.assertIn("active_board.gun_aim ? game_gun_p1_x : driving_wheel", text)
         self.assertIn("wheel_pending_valid", controls)
         self.assertIn("wheel_sample", controls)
         self.assertIn("active_board.digital_profile == DIGITAL_RADM", text)

@@ -25,6 +25,10 @@ iverilog -g2012 -s tb_lightgun -o /tmp/s32_lightgun \
   rtl/io/s32_lightgun.sv verif/common/tb_lightgun.sv
 vvp /tmp/s32_lightgun | grep -q "LIGHTGUN PASS" && \
   echo "LIGHTGUN INPUT: PASS" || { echo "LIGHTGUN INPUT: FAIL"; exit 1; }
+iverilog -g2012 -s tb_jpark_gun_gain -o /tmp/s32_jpark_gun_gain \
+  rtl/io/s32_jpark_gun_gain.sv verif/common/tb_jpark_gun_gain.sv
+vvp /tmp/s32_jpark_gun_gain | grep -q "JPARK GUN GAIN PASS" && \
+  echo "JPARK GUN GAIN: PASS" || { echo "JPARK GUN GAIN: FAIL"; exit 1; }
 iverilog -g2012 -s tb_lightgun_overlay -o /tmp/s32_lightgun_overlay \
   rtl/video/s32_lightgun_overlay.sv verif/common/tb_lightgun_overlay.sv
 vvp /tmp/s32_lightgun_overlay | grep -q "LIGHTGUN OVERLAY PASS" && \

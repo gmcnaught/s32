@@ -38,9 +38,9 @@ for regional_path in (ROOT / "releases").glob("Golden Axe The Revenge of Death A
     buttons = regional_tree.getroot().find("buttons")
     assert buttons is not None, f"{regional_path.name} is missing button metadata"
     # GA2's magic action is the Attack+Jump chord, not a third cabinet button.
-    assert buttons.get("names") == "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause"
-    assert buttons.get("default") == "A,B,Start,Select,R,L,Y"
-    assert buttons.get("count") == "2"
+    assert buttons.get("names") == "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service,Pause"
+    assert buttons.get("default") == "A,B,X,Start,Select,R,L,Y"
+    assert buttons.get("count") == "3"
 
 assert root.findtext("name") == "Golden Axe: The Revenge of Death Adder (World, Rev B)"
 rom = root.find("rom[@index='0']")

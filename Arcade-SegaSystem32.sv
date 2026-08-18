@@ -168,8 +168,8 @@ localparam CONF_STR = {
     "O[7],Service Mode,Off,On;",
     // Analog sticks/USB lightguns remain the default positional source;
     // GunCon SNAC is an additional opt-in source for either player.
-    "O[31:30],P1 Gun Input,Analog Stick / USB Lightgun,SNAC Port 1;",
-    "o[1:0],P2 Gun Input,Analog Stick / USB Lightgun,SNAC Port 2;",
+    "O[31:30],P1 Gun Input,Stick/USB Gun/Sinden,SNAC Port 1;",
+    "o[1:0],P2 Gun Input,Stick/USB Gun/Sinden,SNAC Port 2;",
     // JTFRAME-compatible generic lightgun presentation controls.  status[8]
     // intentionally follows the MiSTer/JTFRAME Sinden-border convention;
     // status[9] is already the established CRT Adjust option in this core.
@@ -234,6 +234,15 @@ reg ce_cpu;
 wire ce_z80, ce_fm, ce_pcm;
 reg [15:0] acc_cpu;
 wire is_multi32 = active_board.multi32;
+// Every MRA exposes Pause after Service, which is joystick bit 14. Either
+// player's mapped control freezes the game while video continues scanning.
+// Keep the NCOs running behind these gates so release cannot accumulate a
+// burst of missed enables; s32_core also synchronizes the level into clk_v25.
+wire pause = joystick_0[14] | joystick_1[14];
+wire ce_cpu_run = ce_cpu & ~pause;
+wire ce_z80_run = ce_z80 & ~pause;
+wire ce_fm_run = ce_fm & ~pause;
+wire ce_pcm_run = ce_pcm & ~pause;
 // CPU Turbo is retired in the universal profile: s32.sdc's V60 register-
 // to-register multicycle relaxation now applies unconditionally, and that
 // relaxation is only sound with fixed, single-cycle-safe CE spacing (no
@@ -648,6 +657,16 @@ wire [7:0] gun_adc_p2_x = (p2_snac_mode && snac_p2_gun_aim_valid)
                            ? snac_p2_gun_x[9:2] : host_gun_p2_x;
 wire [7:0] gun_adc_p2_y = (p2_snac_mode && snac_p2_gun_aim_valid)
                            ? snac_p2_gun_y : host_gun_p2_y;
+wire jpark_gun_gain_enable = active_board.gun_aim && !active_board.coin_swap;
+wire [7:0] game_gun_p1_x, game_gun_p1_y;
+wire [7:0] game_gun_p2_x, game_gun_p2_y;
+s32_jpark_gun_gain jpark_gun_gain (
+    .enable  (jpark_gun_gain_enable),
+    .p1_x_in (gun_adc_p1_x), .p1_y_in (gun_adc_p1_y),
+    .p2_x_in (gun_adc_p2_x), .p2_y_in (gun_adc_p2_y),
+    .p1_x_out(game_gun_p1_x), .p1_y_out(game_gun_p1_y),
+    .p2_x_out(game_gun_p2_x), .p2_y_out(game_gun_p2_y)
+);
 wire gun_snac_trigger_p1 = snac_p1_gun && snac_p1_buttons[13];
 wire gun_snac_trigger_p2 = snac_p2_gun && snac_p2_buttons[13];
 wire gun_snac_button2_p1 = snac_p1_gun && snac_p1_buttons[12];
@@ -750,10 +769,10 @@ s32_driving_controls driving_controls (
 // are the analog pedals, with A/B as full-scale digital fallbacks. The wheel
 // follows the current deadzoned stick coordinate directly; retaining an IIR
 // history here made continuous sweeps pause at stale intermediate positions.
-assign adc_ch[0] = active_board.gun_aim ? gun_adc_p1_x : driving_wheel;
-assign adc_ch[1] = active_board.gun_aim ? gun_adc_p1_y : driving_accel;
-assign adc_ch[2] = active_board.gun_aim ? gun_adc_p2_x : driving_brake;
-assign adc_ch[3] = active_board.gun_aim ? gun_adc_p2_y : 8'hff;
+assign adc_ch[0] = active_board.gun_aim ? game_gun_p1_x : driving_wheel;
+assign adc_ch[1] = active_board.gun_aim ? game_gun_p1_y : driving_accel;
+assign adc_ch[2] = active_board.gun_aim ? game_gun_p2_x : driving_brake;
+assign adc_ch[3] = active_board.gun_aim ? game_gun_p2_y : 8'hff;
 assign adc_ch[4] = 8'h80;
 assign adc_ch[5] = 8'h80;
 assign adc_ch[6] = 8'h80;
@@ -828,11 +847,9 @@ s32_core core (
 `endif
     .rst(reset), .video_rst(video_reset),
     .board(active_board),
-    .ce_cpu(ce_cpu), .ce_z80(ce_z80), .ce_fm(ce_fm), .ce_pcm(ce_pcm),
-    // The production profile has no debug/screenshot pause control. Keep the
-    // core port constant so standalone verification benches can still test
-    // V25 pause semantics without carrying the menu logic into an RBF.
-    .pause(1'b0),
+    .ce_cpu(ce_cpu_run), .ce_z80(ce_z80_run),
+    .ce_fm(ce_fm_run), .ce_pcm(ce_pcm_run),
+    .pause(pause),
     // Wide V60 instruction fetch is hardwired on.  Keeping prefetches on the
     // dedicated ROM-cache path preserves the p1 tile-renderer deadline in
     // dense road scenes; routing them through the ce_cpu-gated 16-bit path
@@ -878,8 +895,9 @@ s32_core core (
     .out_lamps()
 );
 
-assign AUDIO_L = aud_l;
-assign AUDIO_R = aud_r;
+// Do not leave a held DAC sample audible while the game clocks are frozen.
+assign AUDIO_L = pause ? 16'sd0 : aud_l;
+assign AUDIO_R = pause ? 16'sd0 : aud_r;
 
 //////////////////////////////   VIDEO   //////////////////////////////////////
 `ifdef S32_SYSTEM32_ONLY

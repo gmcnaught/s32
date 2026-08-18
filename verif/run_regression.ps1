@@ -712,6 +712,9 @@ try {
     Run-HdlTest "t35_lightgun" "tb_lightgun" @(
         "rtl/io/s32_lightgun.sv", "verif/common/tb_lightgun.sv"
     ) "LIGHTGUN PASS" @("SIMULATION")
+    Run-HdlTest "t35_jpark_gun_gain" "tb_jpark_gun_gain" @(
+        "rtl/io/s32_jpark_gun_gain.sv", "verif/common/tb_jpark_gun_gain.sv"
+    ) "JPARK GUN GAIN PASS" @("SIMULATION")
     Run-HdlTest "t35_lightgun_overlay" "tb_lightgun_overlay" @(
         "rtl/video/s32_lightgun_overlay.sv", "verif/common/tb_lightgun_overlay.sv"
     ) "LIGHTGUN OVERLAY PASS" @("SIMULATION")

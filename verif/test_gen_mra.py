@@ -4,7 +4,8 @@ import unittest
 from pathlib import Path
 from xml.etree import ElementTree
 
-from tools.gen_mra import BUTTONS, GAMES, IGNORED_PARENTS, IGNORED_SETS, gen
+from tools.gen_mra import (BUTTON_COUNTS, BUTTONS, GAMES, IGNORED_PARENTS,
+                           IGNORED_SETS, gen)
 
 
 class BoardDescriptorTests(unittest.TestCase):
@@ -59,13 +60,13 @@ class BoardDescriptorTests(unittest.TestCase):
 
 
 class ButtonMetadataTests(unittest.TestCase):
-    def test_ga2_magic_is_attack_plus_jump(self) -> None:
+    def test_ga2_exposes_its_three_physical_action_buttons(self) -> None:
         names, defaults = BUTTONS["ga2"]
         self.assertEqual(names.split(","),
-                         ["Attack", "Jump", "-", "-", "-", "-",
+                         ["Attack", "Jump", "Magic", "-", "-", "-",
                           "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "Start", "Select", "R", "L", "Y"])
+                         ["A", "B", "X", "Start", "Select", "R", "L", "Y"])
 
     def test_arabian_fight_has_attack_and_jump_buttons(self) -> None:
         names, defaults = BUTTONS["arabfgt"]
@@ -79,26 +80,26 @@ class ButtonMetadataTests(unittest.TestCase):
         names, defaults = BUTTONS["spidman"]
         self.assertEqual(names.split(","),
                          ["Attack", "Jump", "-", "-", "-", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "Start", "Select", "R", "L"])
+                         ["A", "B", "Start", "Select", "R", "L", "Y"])
 
     def test_holosseum_has_only_light_and_heavy_attack(self) -> None:
         names, defaults = BUTTONS["holo"]
         self.assertEqual(names.split(","),
                          ["Light Attack", "Heavy Attack", "-", "-", "-", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "Start", "Select", "R", "L"])
+                         ["A", "B", "Start", "Select", "R", "L", "Y"])
 
     def test_dark_edge_names_actions_and_assigns_jump_to_last_default_button(self) -> None:
         names, defaults = BUTTONS["darkedge"]
         self.assertEqual(names.split(","),
                          ["Light Punch", "Heavy Punch", "Jump",
                           "Light Kick", "Heavy Kick", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "R", "X", "Y", "Start", "Select", "L"])
+                         ["A", "B", "R", "X", "Y", "Start", "Select", "L", "-"])
 
     def test_rad_mobile_shares_the_driving_pedals_and_adds_light_and_wiper(self) -> None:
         """Rad Mobile matches Rad Rally's pedal layout.
@@ -111,9 +112,9 @@ class ButtonMetadataTests(unittest.TestCase):
         names, defaults = BUTTONS["radm"]
         self.assertEqual(names.split(","),
                          ["Accelerate", "Brake", "Light", "Wiper", "-", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "X", "Y", "Start", "Select", "R", "L"])
+                         ["A", "B", "X", "Y", "Start", "Select", "R", "L", "-"])
 
     def test_rad_rally_names_its_pedals_and_puts_the_gear_toggle_on_b3(self) -> None:
         """The gear toggle is joystick_0[6] = B3, matching Slip Stream.
@@ -123,9 +124,9 @@ class ButtonMetadataTests(unittest.TestCase):
         names, defaults = BUTTONS["radr"]
         self.assertEqual(names.split(","),
                          ["Accelerate", "Brake", "Gear Change", "-", "-", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "X", "Start", "Select", "R", "L"])
+                         ["A", "B", "X", "Start", "Select", "R", "L", "Y"])
 
     def test_promoted_games_keep_cabinet_button_counts(self) -> None:
         expected = {
@@ -140,38 +141,55 @@ class ButtonMetadataTests(unittest.TestCase):
 
     def test_positional_gun_button_assignments_are_not_shared(self) -> None:
         self.assertEqual(BUTTONS["alien3"], (
-            "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
-            "A,B,Start,Select,R,L",
+            "Trigger,Button,-,-,-,-,Start,Coin,Test,Service,Pause",
+            "A,B,Start,Select,R,L,Y",
         ))
         self.assertEqual(BUTTONS["jpark"], (
-            "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
-            "A,Start,Select,R,L",
+            "Shoot,-,-,-,-,-,Start,Coin,Test,Service,Pause",
+            "A,Start,Select,R,L,Y",
         ))
 
     def test_slip_stream_maps_pedals_and_gear_to_a_b_x(self) -> None:
         names, defaults = BUTTONS["slipstrm"]
         self.assertEqual(names.split(","),
                          ["Accelerate", "Brake", "Gear Change", "-", "-", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "X", "Start", "Select", "R", "L"])
+                         ["A", "B", "X", "Start", "Select", "R", "L", "Y"])
 
     def test_football_controls_are_named_and_mapped_as_three_buttons(self) -> None:
         names, defaults = BUTTONS["svf"]
         self.assertEqual(names.split(","),
                          ["Shoot", "Pass-A", "Pass-B", "-", "-", "-",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "X", "Start", "Select", "R", "L"])
+                         ["A", "B", "X", "Start", "Select", "R", "L", "Y"])
 
     def test_burning_rival_controls_are_named_and_mapped_as_six_buttons(self) -> None:
         names, defaults = BUTTONS["brival"]
         self.assertEqual(names.split(","),
                          ["Light Punch", "Medium Punch", "Heavy Punch",
                           "Light Kick", "Medium Kick", "Heavy Kick",
-                          "Start", "Coin", "Test", "Service"])
+                          "Start", "Coin", "Test", "Service", "Pause"])
         self.assertEqual(defaults.split(","),
-                         ["A", "B", "X", "Y", "R", "L", "Start", "Select"])
+                         ["A", "B", "X", "Y", "R", "L", "Start", "Select", "-"])
+
+    def test_every_tracked_mra_has_exact_parent_button_metadata(self) -> None:
+        mra_dir = Path(__file__).parents[1] / "releases"
+        paths = sorted(mra_dir.rglob("*.mra"))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(path=path.relative_to(mra_dir)):
+                root = ElementTree.parse(path).getroot()
+                parent = root.findtext("parent") or root.findtext("setname")
+                self.assertIn(parent, BUTTONS)
+                buttons = root.find("buttons")
+                self.assertIsNotNone(buttons)
+                self.assertEqual(buttons.attrib["names"], BUTTONS[parent][0])
+                self.assertEqual(buttons.attrib["default"], BUTTONS[parent][1])
+                self.assertEqual(buttons.attrib["count"],
+                                 str(BUTTON_COUNTS[parent]))
+                self.assertEqual(buttons.attrib["names"].split(",")[-1], "Pause")
 
 
 class EepromArchiveSourceTests(unittest.TestCase):
@@ -311,9 +329,9 @@ class OptimizedLayoutTests(unittest.TestCase):
         mra_dir = Path(__file__).parents[1] / "releases"
         expected = {
             "Alien3 The Gun (World).mra": ("alien3", 0x08, 0x0C, 2,
-                                            "Trigger,Button,-,-,-,-,Start,Coin,Test,Service"),
+                                            BUTTONS["alien3"][0]),
             "Jurassic Park (World, Rev A).mra": ("jpark", 0x08, 0x04, 1,
-                                                  "Shoot,-,-,-,-,-,Start,Coin,Test,Service"),
+                                                  BUTTONS["jpark"][0]),
         }
         for filename, (setname, b0, b1, count, names) in expected.items():
             with self.subTest(filename=filename):
@@ -378,7 +396,7 @@ class RegenerationFidelityTests(unittest.TestCase):
         self.assertEqual(names.split(",")[-1], "Pause")
         self.assertEqual(defaults.split(",")[-1], "Y")
         mra_dir = Path(__file__).parents[1] / "releases"
-        paths = sorted(mra_dir.glob("Golden Axe*.mra"))
+        paths = sorted(mra_dir.rglob("Golden Axe*.mra"))
         self.assertEqual(len(paths), 3)
         for path in paths:
             buttons = ElementTree.parse(path).getroot().find("buttons")

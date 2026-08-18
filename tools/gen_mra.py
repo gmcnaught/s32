@@ -127,41 +127,39 @@ IGNORED_SETS = {"svfo"}
 # descriptor. Keep them here so regenerating tracked MRAs preserves the
 # remapping UI metadata as well as the ROM stream.
 BUTTONS = {
-    # The trailing Pause entry is not cosmetic: the core exposes an OSD Pause
-    # (CONF_STR "O[12],Pause,Off,On" -> status[12], which gates the CPU/sound
-    # clock enables and mutes audio in Arcade-SegaSystem32.sv).  The three
-    # tracked ga2 MRAs ship that mapping on Y; omitting it here meant any
-    # regeneration silently dropped a working control.  Pinned by
-    # test_ga2_mras_keep_the_pause_mapping in verif/test_gen_mra.py.
+    # Pause is the logical control after Service (joystick bit 14). The emu
+    # top freezes every CPU/audio enable and mutes audio while it is held.
+    # Use Y where it is not already an action button; four-to-six-button
+    # layouts keep Pause remappable but unbound by default to avoid collisions.
     "ga2": (
-        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
-        "A,B,Start,Select,R,L,Y",
+        "Attack,Jump,Magic,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,X,Start,Select,R,L,Y",
     ),
     "arabfgt": (
         "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
         "A,B,Start,Select,R,L,Y",
     ),
     "brival": (
-        "Light Punch,Medium Punch,Heavy Punch,Light Kick,Medium Kick,Heavy Kick,Start,Coin,Test,Service",
-        "A,B,X,Y,R,L,Start,Select",
+        "Light Punch,Medium Punch,Heavy Punch,Light Kick,Medium Kick,Heavy Kick,Start,Coin,Test,Service,Pause",
+        "A,B,X,Y,R,L,Start,Select,-",
     ),
     "darkedge": (
-        "Light Punch,Heavy Punch,Jump,Light Kick,Heavy Kick,-,Start,Coin,Test,Service",
-        "A,B,R,X,Y,Start,Select,L",
+        "Light Punch,Heavy Punch,Jump,Light Kick,Heavy Kick,-,Start,Coin,Test,Service,Pause",
+        "A,B,R,X,Y,Start,Select,L,-",
     ),
     "holo": (
-        "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
+        "Light Attack,Heavy Attack,-,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,Start,Select,R,L,Y",
     ),
     # Alien3's cabinet has a trigger plus a second gun button. Keep its
     # button assignment separate from Jurassic Park's single Shoot input.
     "alien3": (
-        "Trigger,Button,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
+        "Trigger,Button,-,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,Start,Select,R,L,Y",
     ),
     "jpark": (
-        "Shoot,-,-,-,-,-,Start,Coin,Test,Service",
-        "A,Start,Select,R,L",
+        "Shoot,-,-,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,Start,Select,R,L,Y",
     ),
     # Every driving cabinet gets the shared digital Accelerate/Brake fallbacks
     # on B1/B2 -- they drive the MSM6253 accelerator and brake channels to full
@@ -173,22 +171,22 @@ BUTTONS = {
     # carried on player-port bits 1/2 and sourced from B3/B4 so they do not
     # collide with the pedals.  Rad Mobile has no gear selector.
     "radm": (
-        "Accelerate,Brake,Light,Wiper,-,-,Start,Coin,Test,Service",
-        "A,B,X,Y,Start,Select,R,L",
+        "Accelerate,Brake,Light,Wiper,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,X,Y,Start,Select,R,L,-",
     ),
     # Rad Rally's gear toggle is on B3, matching Slip Stream; this previously
     # named B1 "Gear Change", which was the accelerator button.
     "radr": (
-        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
+        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,X,Start,Select,R,L,Y",
     ),
     "spidman": (
-        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service",
-        "A,B,Start,Select,R,L",
+        "Attack,Jump,-,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,Start,Select,R,L,Y",
     ),
     "slipstrm": (
-        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
+        "Accelerate,Brake,Gear Change,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,X,Start,Select,R,L,Y",
     ),
     # Arcade Museum's Super Visual Football panel labels the three game
     # buttons Shoot / Pass-A / Pass-B (see the linked machine record at
@@ -196,8 +194,8 @@ BUTTONS = {
     # Supported football-family sets share this standard two-player,
     # three-button System 32 input port.
     "svf": (
-        "Shoot,Pass-A,Pass-B,-,-,-,Start,Coin,Test,Service",
-        "A,B,X,Start,Select,R,L",
+        "Shoot,Pass-A,Pass-B,-,-,-,Start,Coin,Test,Service,Pause",
+        "A,B,X,Start,Select,R,L,Y",
     ),
 }
 
@@ -205,7 +203,7 @@ BUTTON_COUNTS = {
     "arabfgt": 2,
     "brival": 6,
     "darkedge": 5,
-    "ga2": 2,
+    "ga2": 3,
     "holo": 2,
     "alien3": 2,
     "jpark": 1,

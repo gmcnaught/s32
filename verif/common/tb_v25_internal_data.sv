@@ -48,6 +48,7 @@ reg clk = 0;
 reg clk_v25 = 0;
 reg rst = 1;
 reg enable = 1;
+reg pause = 0;
 wire rom_req;
 wire [15:3] rom_addr;
 
@@ -55,7 +56,7 @@ always #5 clk = ~clk;
 always #10 clk_v25 = ~clk_v25;
 
 s32_v25_cpu dut (
-    .clk(clk), .clk_v25(clk_v25), .rst(rst), .enable(enable), .pause(1'b0),
+    .clk(clk), .clk_v25(clk_v25), .rst(rst), .enable(enable), .pause(pause),
     .table_sel(1'b0), .prg_wr(1'b0), .prg_waddr(16'd0), .prg_wdata(8'd0),
     .rom_req(rom_req), .rom_addr(rom_addr), .rom_data(64'd0), .rom_ack(1'b0),
     .cs(1'b0), .we(1'b0), .addr(11'd0), .wdata(8'd0), .rdata()
@@ -133,10 +134,30 @@ end
 endtask
 
 reg [15:0] observed;
+reg [13:0] paused_accum;
 initial begin
     repeat (4) @(posedge clk_v25);
     rst = 0;
     wait (dut.rst_v25 == 0 && dut.enable_v25 == 1);
+
+    // Pause crosses from clk_sys into clk_v25 through the production two-flop
+    // level synchronizer. Once accepted, both the virtual clock pulse and its
+    // fractional phase must stay frozen, then resume without a reset.
+    wait_ce();
+    pause = 1'b1;
+    wait (dut.pause_v25 == 1'b1);
+    @(negedge clk_v25);
+    paused_accum = dut.v25_ce_accum;
+    repeat (8) begin
+        @(negedge clk_v25);
+        if (dut.v25_ce || dut.v25_ce_accum !== paused_accum) begin
+            $display("V25 INTERNAL DATA FAIL: pause did not freeze cadence");
+            $fatal(1);
+        end
+    end
+    pause = 1'b0;
+    wait (dut.pause_v25 == 1'b0);
+    wait_ce();
 
     // Independent low/high writes must preserve the other byte.
     write_word(20'hffe20, 16'h0012, 2'b01);

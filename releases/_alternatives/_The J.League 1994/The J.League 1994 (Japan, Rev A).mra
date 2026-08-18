@@ -1,26 +1,26 @@
 <misterromdescription>
-  <name>The J.League 1994 (Japan)</name>
-  <setname>jleagueo</setname>
+  <name>The J.League 1994 (Japan, Rev A)</name>
+  <setname>jleague</setname>
   <parent>svf</parent>
   <year>1994</year>
   <manufacturer>Sega</manufacturer>
   <rbf>Arcade-SegaSystem32</rbf>
   <buttons names="Shoot,Pass-A,Pass-B,-,-,-,Start,Coin,Test,Service,Pause" default="A,B,X,Start,Select,R,L,Y" count="3"/>
-  <rom index="4" zip="svf.zip|jleagueo.zip" md5="none">
-    <part name="epr-16782.ic17" crc="f0278944"/>
-    <part name="epr-16782.ic17" crc="f0278944"/>
-    <part name="epr-16782.ic17" crc="f0278944"/>
-    <part name="epr-16782.ic17" crc="f0278944"/>
-    <part name="epr-16781.ic8" crc="7df9529b"/>
-    <part name="epr-16781.ic8" crc="7df9529b"/>
-    <part name="epr-16781.ic8" crc="7df9529b"/>
-    <part name="epr-16781.ic8" crc="7df9529b"/>
+  <rom index="4" zip="svf.zip|jleague.zip" md5="none">
+    <part name="epr-16782a.ic17" crc="b399ac47"/>
+    <part name="epr-16782a.ic17" crc="b399ac47"/>
+    <part name="epr-16782a.ic17" crc="b399ac47"/>
+    <part name="epr-16782a.ic17" crc="b399ac47"/>
+    <part name="epr-16781a.ic8" crc="e6d80225"/>
+    <part name="epr-16781a.ic8" crc="e6d80225"/>
+    <part name="epr-16781a.ic8" crc="e6d80225"/>
+    <part name="epr-16781a.ic8" crc="e6d80225"/>
     <interleave output="16">
       <part name="epr-16776.ic18" crc="e8694626" map="01"/>
       <part name="epr-16775.ic9" crc="e81e2c3d" map="10"/>
     </interleave>
   </rom>
-  <rom index="5" zip="svf.zip|jleagueo.zip" md5="none">
+  <rom index="5" zip="svf.zip|jleague.zip" md5="none">
     <part name="epr-16780.ic36" crc="47aa4ec7"/>
     <part name="epr-16780.ic36" crc="47aa4ec7"/>
     <part name="epr-16780.ic36" crc="47aa4ec7"/>
@@ -29,13 +29,13 @@
     <part name="mpr-16778.ic34" crc="feedaecf"/>
     <part name="mpr-16777.ic24" crc="14b5d5df"/>
   </rom>
-  <rom index="6" zip="svf.zip|jleagueo.zip" md5="none">
+  <rom index="6" zip="svf.zip|jleague.zip" md5="none">
     <interleave output="16">
       <part name="mpr-16784.ic14" crc="4608efe2" map="01"/>
       <part name="mpr-16783.ic5" crc="042eabe7" map="10"/>
     </interleave>
   </rom>
-  <rom index="9" zip="svf.zip|jleagueo.zip" md5="none">
+  <rom index="9" zip="svf.zip|jleague.zip" md5="none">
     <interleave output="64">
       <part name="mpr-16785.ic32" crc="51f775ce" map="00000021"/>
       <part name="mpr-16787.ic30" crc="dee7a204" map="00002100"/>
