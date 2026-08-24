@@ -29,6 +29,12 @@ module s32_soundsys #(
     input       [1:0] sh_be,
     input      [15:0] sh_wdata,
     output     [15:0] sh_rdata,
+    // Sound-CPU side of the same array, exported so the V60 can invalidate a
+    // fetch window the Z80 has just written through (audit V60-D2).  sh_z80_wr
+    // is the Z80's write strobe into 0xE000-0xFFFF; sh_z80_addr is the byte
+    // offset within the 8 KB window, i.e. V60 physical 0x700000 + offset.
+    output            sh_z80_wr,
+    output     [12:0] sh_z80_addr,
 
     // main CPU doorbell (int_control offsets 12-15 write)
     input             v60_doorbell,
@@ -232,6 +238,8 @@ s32_big_dpram #(.ADDR_WIDTH(12), .NUM_WORDS(4096), .MIXED_RDW_MODE("OLD_DATA")) 
     .byteena_b(z_addr[0] ? 2'b10 : 2'b01),
     .wren_b(z_mem_wr && z_addr[15:13] == 3'b111), .q_b(shz_rd16)
 );
+assign sh_z80_wr   = z_mem_wr && (z_addr[15:13] == 3'b111);
+assign sh_z80_addr = z_addr[12:0];
 // Z80 8-bit read: pick the lane matching the byte address.  q_b carries a
 // one-clock registered read exactly as the previous byte RAM did, and the Z80
 // holds its address stable across the access, so the current low bit selects
