@@ -46,6 +46,22 @@ echo "[3/35] V60 directed suite"
 iverilog -g2012 -o /tmp/s32_v60_dir \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_directed.sv
 vvp /tmp/s32_v60_dir | grep -q "DIRECTED PASS" && echo "V60 DIRECTED: PASS" || { echo "V60 DIRECTED: FAIL"; exit 1; }
+echo "[3b] V60 fetch-window coherency vs other bus masters + physical aliasing"
+iverilog -g2012 -o /tmp/s32_v60_smc_ext \
+  rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smc_ext.sv
+vvp /tmp/s32_v60_smc_ext | grep -q "V60 SMC EXT PASS" || { echo "V60 SMC EXT: FAIL"; exit 1; }
+vvp /tmp/s32_v60_smc_ext +CEDIV=3 | grep -q "V60 SMC EXT PASS" && echo "V60 SMC EXT: PASS" || { echo "V60 SMC EXT (ce=/3): FAIL"; exit 1; }
+echo "[3c] V60 bus-handshake invariants (negative bench: each must be caught)"
+iverilog -g2012 -DSIMULATION -DV60_INVARIANT_NONFATAL \
+  -DS32_SYSTEM32_ONLY -DS32_PROFILE_STANDARD -DS32_UNIVERSAL -DS32_V25_HW \
+  -DS32_GAME_ONLY_STD -DS32_PCB_TIMING -s tb_v60_invariants -o /tmp/s32_v60_invariants \
+  rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
+  rtl/video/*.sv rtl/crt_adjust.sv rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv \
+  rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv rtl/io/s32_io.sv rtl/prot/s32_prot.sv \
+  verif/common/jt12_stub.v rtl/s32_core.sv verif/v60/tb_v60_invariants.sv
+vvp /tmp/s32_v60_invariants | grep -q "V60 INVARIANTS PASS" && echo "V60 INVARIANTS: PASS" || { echo "V60 INVARIANTS: FAIL"; exit 1; }
+echo "[3d] s32.sdc two-cycle exception vs the RTL's raw-clk_sys registers"
+python3 verif/timing/check_v60_ce_premise.py || exit 1
 echo "[4/35] full-core integration boot (universal + System32-only profile)"
 iverilog -g2012 -DSIMULATION -o /tmp/s32_boot \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \

@@ -104,7 +104,22 @@ module s32_v60 #(
     input             irq_n,         // level, active low
     input       [7:0] irq_vector,    // external vector (s32_intc), +0x40 applied here
     output reg        irq_ack,       // pulses when vector consumed
-    input             nmi_n
+    input             nmi_n,
+
+    // Coherency in: a write by ANOTHER bus master that can land in memory this
+    // CPU executes from (audit V60-D2).  Work RAM is a true dual-port array
+    // whose port B is driven by the protection modules, and shared RAM is
+    // dual-ported with the sound Z80; neither is visible on dbus_*, so the
+    // self-modifying-code guard below could not see them and code patched by
+    // either could be executed stale out of the fetch window -- or out of the
+    // retained loop window, which survives arbitrary control flow.
+    // ext_wr is a one-clk strobe on the RAW clock (not the CPU clock enable),
+    // ext_wr_addr is the 24-bit PHYSICAL byte address of the write and
+    // ext_wr_bytes its length in bytes.  Tie ext_wr low where no other master
+    // can write executable memory.
+    input             ext_wr,
+    input      [23:0] ext_wr_addr,
+    input       [2:0] ext_wr_bytes
 );
 
 // ---------------------------------------------------------------------------
@@ -456,7 +471,11 @@ reg  [4:0] xdiv_dst;
 reg        xdiv_qneg, xdiv_rneg;
 reg        xdiv_active;
 reg [31:0] exc_pushval;
-reg [7:0]  exc_vector;
+// Audit V60-D5: 9 bits, not 8.  s32_intc lets a game program a full byte and
+// the IRQ path adds 0x40 to it (MAME computes that in int), so a vector >=
+// 0xC0 wrapped to the bottom of the SBR table.  The table base is masked to
+// 4 KB and indexed by vector*4, so 9 bits still addresses inside it.
+reg [8:0]  exc_vector;
 reg [31:0] exc_code;      // code+size word for trap/brkv-class frames (A2/A3)
 reg [31:0] exc_retpc;     // return PC pushed by the frame
 reg        exc_has_code;  // 1 = 3-word frame (code,PSW,PC); 0 = IRQ 2-word
@@ -573,8 +592,15 @@ wire [4:0] seq_s = (total_len >= 5'd4) ? 5'd4 : total_len;
 wire seq_shift_ok = SEQ_DISPATCH && (fb_base == pc)
                     && (total_len != 5'd0) && (total_len < fb_valid);
 wire [4:0] seq_valid_after = fb_valid - total_len;   // decode-visible after shift
+// Audit V60-D8: index fb with the whole 5-bit total_len, not its low 3 bits.
+// The truncation is harmless only because seq_dispatch_now additionally
+// requires total_len <= 4; relaxing that bound turns it into a silent
+// mis-decode.  fb is 24 deep, so the out-of-range encodings (already excluded
+// by seq_shift_ok, which needs total_len < fb_valid) clamp instead of reading
+// past the array.
+wire [4:0] seq_idx = (total_len < 5'd24) ? total_len : 5'd0;
 wire [4:0] seq_required = (seq_pd_valid && seq_pd_start == total_len)
-                          ? seq_pd_need : seq_need(fb[total_len[2:0]]);
+                          ? seq_pd_need : seq_need(fb[seq_idx]);
 // Dispatch straight to S_DECODE only when one 4-byte step aligns the window
 // (total_len<=4) AND the successor is already complete within it.
 wire seq_dispatch_now = seq_shift_ok && (total_len <= 5'd4)
@@ -1025,7 +1051,126 @@ endfunction
 // ---------------------------------------------------------------------------
 
 reg [3:0] fill_lo;
-reg nmi_r, nmi_seen;
+
+// ---------------------------------------------------------------------------
+// Fetch-window coherency test (audit V60-D3)
+// ---------------------------------------------------------------------------
+// The old guard compared full 32-bit LOGICAL addresses.  The physical bus is
+// 24 bits and every RAM window on this board is aliased across its whole
+// megabyte -- work RAM is a 64 KB array decoded as A[15:1] over the entirety
+// of 0x2xxxxx -- so a store through 0x210000 and code at 0x200000 are the same
+// physical byte and failed the overlap test.  The logical-to-physical
+// truncation aliases too: 0x00200000 and 0xFF200000 name one byte.
+//
+// Compare in canonical form instead: the region nibble A[23:20] plus the
+// 16-bit offset A[15:0].  Every window's physical decode is contained in those
+// bits, so two logical addresses naming the same physical byte always compare
+// equal.  Where a region decodes fewer bits than that (shared RAM is A[12:1]),
+// or more within the nibble (Multi 32 work RAM adds A[16]), distinct bytes
+// merge -- which can only invalidate a window that did not need it, costing a
+// refetch and nothing else.  Nothing under-invalidates.
+//
+// The ROM mirror (0x000000 vs 0xF00000) is deliberately NOT merged: ROM writes
+// are acked and discarded by s32_core, so no write can make a ROM-resident
+// window stale.
+function automatic fw_overlap(input [31:0] wa, input [2:0] wsz,
+                              input [31:0] ba, input [4:0] n);
+    reg [16:0] w0, w1, b0, b1;
+    begin
+        if (n == 5'd0 || wsz == 3'd0)         fw_overlap = 1'b0;
+        else if (wa[23:20] != ba[23:20])      fw_overlap = 1'b0;
+        else begin
+            w0 = {1'b0, wa[15:0]};  w1 = w0 + {14'b0, wsz};
+            b0 = {1'b0, ba[15:0]};  b1 = b0 + {12'b0, n};
+            // A write or a window straddling the 64 KB alias boundary has no
+            // single canonical interval; take any same-region write as
+            // overlapping rather than reasoning about the split.
+            if (w1[16] || b1[16])             fw_overlap = 1'b1;
+            else                              fw_overlap = (w0 < b1) && (w1 > b0);
+        end
+    end
+endfunction
+
+// Ungated capture of external-master writes (audit V60-D2).  The main FSM runs
+// on the CPU clock enable, so a write by another master can land on a clk edge
+// the FSM never sees.  The overlap DECISION is therefore taken here, on the raw
+// clock, against the fetch state as it stands at the instant of the write --
+// the only instant at which the window can hold bytes that write invalidates.
+// If the window is rebased afterwards it is refilled from memory and is
+// correct by construction.  Counter + copy-on-consume, so any number of writes
+// between two enabled CPU clocks collapses to one invalidation and none can
+// cancel another.  Residual: the invalidation is applied on the next enabled
+// CPU clock, so one instruction decoded in that gap can still see stale bytes.
+// Closing that needs the window state itself to move off the enable, which is
+// the BIU/clock-tree rework, not this fix.
+reg [2:0] ext_fb_cnt  = 3'd0, ext_fb_ack  = 3'd0;
+reg [2:0] ext_pv_cnt  = 3'd0, ext_pv_ack  = 3'd0;
+wire ext_fb_inval = (ext_fb_cnt != ext_fb_ack);
+wire ext_pv_inval = (ext_pv_cnt != ext_pv_ack);
+
+// This block runs on the RAW clk_sys, not the execution enable: an external
+// master's write can land on an edge the ce-gated FSM never sees, which is the
+// entire point of it.  s32.sdc's two-cycle V60 exception therefore does NOT
+// apply to these registers and must carve them out; verif/timing/
+// check_v60_ce_premise.py fails the build if the two disagree.
+// synthesis-timing: ungated-registers ext_fb_cnt ext_pv_cnt
+always @(posedge clk) begin
+    if (ext_wr && fw_overlap({8'b0, ext_wr_addr}, ext_wr_bytes,
+                             fb_base, fb_wr))
+        ext_fb_cnt <= ext_fb_cnt + 3'd1;
+    if (ext_wr && fw_overlap({8'b0, ext_wr_addr}, ext_wr_bytes,
+                             fb_prev_base, fb_prev_valid))
+        ext_pv_cnt <= ext_pv_cnt + 3'd1;
+end
+
+// ---------------------------------------------------------------------------
+// NMI edge capture (audit V60-D7).  Three defects in the old ce-gated form:
+//   1. `nmi_r <= ~nmi_n` ran only on an enabled CPU clock, so any pulse
+//      narrower than one ce period (2 clk_sys on the production /2 cadence,
+//      3 on the bus cadence) was never seen at all.
+//   2. the sticky flag was set and cleared in the same always block, and the
+//      clear at the dispatch site follows the set in source order, so a fresh
+//      edge arriving on the dispatch cycle was silently dropped.
+//   3. the flag AND the level history were zeroed at reset without sampling
+//      the pin, so an NMI held low across reset synthesised a phantom edge on
+//      the first post-reset compare.
+// Fixed by sampling on the raw clock through a two-flop synchroniser (the pin
+// is asynchronous and has no synchroniser anywhere else in the core) and
+// carrying the request across the enable boundary as a toggle pair: the
+// detector only ever advances nmi_edge_cnt, the FSM only ever copies it into
+// nmi_ack_cnt, so an edge coincident with a dispatch survives as a mismatch
+// instead of being overwritten (a bare 1-bit toggle would cancel itself when
+// two edges arrived between dispatches).  The level history is never reset -- it keeps
+// tracking the pin through reset, which is what removes the phantom.
+// irq_n is deliberately left unsynchronised: it is driven by s32_intc in the
+// same clk_sys domain.  It must gain a synchroniser if it is ever sourced
+// from another domain.
+// ---------------------------------------------------------------------------
+reg nmi_s1 = 1'b0, nmi_s2 = 1'b0, nmi_lvl = 1'b0;
+reg [2:0] nmi_edge_cnt = 3'd0;   // ungated: one increment per detected edge
+reg [2:0] nmi_ack_cnt  = 3'd0;   // FSM: COPIES the count when it dispatches
+wire nmi_seen = (nmi_edge_cnt != nmi_ack_cnt);
+
+// Also raw clk_sys, and for the same reason: a pulse shorter than one enable
+// period has to be caught between enabled edges.  Same SDC carve-out.
+//
+// DORMANT IN THIS DESIGN.  s32_core ties .nmi_n(1'b1) at the only
+// instantiation, so ~nmi_n is constant, the synchroniser and level history
+// fold to constants with it, the counter can never increment, and synthesis
+// removes all four registers -- measured on a real fit: nmi_s1, nmi_s2,
+// nmi_lvl and nmi_edge_cnt each match zero registers post-fit, while
+// ext_fb_cnt and ext_pv_cnt survive.  The logic is correct and costs nothing
+// today; it starts costing silicon, and starts needing its SDC carve-out, the
+// moment anything drives nmi_n.  verif/timing/sdc_check.tcl asserts that in
+// both directions, so wiring nmi_n up will fail the Quartus check rather than
+// quietly re-introducing an under-constrained path.
+// synthesis-timing: ungated-registers nmi_s1 nmi_s2 nmi_lvl nmi_edge_cnt
+always @(posedge clk) begin
+    nmi_s1  <= ~nmi_n;
+    nmi_s2  <= nmi_s1;
+    nmi_lvl <= nmi_s2;
+    if (nmi_s2 & ~nmi_lvl) nmi_edge_cnt <= nmi_edge_cnt + 3'd1;
+end
 
 always @(posedge clk) begin
 if (rst) begin
@@ -1033,8 +1178,11 @@ if (rst) begin
     dbus_req <= 0; dbus_we <= 0; irq_ack <= 0;
     dbus_addr <= 0; dbus_size <= 0; dbus_wdata <= 0;
     halted <= 0;
-    nmi_seen <= 0;
-    nmi_r <= 0;
+    // Track the detectors through reset so nothing is manufactured on release
+    // and anything seen during reset is correctly discarded.
+    nmi_ack_cnt <= nmi_edge_cnt;
+    ext_fb_ack  <= ext_fb_cnt;
+    ext_pv_ack  <= ext_pv_cnt;
     xdiv_active <= 0;
     bus_owner <= OWN_NONE;
     pf_req <= 0;
@@ -1068,8 +1216,6 @@ else if (ce) begin
     rf_wmask0 = 32'd0;
     rf_wmask1 = 32'd0;
     irq_ack <= 0;
-    nmi_r <= ~nmi_n;
-    if (~nmi_n & ~nmi_r) nmi_seen <= 1'b1;
 
     case (st)
     // ------------------------------------------------------------------
@@ -1188,7 +1334,10 @@ else if (ce) begin
         op2val_v     <= 1'b0;
         // interrupts sampled at instruction boundary
         if (nmi_seen) begin
-            nmi_seen <= 0;
+            // Copy, do not increment: several edges collapse into one taken
+            // NMI (real-hardware semantics), while an edge arriving on this
+            // very clk advances nmi_edge_cnt afterwards and stays pending.
+            nmi_ack_cnt <= nmi_edge_cnt;
             exc_vector <= 8'd2;
             exc_pushval <= psw;
             exc_retpc <= pc;
@@ -1198,7 +1347,7 @@ else if (ce) begin
         end
         else if (!irq_n && psw_ie) begin
             irq_ack <= 1'b1;
-            exc_vector <= irq_vector + 8'h40;
+            exc_vector <= {1'b0, irq_vector} + 9'h40;
             exc_pushval <= psw;
             exc_retpc <= pc;
             exc_has_code <= 1'b0;      // IRQ: 2-word frame
@@ -3752,7 +3901,7 @@ else if (ce) begin
     S_EXC_VEC: begin
         if (!dbus_req) begin
             dbus_req <= 1; dbus_we <= 0; dbus_size <= 2'd2;
-            dbus_addr <= (sbr & ~32'hfff) + {22'b0, exc_vector, 2'b00};
+            dbus_addr <= (sbr & ~32'hfff) + {21'b0, exc_vector, 2'b00};
         end
         else if (dack) begin
             dbus_req <= 0;
@@ -3791,7 +3940,12 @@ else if (ce) begin
         if (nmi_seen || (!irq_n && psw_ie)) begin
             halted <= 0;
             pc <= pc + 1;
-            st <= S_DECODE;
+            // Audit V60-D6: refill before decoding.  PC has just moved off the
+            // HALT byte but fb_base has not, so entering S_DECODE directly
+            // decodes the stale HALT still in the window and re-halts with PC
+            // permanently advanced.  S_FILL rebases the window first.
+            st <= S_FILL;
+            st_after_fill <= S_DECODE;
         end
     end
 
@@ -3883,24 +4037,29 @@ else if (ce) begin
     // loop that patches its own body, which the retained window would otherwise
     // serve forever).  A data write and a prefetch ack are mutually exclusive
     // (one bus owner), so this never races the prefetch commit above.
-    if (dbus_req && dbus_we && dack) begin
-        logic [31:0] wr_end, fb_end, pv_end;
-        logic [2:0]  wr_sz;
+    // Guard the full FETCHED frontier (fb_wr), not just the decode-visible
+    // count (fb_valid): prefetched-but-not-yet-decoded bytes must also be
+    // dropped if a store overwrites them (fb_wr==fb_valid pre-prefetch, so
+    // this is bit-identical today).  fw_overlap does the compare in canonical
+    // physical form -- see audit V60-D3 above.
+    begin
+        logic [2:0] wr_sz;
+        logic       own_wr;
+        own_wr = dbus_req && dbus_we && dack;
         wr_sz  = (dbus_size == 2'd0) ? 3'd1 : (dbus_size == 2'd1) ? 3'd2 : 3'd4;
-        wr_end = dbus_addr + {29'b0, wr_sz};
-        // Guard the full FETCHED frontier (fb_wr), not just the decode-visible
-        // count (fb_valid): prefetched-but-not-yet-decoded bytes must also be
-        // dropped if a store overwrites them (fb_wr==fb_valid pre-prefetch, so
-        // this is bit-identical today).
-        fb_end = fb_base + {27'b0, fb_wr};
-        pv_end = fb_prev_base + {27'b0, fb_prev_valid};
-        if (fb_wr != 0 && dbus_addr < fb_end && wr_end > fb_base) begin
+        if ((own_wr && fw_overlap(dbus_addr, wr_sz, fb_base, fb_wr))
+            || ext_fb_inval) begin
             fb_valid <= 5'd0;
             fb_wr    <= 5'd0;
             pf_epoch <= pf_epoch + 4'd1;  // void any in-flight prefetch too
         end
-        if (fb_prev_valid != 0 && dbus_addr < pv_end && wr_end > fb_prev_base)
+        if ((own_wr && fw_overlap(dbus_addr, wr_sz, fb_prev_base, fb_prev_valid))
+            || ext_pv_inval)
             fb_prev_valid <= 5'd0;
+        // Consume unconditionally: the decision was already taken against the
+        // window as it stood when the external write completed.
+        ext_fb_ack <= ext_fb_cnt;
+        ext_pv_ack <= ext_pv_cnt;
     end
 
     // Port 1 is applied second so the final queued write retains the original
@@ -4564,7 +4723,7 @@ task automatic exec_op;
         // vector = GETINTVECT(48 + (n&0xF)); code word = 0x3000 + 0x100*(n&0xF);
         // return PC = PC + amlength + 1.
         if (cond_true(op1[7:4])) begin
-            exc_vector   <= 8'd48 + {4'b0, op1[3:0]};
+            exc_vector   <= 9'd48 + {5'b0, op1[3:0]};
             exc_code     <= {4'h3, op1[3:0], 8'h00, 16'h0004};
             exc_pushval  <= psw;
             exc_retpc    <= pc + 5'd1 + len1;
@@ -4746,7 +4905,11 @@ task automatic exec_op;
         end
         else begin
             exc_vector <= 8'd24 + op1[1:0];
-            exc_code <= {8'h18 + op1[1:0], 8'h00, 16'h0008};
+            // Audit V60-D1: the level belongs in bits [19:16]
+            // (MAME EXCEPTION_CODE_AND_SIZE(0x1800 + op1, 8) -> 0x18010008).
+            // The old {8'h18 + op1[1:0], 8'h00, 16'h0008} was 8+8+16 wide, so
+            // the level landed in [27:24]: 0x19000008 for level 1.
+            exc_code <= {8'h18, 6'b0, op1[1:0], 16'h0008};
             exc_extra <= chlvl_data;
             exc_pushval <= psw;
             exc_retpc <= pc + 5'd2 + len1 + len2;
@@ -5367,6 +5530,113 @@ task automatic fp_exec;
         endcase
     end
 endtask
+`endif
+
+// ---------------------------------------------------------------------------
+// Bus-handshake invariants (audit S03 / S07.2)
+// ---------------------------------------------------------------------------
+// The four-phase c_req/c_ack/c_req_armed handshake across the execute/bus
+// enable split was analysed exhaustively by the audit and found correct -- but
+// correct BECAUSE of four properties that were asserted nowhere, and that a
+// cadence change can break silently.  The audit's own measurement: moving the
+// bus adapter's un-gated re-arm inside the ce gate leaves the 16.1 MHz and
+// Arabian Fight cadences untouched (2,564 and 2,942 transactions) and wedges
+// Multi 32's 20 MHz cadence after SEVEN, at pc=cdcdce41.  Nothing in the tree
+// would have reported that as anything but a hang.
+//
+// Three of the four live here; the fourth (payload stability from accept to
+// ack) lives in s32_v60_bus.sv, and the execution-enable spacing the SDC rests
+// on lives in s32_v60_exec_cadence.
+//
+// These are immediate assertions, not concurrent SVA: Icarus -- which is what
+// this repo's benches and CI actually run -- rejects `assert property` with
+// "sorry: concurrent_assertion_item not supported".  Every property below is
+// therefore expressed against explicit one-deep history registers sampled on
+// the CPU clock enable.
+//
+// A violation is FATAL by default.  Each one means a bus transaction completed
+// against the wrong requester or a request vanished mid-flight, so no result a
+// bench checks afterwards means anything, and a bench that kept going would
+// report a misleading pass.  verif/v60/tb_v60_invariants.sv compiles with
+// +define+V60_INVARIANT_NONFATAL so it can observe a fire and keep running.
+`ifndef SYNTHESIS
+integer v60_inv_fails = 0;
+
+task automatic v60_inv_fail(input [8*8:1] id, input [8*64:1] what);
+begin
+    v60_inv_fails = v60_inv_fails + 1;
+    $display("V60-INVARIANT FAIL %0s: %0s  (bus_owner=%0d dbus_req=%0b bus_req=%0b bus_ack=%0b)",
+             id, what, bus_owner, dbus_req, bus_req, bus_ack);
+`ifndef V60_INVARIANT_NONFATAL
+    $fatal(1, "V60 bus-handshake invariant violated");
+`endif
+end
+endtask
+
+reg       inv_primed    = 1'b0;   // history valid (one enabled edge seen)
+reg       inv_dbus_req_d= 1'b0;
+reg       inv_dack_d    = 1'b0;
+reg       inv_ungranted_d = 1'b0;
+
+always @(posedge clk) begin
+    if (rst) begin
+        inv_primed      <= 1'b0;
+        inv_dbus_req_d  <= 1'b0;
+        inv_dack_d      <= 1'b0;
+        inv_ungranted_d <= 1'b0;
+    end
+    else if (ce) begin
+        // Each check is written with === / !== rather than sitting behind one
+        // $isunknown() guard over every signal: a blanket guard disables ALL
+        // the checks whenever any one unrelated signal is momentarily X, which
+        // is exactly how an assertion ends up silently doing nothing.
+        begin
+
+            // I1  A data acknowledgement implies the request that earned it is
+            //     still outstanding.  dack with dbus_req low means bus_owner
+            //     stayed OWN_D across a transaction boundary and this ack
+            //     belongs to a completed access -- the stale-grant failure the
+            //     un-granted-window reasoning exists to rule out.
+            if (dack === 1'b1 && dbus_req === 1'b0)
+                v60_inv_fail("I1", "dack asserted with no outstanding data request");
+
+            // I2  Same for the prefetch owner.  A pf_ack with no pf_req would
+            //     commit a fetch nobody asked for into the window.
+            if (pf_ack === 1'b1 && pf_req === 1'b0)
+                v60_inv_fail("I2", "pf_ack asserted with no outstanding prefetch");
+
+            // I3  All 57 data sites clear dbus_req ONLY on dack.  Checked as a
+            //     transition: dbus_req fell between two enabled edges, so the
+            //     clear was decided on the earlier one, where dack must have
+            //     been true.  (The 58th clear is the reset branch, excluded by
+            //     inv_primed.)
+            if (inv_primed === 1'b1 && inv_dbus_req_d === 1'b1
+                && dbus_req === 1'b0 && inv_dack_d === 1'b0)
+                v60_inv_fail("I3", "dbus_req cleared without a data acknowledgement");
+
+            // I4  The un-granted arbiter window is exactly one execute cycle:
+            //     bus_req rises, and the very next enabled edge grants it,
+            //     because bus_req_d gates the grant for one edge only.  Two
+            //     consecutive edges with a request up and no owner means the
+            //     grant is stuck and the payload mux is exposed for longer
+            //     than the audit's one-cycle proof allows.
+            if (inv_primed === 1'b1 && inv_ungranted_d === 1'b1
+                && bus_req === 1'b1 && bus_owner === OWN_NONE)
+                v60_inv_fail("I4", "request un-granted for more than one execute cycle");
+
+            // (There is deliberately no "bus_ack implies bus_req" check here.
+            //  The handshake is four-phase: the adapter holds c_ack until it
+            //  has SEEN c_req go low, so ack-with-request-low is the re-arm
+            //  phase, not a fault.  bus_owner is what makes dack immune to it,
+            //  and I1/I2 are the checks that matter.)
+        end
+
+        inv_dbus_req_d  <= dbus_req;
+        inv_dack_d      <= dack;
+        inv_ungranted_d <= bus_req && (bus_owner == OWN_NONE);
+        inv_primed      <= 1'b1;
+    end
+end
 `endif
 
 endmodule

@@ -297,6 +297,27 @@ wire ce_pcm_run = ce_pcm & ~pause;
 wire [15:0] cpu_ce_inc = active_board.has_v25
                          ? (active_board.v25_table ? 16'd32768 : 16'd21848)
                          : (is_multi32 ? 16'd27127 : 16'd21848);
+
+// The bus NCO must never produce two enables on adjacent clk_sys edges: 65536
+// counts per wrap, so any increment above 32768 does.  32768 itself is exactly
+// every other edge and is what Arabian Fight ships (v25_table), so the bound is
+// <=, not <.  (The audit states this premise as "cpu_ce_inc < 32768", which is
+// off by one against the shipped value.)
+//
+// This is the bus side.  The premise s32.sdc's two-cycle V60 exception rests on
+// is the EXECUTION enable, which is s32_v60_exec_cadence's business and is
+// asserted there; s32_v60_bus's own registers carry no such exception.
+`ifndef SYNTHESIS
+always @(posedge clk_sys) begin
+    if (!reset && cpu_ce_inc > 16'd32768) begin
+        $display("V60-CADENCE FAIL: cpu_ce_inc=%0d exceeds 32768, so ce_cpu can fire on adjacent clk_sys edges (t=%0t)",
+                 cpu_ce_inc, $time);
+`ifndef V60_INVARIANT_NONFATAL
+        $fatal(1, "bus cadence increment out of range");
+`endif
+    end
+end
+`endif
 always @(posedge clk_sys) begin
     logic [16:0] s;
     if (reset) begin

@@ -1,0 +1,96 @@
+name: V60 SDC (Quartus)
+
+# Checks s32.sdc's V60 timing exceptions against a REAL fitted netlist.
+#
+# Why this exists separately from the simulation gate: a get_registers pattern
+# that matches nothing applies no constraint and reports no error.  The
+# carve-out stage 03 added for the raw-clk_sys registers could therefore be
+# silently doing nothing, and no simulator can tell -- it is a property of the
+# constraints, not of the RTL.  verif/timing/check_v60_ce_premise.py checks the
+# RTL and the SDC agree as text; only Quartus can check the SDC agrees with
+# silicon.
+#
+# THIS WORKFLOW PRODUCES NO BITSTREAM.  quartus_asm is never invoked and the
+# driver script fails if a .sof or .rbf appears.  Release builds go through the
+# locked Windows pipeline (tools/build-s32.bat); tools/build.sh is disabled on
+# purpose so no CI path can ship an ungated RBF, and this must not become a way
+# around that.
+#
+# Not run on every PR: a fit of this design takes the better part of an hour.
+# It runs when something that can change the answer changes, and on demand.
+
+# The two path lists are duplicated on purpose: GitHub Actions does not support
+# YAML anchors/aliases in workflow files, so factoring them out silently breaks
+# the trigger rather than erroring.  Keep the two lists in step.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Arcade-SegaSystem32.sdc'
+      - 'Arcade-SegaSystem32.qsf'
+      - 'rtl/cpu/v60/**'
+      - 'verif/timing/**'
+      - '.github/workflows/v60-sdc-quartus.yml'
+  pull_request:
+    paths:
+      - 'Arcade-SegaSystem32.sdc'
+      - 'Arcade-SegaSystem32.qsf'
+      - 'rtl/cpu/v60/**'
+      - 'verif/timing/**'
+      - '.github/workflows/v60-sdc-quartus.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: v60-sdc-quartus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdc:
+    name: SDC vs fitted netlist
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # Quartus needs roughly 24 GB; a stock runner does not have it free.
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      # Quartus Lite 17.0 -- the version this project is pinned to.  The image's
+      # own entrypoint puts Quartus on PATH, so a NON-login `bash -c` is
+      # required: a login shell re-reads /etc/profile and loses
+      # /opt/intelFPGA/quartus/bin.
+      - name: Map + fit + STA, then check the SDC
+        run: |
+          docker run --rm -v "$PWD:/build" raetro/quartus:17.0 \
+            bash -c "cd /build && verif/timing/run_quartus_sdc_check.sh"
+
+      - name: Upload Quartus reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v60-sdc-quartus-reports
+          path: |
+            output_files/*.rpt
+            output_files/*.summary
+            output_files/v60_sdc_check.txt
+          if-no-files-found: warn
+
+      # Fails the job if a bitstream somehow appeared.  Belt and braces with the
+      # same check inside the driver: this workflow must stay incapable of
+      # shipping anything.
+      - name: Assert no bitstream was produced
+        if: always()
+        run: |
+          if ls output_files/*.sof output_files/*.rbf 2>/dev/null; then
+            echo "::error::a bitstream was produced by the SDC check job"
+            exit 1
+          fi
+          echo "no bitstream, as intended"

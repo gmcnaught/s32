@@ -25,6 +25,38 @@ always @(posedge clk) begin
     else              phase <= ~phase;
 end
 assign ce = !pause && !phase;
+
+// ---------------------------------------------------------------------------
+// The invariant s32.sdc rests on (audit S01 / S07.2).
+// ---------------------------------------------------------------------------
+// s32.sdc relaxes every s32_v60 register-to-register path to a two-cycle setup
+// requirement, justified by "every board leaves at least one idle clk_sys edge
+// between V60 updates".  That is a property of THIS module and nothing else,
+// and it was checked only by tb_v60_exec_cadence -- a bench that has to be run
+// deliberately.  Assert it here so it holds in every simulation that
+// instantiates the core, not just in its own bench.
+//
+// Deliberately gated on !rst: while reset is asserted `phase` is held at 0, so
+// `ce` is continuously high.  That is harmless -- s32_v60's reset branch is
+// ungated anyway and assigns constants -- but it means the idle edge genuinely
+// does not exist during reset, and asserting it there would be asserting
+// something false.  The reset branch's few register-to-register copies are
+// covered by the SDC's v60_ungated carve-out instead.
+`ifndef SYNTHESIS
+integer cad_inv_fails = 0;
+reg cad_ce_d = 1'b0;
+always @(posedge clk) begin
+    if (!rst && ce && cad_ce_d) begin
+        cad_inv_fails = cad_inv_fails + 1;
+        $display("V60-CADENCE FAIL: execution enable on adjacent clk_sys edges (t=%0t)",
+                 $time);
+`ifndef V60_INVARIANT_NONFATAL
+        $fatal(1, "s32.sdc's two-cycle V60 exception is no longer sound");
+`endif
+    end
+    cad_ce_d <= !rst && ce;
+end
+`endif
 endmodule
 
 // The universal production revision uses the single-port synchronous V60
@@ -285,6 +317,14 @@ s32_v60_exec_cadence v60_cadence (
     .clk(clk_sys), .rst(rst), .pause(pause), .ce(v60_exec_ce)
 );
 
+// Fetch-window coherency feed (audit V60-D2).  Work RAM's port B (protection
+// modules) and shared RAM's Z80 port can both patch memory the V60 executes
+// from, and neither appears on the V60's own bus.  Assigned below, next to the
+// arrays they watch.
+wire        v60_ext_wr;
+wire [23:0] v60_ext_wr_addr;
+wire  [2:0] v60_ext_wr_bytes;
+
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .fast_ifetch(fast_v60),
@@ -292,7 +332,9 @@ s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAM
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
-    .nmi_n(1'b1)
+    .nmi_n(1'b1),
+    .ext_wr(v60_ext_wr), .ext_wr_addr(v60_ext_wr_addr),
+    .ext_wr_bytes(v60_ext_wr_bytes)
 );
 
 
@@ -393,6 +435,48 @@ s32_big_dpram #(
 
 always @(posedge clk_sys)
     pr_ack <= pr_req;
+
+// ---------------------------------------------------------------------------
+// V60 fetch-window coherency feed (audit V60-D2)
+// ---------------------------------------------------------------------------
+// Two masters can write memory the V60 executes from without appearing on its
+// bus: the protection modules on work-RAM port B, and the sound Z80 on the
+// shared-RAM port inside s32_soundsys.  Report both as physical byte addresses;
+// the CPU compares them against its fetch window in canonical physical form.
+//
+// Work-RAM port B is reported word-granular (2 bytes at the even address)
+// rather than decoding work_pr_be: over-reporting by one byte can only cost a
+// refetch, and it keeps this feed off the byte-enable logic.
+
+// Sound-CPU writes into shared RAM, exported by s32_soundsys.  Declared here,
+// ahead of that instance, because the feed below consumes them.
+wire        sh_z80_wr;
+wire [12:0] sh_z80_addr;
+
+wire [23:0] pr_wr_paddr = 24'h200000 |
+                          {{(23-WRAM_ADDR_WIDTH){1'b0}}, work_pr_addr, 1'b0};
+wire [23:0] sh_wr_paddr = 24'h700000 | {11'b0, sh_z80_addr};
+
+// The two sources are independent, so hold the Z80 write for one clk when it
+// collides with a protection write instead of dropping it.  One entry is
+// sufficient: the Z80 runs on ce_z80 (clk_sys/6), so its strobe cannot recur on
+// consecutive clk_sys edges.
+reg        ext_hold;
+reg [23:0] ext_hold_addr;
+always @(posedge clk_sys) begin
+    if (rst) ext_hold <= 1'b0;
+    else if (work_pr_we && sh_z80_wr) begin
+        ext_hold      <= 1'b1;
+        ext_hold_addr <= sh_wr_paddr;
+    end
+    else ext_hold <= 1'b0;
+end
+
+assign v60_ext_wr       = work_pr_we | sh_z80_wr | ext_hold;
+assign v60_ext_wr_addr  = work_pr_we ? pr_wr_paddr
+                        : sh_z80_wr  ? sh_wr_paddr
+                                     : ext_hold_addr;
+assign v60_ext_wr_bytes = work_pr_we ? 3'd2 : 3'd1;
 
 
 // ---------------------------------------------------------------------------
@@ -884,6 +968,7 @@ s32_soundsys #(.SYSTEM32_ONLY(SYSTEM32_ONLY)) sound (
     .sh_cs(m_req && sel_shared),
     .sh_we(m_we && sel_shared),
     .sh_addr(A[12:1]), .sh_be(m_be), .sh_wdata(m_wdata), .sh_rdata(sh_rdata),
+    .sh_z80_wr(sh_z80_wr), .sh_z80_addr(sh_z80_addr),
     .v60_doorbell(snd_doorbell),
     .irq_to_v60(snd_to_v60),
     .zrom_req(sdr_p3_req), .zrom_addr(zrom_ba),
@@ -1307,7 +1392,14 @@ reg [23:1] rom_addr_r;
 // Transaction-acked flag (the read-mux ack register below).  Forward-declared
 // here so the icache lookup can suppress re-arming a completed ROM read while
 // the V60 bus still holds m_req; the driving logic lives in the read-mux block.
-reg        ack_r;
+// Power-up value (audit V60-D4): this block has no reset, so without an
+// initialiser ack_r/ack_d/rd_wait/rmux are X on the first edge and
+// wr_stb = ack_r & ~ack_d drives the INTC and ADC chip selects, ctl_we and
+// reg_we with X.  Benign on real silicon (the FPGA loads a defined state), but
+// it made cold-boot SIMULATION untrustworthy -- and simulation is the
+// validation path for everything else in this core.  Same idiom as the rng
+// register below.
+reg        ack_r = 1'b0;
 assign sdr_p0_req   = rom_req_r;
 assign sdr_p0_burst = rom_burst_r;
 assign sdr_p0_addr  = {2'b00, rom_addr_r[21:1]};
@@ -1433,7 +1525,7 @@ end
 // ---------------------------------------------------------------------------
 // CPU read mux + ack
 // ---------------------------------------------------------------------------
-reg [15:0] rmux;
+reg [15:0] rmux = 16'h0000;   // audit V60-D4: see the ack_r declaration above
 assign m_rdata = rmux;
 assign m_ack   = ack_r;   // ack_r declared with the ROM fetch regs above
 
@@ -1450,8 +1542,8 @@ always @(posedge clk_sys) begin
 end
 wire [15:0] rng_read = rng[31:16] ^ rng[15:0];
 
-reg ack_d;
-reg rd_wait;   // BRAM/register reads: one dead cycle so the registered q
+reg ack_d   = 1'b0;   // audit V60-D4
+reg rd_wait = 1'b0;   // BRAM/register reads: one dead cycle so the registered q
                // (wram_q, v25 rdata, io rdata, ...) reflects THIS address.
                // Without it rmux latches the previous access's data — the q
                // registers update on the same edge the ack mux samples them.

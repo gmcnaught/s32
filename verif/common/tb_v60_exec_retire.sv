@@ -39,7 +39,8 @@ s32_v60 #(
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr),
     .bus_size(c_size), .bus_wdata(c_wdata),
     .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
+    .ext_wr(1'b0), .ext_wr_addr(24'd0), .ext_wr_bytes(3'd0)
 );
 
 s32_v60_bus adapter (
