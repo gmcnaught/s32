@@ -85,4 +85,5 @@ jobs:
           path: |
             output_files/*.rpt
             output_files/*.summary
+            output_files/worst_paths.txt
           if-no-files-found: warn
