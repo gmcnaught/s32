@@ -528,7 +528,28 @@ wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
 // with it, which is what makes the protection module wait rather than lose the
 // write.  The lock covers one byte access pair and nothing else -- only TASI
 // raises it, because only TASI and CAXI carry the manual's `rwi` access type.
-wire        pr_locked  = c_lock;
+// DEFAULT OFF, and the reason is a measured regression I cannot yet explain.
+//
+// Deploying this interlock to hardware blacked out Golden Axe II and
+// Spider-Man while Rad Rally and Dark Edge kept working -- and Dark Edge is
+// the title that actually USES the gated path (dke_pr_req), which is the
+// opposite of what a broken interlock should do.  The known-good baseline was
+// re-flashed immediately afterwards and both titles came back (88.9% and 69.0%
+// bright), so the device, the ROMs and the MRAs are not the variable.
+//
+// My analysis said this is inert for those two games: pr_req resolves to
+// dke_pr_req or jl_pr_req, both tied low unless an HLE protection module is
+// selected, so work_pr_we and pr_ack should be unchanged for them.  The
+// hardware says otherwise, which means the analysis is wrong somewhere and I
+// do not yet know where.
+//
+// So the lock SIGNAL and the BLOCK pin stay -- they cost nothing and make the
+// core electrically describable -- and the part that changes behaviour is off
+// until the regression is understood.  Turning this on without that would be
+// shipping a fault to fix a hazard, which is a bad trade even though the
+// hazard is real.
+localparam  PROT_INTERLOCK = 1'b0;
+wire        pr_locked  = PROT_INTERLOCK && c_lock;
 wire        work_pr_we = ((pr_req && pr_we) || br_pram_we) && !pr_locked;
 wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
                                          ? {{(WRAM_ADDR_WIDTH-7){1'b0}},
