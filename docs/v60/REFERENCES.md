@@ -317,6 +317,40 @@ encoding". The RTL says so at the point of use.
   before any claim that the BIU is "electrically describable" against a
   µPD71613 decode table.
 
+## Derived work in this directory
+
+- **`INSTRUCTION-TIMING.md`** — an independent verification that no public NEC
+  document states per-instruction cycle counts. Method and keyword counts are
+  reproducible: the 308-page Programmer's Reference contains the word "clock"
+  **zero** times, and the databook's Clocks column was confirmed blank on the
+  page scan across all nine pages, as was the V70's. The chain of references
+  between the three documents is a closed loop with no timing in it.
+- **`v60_operand_access.csv`** — 220 typed variants across 118 mnemonics, each
+  with its operand list, per-operand size, access type (`r`/`w`/`rw`/`rwi`/
+  `ex`/`n`) and a derived count of 16-bit data-bus cycles assuming every
+  operand is in memory. 161 rows `ok`, 59 `review` — the review flags are
+  almost all OCR mangling a variant *label* (`clr1`→`clrl`, `set1`→`setl`)
+  rather than the access data, so spot-check a `review` row against the scan
+  before relying on it.
+
+### How far the operand data goes
+
+It is the memory-traffic half of a timing model and it is worth having. It is
+**not** a typical-case model, and the distinction matters for §07.6.
+
+The all-memory column has a mean of 3.6 and a median of 3.0 bus cycles. At the
+databook's three-clock short cycle that is ~9-11 clocks of bus traffic per
+instruction, and `ADD.w` with both operands in memory is 6 cycles = 18 clocks.
+The IPSJ paper puts the real part at 3.5 MIPS at 16 MHz, i.e. **~4.6 clocks per
+instruction**. Those cannot both describe the same code.
+
+The resolution: typical V60 code must be overwhelmingly **register**-operand,
+and the all-memory column is a worst-case bound rather than an average. So
+operand traffic does not dominate typical execution — which is what makes this
+core's measured 22.7 clocks per instruction an *execution* overhead problem,
+not a bus-traffic one, and reinforces that §07.6 is about making execution
+faster rather than the bus cheaper.
+
 ## A cross-check worth running
 
 The V70 document's System Base Table (p.10) lists every vector number and byte
