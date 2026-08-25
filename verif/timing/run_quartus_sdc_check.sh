@@ -44,6 +44,43 @@ case "$ver" in
   *) echo "WARNING: Quartus $ver is not 17.0; this project is pinned to 17.0." >&2 ;;
 esac
 
+# The Qsys tools live outside quartus/bin, and the raetro image only puts
+# quartus/bin on PATH.
+find_qsys() {
+  local n=$1 p
+  if command -v "$n" >/dev/null 2>&1; then command -v "$n"; return 0; fi
+  local root="${QUARTUS_ROOTDIR:-$(dirname "$(dirname "$(command -v quartus_map)")")}"
+  for p in "$root/sopc_builder/bin/$n" "$root/../qsys/bin/$n" "$root/qsys/bin/$n"; do
+    [ -x "$p" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+echo
+echo "== Generate the PLL IP =="
+# rtl/pll/pll.qip -- which files.qip pulls in -- points at
+# rtl/pll/synthesis/pll.qip, and BOTH that directory and rtl/pll/pll.qsys are
+# gitignored: they are generated, not committed.  Without this step Analysis &
+# Synthesis dies with
+#   Error (12006): Node instance "pll" instantiates undefined entity "pll"
+# rtl/pll/pll.v is only a simulation placeholder ("cannot produce a valid
+# release bitstream", says its own header) and is deliberately NOT in
+# files.qip, so it does not stand in for the real IP.
+#
+# Invocation is exactly the one documented in tools/make_pll.tcl's header,
+# which is also what tools/build.bat does before compiling.
+QSYS_SCRIPT="$(find_qsys qsys-script)" || {
+  echo "ERROR: qsys-script not found; cannot generate the PLL IP." >&2; exit 127; }
+QSYS_GENERATE="$(find_qsys qsys-generate)" || {
+  echo "ERROR: qsys-generate not found; cannot generate the PLL IP." >&2; exit 127; }
+echo "using $QSYS_SCRIPT"
+echo "using $QSYS_GENERATE"
+"$QSYS_SCRIPT" --script=tools/make_pll.tcl
+"$QSYS_GENERATE" rtl/pll/pll.qsys --synthesis=VERILOG --output-directory=rtl/pll
+test -f rtl/pll/synthesis/pll.qip || {
+  echo "ERROR: rtl/pll/synthesis/pll.qip was not generated." >&2; exit 1; }
+echo "PLL IP generated."
+
 echo
 echo "== Analysis & Synthesis =="
 quartus_map "$PROJECT" --read_settings_files=on
