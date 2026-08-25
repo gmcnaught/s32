@@ -398,13 +398,36 @@ wire v60_bus_ce = is_multi32 ? ce_cpu_ram : v60_ce_rise;
 // I/O recovery.  Byte and aligned 16-bit accesses are unaffected either way;
 // multi-cycle accesses go 5->6 and 7->9 clocks.
 //
-// The audit is explicit that changing the execute:bus ratio in isolation
-// breaks shipped games, and names the regression gate: the Golden Axe II /
-// Spider-Man / Rad Rally black-screen cases.  That gate needs real hardware.
-// Turning these on without running it would be shipping a timing change whose
-// only detector we cannot operate -- so they stay off until someone has.
-// verif/v60/tb_v60_tstate.sv measures both settings so the delta is known
-// rather than guessed.
+// THE GATE HAS NOW BEEN RUN ON HARDWARE, AND IT FAILS.  Both stay off.
+//
+// Measured on a real DE10-Nano, 2026-08-25, three fits from this tree:
+//
+//   DATABOOK_TIMING=0 HALF_CLOCK_SAMPLING=0   clk_ram +0.224 ns, TNS 0
+//       Golden Axe II, Spider-Man, Rad Rally and Dark Edge all render.
+//   DATABOOK_TIMING=1 HALF_CLOCK_SAMPLING=1   clk_ram -0.546 ns, TNS -1.501
+//       all four fail -- but the fit misses timing, so this run proves nothing.
+//   DATABOOK_TIMING=1 HALF_CLOCK_SAMPLING=0   clk_ram +0.648 ns, TNS 0
+//       CLOSES TIMING, better than the shipping build and 131 ALMs smaller --
+//       and all four games are black, sampled over 90 seconds to rule out a
+//       slow boot or a fade.
+//
+// The third build is the one that matters: it is timing-clean, so the failure
+// cannot be dismissed as a closure artifact.  The audit's prediction is
+// confirmed exactly -- "changing the execute:bus ratio in isolation breaks
+// shipped games".  Three clocks per physical cycle instead of two is correct
+// per databook S4 and this core cannot absorb it, because the serial
+// microsequencer's execute rate was tuned against the old bus cost.
+//
+// So DATABOOK_TIMING is not a switch waiting for permission.  It is blocked on
+// audit step S07.6 -- attacking execution timing with measured data -- which
+// the document catalogue records as a research project rather than an
+// implementation step, because no NEC publication states per-instruction
+// cycle counts.  See docs/v60/DATABOOK-TIMING-RESULT.md.
+//
+// HALF_CLOCK_SAMPLING is separately blocked on timing: it is what pushed
+// clk_ram negative, and it buys nothing while DATABOOK_TIMING is off.
+//
+// verif/v60/tb_v60_tstate.sv measures both settings so the delta stays known.
 s32_v60_bus #(
     .DATABOOK_TIMING(1'b0),
     .HALF_CLOCK_SAMPLING(1'b0)
