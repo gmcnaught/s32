@@ -3,13 +3,55 @@
 //  Turns the CPU's logical accesses (any address, size 1/2/4 bytes) into
 //  1..3 aligned 16-bit cycles on the system bus (V60 has a 16-bit external
 //  data bus).  V70 (IS_V70=1) uses 1..2 aligned 32-bit cycles.
+//
+//  Sequenced as a databook §4 T-state machine (audit §07.4).  The states are
+//  the real ones -- TI, T1, T2, T3, TW, T4, TH -- and the pin-level status
+//  lines are driven from them, which is what makes the core electrically
+//  describable rather than merely functionally correct.  What the old
+//  three-state I_IDLE/I_CYC/I_WAIT adapter could not express: a bus cycle with
+//  a distinct address phase and data phase, a wait state that is a state
+//  rather than "however long the target takes", a normal-vs-short cycle
+//  selection, and any notion of bus status at all.
+//
+//  Two behaviours are parameterised because they change what the bus COSTS,
+//  and the audit is explicit that changing the execute:bus ratio in isolation
+//  breaks shipped games:
+//
+//    DATABOOK_TIMING   0 = the cycle counts this core has always had
+//                          (1 setup clock per logical access + 2 clocks per
+//                          physical cycle: 3/5/7 clocks for a 1/2/3-cycle
+//                          access).
+//                      1 = databook §4 (3 clocks per physical cycle, T4 added
+//                          when BMODE selects a normal cycle, three TI states
+//                          of I/O recovery between back-to-back cycles:
+//                          3/6/9 clocks short-cycle).
+//
+//                      Byte and aligned 16-bit accesses cost the SAME either
+//                      way; only multi-cycle accesses lengthen.  Default 0:
+//                      the regression gate for this change is the Golden Axe
+//                      II / Spider-Man / Rad Rally black-screen cases, which
+//                      need real hardware, so the faithful timing ships
+//                      switched off until it has been run there.
+//
+//    HALF_CLOCK_SAMPLING
+//                      0 = sample BMODE/READY on the enabled clock edge.
+//                      1 = sample them on the V60 clock's FALLING edge, per
+//                          databook §4 -- BMODE on the falling edge of T2,
+//                          READY on the falling edge of T3 and of each TW.
+//                          Requires a ce_fall from s32_v60_timebase; the unit
+//                          benches run one V60 clock per bench clock and have
+//                          no half-cycle to sample on, so they leave it 0.
 //============================================================================
 
 module s32_v60_bus #(
-    parameter IS_V70 = 1'b0
+    parameter IS_V70 = 1'b0,
+    parameter DATABOOK_TIMING = 1'b0,
+    parameter HALF_CLOCK_SAMPLING = 1'b0
 )(
     input             clk,
-    input             ce,
+    input             ce,           // V60 clock rising edge (T-state boundary)
+    input             ce_fall,      // V60 clock falling edge; used only when
+                                    // HALF_CLOCK_SAMPLING=1
     input             rst,
 
     // CPU side (logical)
@@ -28,11 +70,51 @@ module s32_v60_bus #(
     output reg [15:0] m_wdata,
     output reg  [1:0] m_be,
     input      [15:0] m_rdata,
-    input             m_ack
+    input             m_ack,
+
+    // ---------------------------------------------------------------------
+    // databook §4 pin-level interface
+    // ---------------------------------------------------------------------
+    // System 32 ties most of these off, but exposing them is the point: it is
+    // what lets the core be checked against a µPD71613 decode table instead of
+    // only against MAME's behaviour.
+    //
+    // HONEST GAP: `st` is NOT NEC's encoding.  The audit names ST2-ST0 and the
+    // MRQ+ST bus-status table, but the databook plate that defines the codes
+    // is not in this repository, and inventing codes that look official would
+    // be worse than having none.  The values below are this core's own, and
+    // the localparams are named so a diff against the real table is mechanical
+    // once someone has the plate.  Everything else here -- BCY, DS, R/W, MRQ,
+    // UBE, HLDAK -- has unambiguous meaning and is driven correctly.
+    output      [2:0] st,          // bus status (see gap note above)
+    output            mrq,         // memory request
+    output            rw_n,        // 0 = write, 1 = read
+    output            bcy,         // bus cycle in progress
+    output            ds,          // data strobe
+    output            ube,         // upper byte enable
+    output            hldak,       // hold acknowledge
+    output            rt_ep,       // retry / error-processing
+
+    input             bmode,       // sampled falling T2: 1 = short cycle
+    input             ready_n,     // sampled falling T3 and each TW, active low
+    input             berr_n,      // bus error, active low
+    input             bfrez_n,     // bus freeze, active low
+    input             hldrq        // hold request
 );
 
-typedef enum logic [1:0] { I_IDLE, I_CYC, I_WAIT } bst_t;
-bst_t bst;
+// T-states, databook §4.  With DATABOOK_TIMING=0 the machine runs
+// TI -> T1 -> T3(/TW) and T2/T4 are unreachable, which reproduces the
+// pre-existing I_IDLE -> I_CYC -> I_WAIT sequence clock for clock.
+typedef enum logic [2:0] {
+    T_TI, T_T1, T_T2, T_T3, T_TW, T_T4, T_TH
+} tstate_t;
+tstate_t ts;
+
+// This core's bus-status codes -- NOT NEC's.  See the gap note above.
+localparam [2:0] ST_IDLE  = 3'd0;
+localparam [2:0] ST_MEMRD = 3'd1;
+localparam [2:0] ST_MEMWR = 3'd2;
+localparam [2:0] ST_HOLD  = 3'd3;
 
 reg [1:0]  cyc, cycs;        // current / total 16-bit cycles - 1
 reg [31:0] acc;
@@ -40,16 +122,136 @@ reg [31:0] addr_r;
 reg [31:0] wdata_r;
 reg [1:0]  size_r;
 reg        we_r;
+reg        short_cycle;      // latched from BMODE at the falling edge of T2
+reg        ready_q;          // latched from READY at the falling edge of T3/TW
+reg  [1:0] io_recover;       // databook §4 three-TI recovery between cycles
 // Four-phase CPU-side handshake.  The V60 microsequencer may advance between
 // physical bus enables, so observe the request-low re-arm phase on every
-// clk_sys edge and hold ACK until it is seen.  The I_CYC/I_WAIT machinery and
-// every m_req transition remain gated by the board-rate `ce` input.
+// clk edge and hold ACK until it is seen.  Every T-state transition and every
+// m_req change remain gated by the board-rate `ce` input.
 reg        c_req_armed;
 
-// how many 16-bit cycles and initial byte lane for a given access
+// Accepting a new logical access on this edge.  In databook timing the address
+// phase IS T1, so TI drives the first physical cycle straight from the CPU's
+// inputs; in legacy timing TI only latches and T_SETUP spends the extra clock.
+wire accept_now = (ts == T_TI) && (io_recover == 2'd0)
+                  && c_req && c_req_armed && !c_ack;
+wire first_now  = DATABOOK_TIMING && accept_now;
+
+wire [31:0] eff_addr  = first_now ? c_addr  : addr_r;
+wire [1:0]  eff_size  = first_now ? c_size  : size_r;
+wire [31:0] eff_wdata = first_now ? c_wdata : wdata_r;
+wire        eff_we    = first_now ? c_we    : we_r;
+wire [1:0]  eff_cyc   = first_now ? 2'd0    : cyc;
+// Physical 16-bit cycles - 1 for the access currently being accepted.  This
+// is computed from the CPU's inputs and must be latched on every accept, in
+// both timing modes -- deriving it only on the databook path leaves cycs
+// unassigned and the access never terminates.
+wire [1:0]  acc_cycs  = (c_size == 2'd0) ? 2'd0
+                      : (c_size == 2'd1) ? (c_addr[0] ? 2'd1 : 2'd0)
+                                         : (c_addr[0] ? 2'd2 : 2'd1);
+wire [1:0]  eff_cycs  = first_now ? acc_cycs : cycs;
+
+// READY.  With half-clock sampling the falling-edge latch decides; without it
+// the transition uses m_ack at the enabled edge exactly as the pre-existing
+// adapter did, which is what keeps DATABOOK_TIMING=0 bit-identical.
+wire ready_now = HALF_CLOCK_SAMPLING ? ready_q : (m_ack && ready_n !== 1'b1);
+
+// Pin-level status, driven from the T-state.
+// BCY covers the whole bus cycle.  first_now is part of it: with databook
+// timing the address phase IS the accepting edge (TI doing T1's work), so
+// leaving it out would drop the first cycle's address phase off the pin --
+// visible to anyone decoding this against a µPD71613 table.
+assign bcy   = (ts == T_T1) || (ts == T_T2) || (ts == T_T3)
+             || (ts == T_TW) || (ts == T_T4) || first_now;
+
+// Engaged: the accept edge through to the completing edge, inclusive.  This is
+// what a logical access actually costs the CPU, and it is the figure the
+// audit's cycle table is quoted in.
+wire busy = (ts != T_TI) || accept_now;
+assign ds    = (ts == T_T2) || (ts == T_T3) || (ts == T_TW);
+assign mrq   = bcy;
+assign rw_n  = ~m_we;
+assign ube   = m_be[1];
+assign hldak = (ts == T_TH);
+assign rt_ep = ~berr_n;
+assign st    = (ts == T_TH) ? ST_HOLD
+             : bcy ? (m_we ? ST_MEMWR : ST_MEMRD)
+                   : ST_IDLE;
+
+// Physical-cycle payload for one 16-bit cycle.  Lifted verbatim from the
+// pre-existing I_CYC body -- this decode is bit-exact against the reference
+// model and against tb_v60_bus_lanes, and is deliberately NOT touched by the
+// T-state rework.
+task automatic drive_cycle(input [31:0] a, input [1:0] sz, input [31:0] wd,
+                           input w, input [1:0] k, input [1:0] ks);
+begin
+    m_req <= 1'b1;
+    m_we  <= w;
+    if (!a[0]) begin
+        m_addr <= a[23:1] + {21'b0, k};
+        case (sz)
+            2'd0: begin m_be <= 2'b01; m_wdata <= {8'h00, wd[7:0]}; end
+            2'd1: begin m_be <= 2'b11; m_wdata <= wd[15:0]; end
+            default: begin
+                m_be <= 2'b11;
+                m_wdata <= (k == 0) ? wd[15:0] : wd[31:16];
+            end
+        endcase
+    end
+    else begin
+        if (k == 0) begin
+            m_addr  <= a[23:1];
+            m_be    <= 2'b10;
+            m_wdata <= {wd[7:0], 8'h00};
+        end
+        else begin
+            m_addr <= a[23:1] + {21'b0, k};
+            if (k == ks && sz == 2'd2) begin
+                m_be <= 2'b01; m_wdata <= {8'h00, wd[31:24]};
+            end
+            else if (k == ks && sz == 2'd1) begin
+                m_be <= 2'b01; m_wdata <= {8'h00, wd[15:8]};
+            end
+            else begin
+                m_be <= 2'b11; m_wdata <= wd[23:8];
+            end
+        end
+    end
+end
+endtask
+
+// Read-data lane assembly, likewise lifted verbatim from I_WAIT.
+task automatic assemble_read;
+begin
+    if (!we_r) begin
+        if (!addr_r[0]) begin
+            case (size_r)
+                2'd0: acc[7:0]  <= m_rdata[7:0];
+                2'd1: acc[15:0] <= m_rdata;
+                default: begin
+                    if (cyc == 0) acc[15:0]  <= m_rdata;
+                    else          acc[31:16] <= m_rdata;
+                end
+            endcase
+        end
+        else begin
+            if (cyc == 0) acc[7:0] <= m_rdata[15:8];
+            else if (cyc == cycs && size_r == 2'd2) acc[31:24] <= m_rdata[7:0];
+            else if (cyc == cycs && size_r == 2'd1) acc[15:8]  <= m_rdata[7:0];
+            else acc[23:8] <= m_rdata;
+        end
+    end
+end
+endtask
+
+// ---------------------------------------------------------------------------
+// The T-state machine (databook §4)
+// ---------------------------------------------------------------------------
 always @(posedge clk) begin
     if (rst) begin
-        bst <= I_IDLE; m_req <= 0; c_ack <= 0; c_req_armed <= 1;
+        ts <= T_TI; m_req <= 0; c_ack <= 0; c_req_armed <= 1;
+        short_cycle <= 1'b1; ready_q <= 1'b0; io_recover <= 2'd0;
     end
     else begin
         if (!c_req) begin
@@ -57,103 +259,104 @@ always @(posedge clk) begin
             c_req_armed <= 1'b1;
         end
 
+        // --- half-clock sampling points, databook §4 ----------------------
+        // BMODE on the falling edge of T2 selects short (skip T4) or normal.
+        // READY on the falling edge of T3 and of each TW.  These are the
+        // events that do not exist on clk_sys at all -- see s32_v60_timebase.
+        if (HALF_CLOCK_SAMPLING && ce_fall) begin
+            if (ts == T_T2)                    short_cycle <= bmode;
+            if (ts == T_T3 || ts == T_TW)      ready_q <= m_ack && (ready_n !== 1'b1);
+        end
+
         if (ce) begin
-        case (bst)
-        I_IDLE: if (c_req && c_req_armed && !c_ack) begin
-            c_req_armed <= 1'b0;
-            addr_r  <= c_addr;
-            wdata_r <= c_wdata;
-            size_r  <= c_size;
-            we_r    <= c_we;
-            cyc     <= 0;
-            // cycles needed
-            case (c_size)
-                2'd0: cycs <= 0;                                   // byte: 1
-                2'd1: cycs <= (c_addr[0]) ? 2'd1 : 2'd0;           // half: 1 or 2
-                default: cycs <= (c_addr[0]) ? 2'd2 : 2'd1;        // word: 2 or 3
-            endcase
-            // I_IDLE is the address/setup clock of the V60's documented
-            // minimum three-clock external cycle.  I_CYC launches m_req on
-            // the following board enable; do not fuse these states merely to
-            // improve instruction throughput.
-            bst <= I_CYC;
-        end
-        I_CYC: begin
-            m_req  <= 1'b1;
-            m_we   <= we_r;
-            // For each 16-bit cycle, figure the aligned word address and lanes
-            if (!addr_r[0]) begin
-                m_addr  <= addr_r[23:1] + {21'b0, cyc};
-                case (size_r)
-                    2'd0: begin m_be <= 2'b01; m_wdata <= {8'h00, wdata_r[7:0]}; end
-                    2'd1: begin m_be <= 2'b11; m_wdata <= wdata_r[15:0]; end
-                    default: begin
-                        m_be <= 2'b11;
-                        m_wdata <= (cyc == 0) ? wdata_r[15:0] : wdata_r[31:16];
-                    end
-                endcase
+        case (ts)
+
+        T_TI: begin
+            // HLDRQ is sampled in T4 and TI (databook §4).  System 32 ties it
+            // low, so this path is dormant -- but it exists, which is the
+            // difference between "not modelled" and "tied off".
+            if (hldrq === 1'b1) ts <= T_TH;
+            // BFREZ holds the bus in TI without completing anything.  Also
+            // tied off on this board.
+            else if (bfrez_n === 1'b0) ts <= T_TI;
+            // Three TI states of I/O recovery between back-to-back cycles.
+            else if (io_recover != 2'd0) io_recover <= io_recover - 2'd1;
+            else if (accept_now) begin
+                c_req_armed <= 1'b0;
+                addr_r      <= c_addr;
+                wdata_r     <= c_wdata;
+                size_r      <= c_size;
+                we_r        <= c_we;
+                cyc         <= 2'd0;
+                cycs        <= acc_cycs;
+                short_cycle <= 1'b1;
+                ready_q     <= 1'b0;
+                if (DATABOOK_TIMING) begin
+                    // TI *is* the address phase; there is no separate setup
+                    // clock.  This is the fix for the audit's finding that
+                    // I_IDLE was entered once per logical access rather than
+                    // once per bus cycle, so every continuation ran a clock
+                    // short of the documented three-clock minimum.
+                    drive_cycle(c_addr, c_size, c_wdata, c_we, 2'd0, acc_cycs);
+                    ts <= T_T2;
+                end
+                // Legacy: TI is the old I_IDLE (accept + address setup) and
+                // T1 is the old I_CYC (drive the cycle).  No extra state --
+                // adding one would make this mode slower than what it is
+                // meant to reproduce exactly.
+                else ts <= T_T1;
             end
-            else begin
-                // unaligned start: first cycle covers high lane of first word
-                if (cyc == 0) begin
-                    m_addr <= addr_r[23:1];
-                    m_be   <= 2'b10;
-                    m_wdata<= {wdata_r[7:0], 8'h00};
+        end
+
+        T_T1: begin
+            drive_cycle(addr_r, size_r, wdata_r, we_r, cyc, cycs);
+            ready_q <= 1'b0;
+            ts <= DATABOOK_TIMING ? T_T2 : T_T3;
+        end
+
+        T_T2: ts <= T_T3;
+
+        T_T3, T_TW: begin
+            if (ready_now) begin
+                m_req <= 1'b0;
+                assemble_read();
+                if (DATABOOK_TIMING && !short_cycle) begin
+                    ts <= T_T4;              // normal cycle: one clock more
+                end
+                else if (cyc == cycs) begin
+                    ts <= T_TI;
+                    if (c_req) c_ack <= 1'b1;
+                    if (DATABOOK_TIMING) io_recover <= 2'd3;
                 end
                 else begin
-                    m_addr <= addr_r[23:1] + {21'b0, cyc};
-                    if (cyc == cycs && size_r == 2'd2) begin
-                        m_be    <= 2'b01;
-                        m_wdata <= {8'h00, wdata_r[31:24]};
-                    end
-                    else if (cyc == cycs && size_r == 2'd1) begin
-                        m_be    <= 2'b01;
-                        m_wdata <= {8'h00, wdata_r[15:8]};
-                    end
-                    else begin
-                        m_be    <= 2'b11;
-                        m_wdata <= wdata_r[23:8];
-                    end
+                    cyc <= cyc + 2'd1;
+                    ts  <= T_T1;
                 end
             end
-            bst <= I_WAIT;
+            else ts <= T_TW;                 // READY low: insert a wait state
         end
-        I_WAIT: if (m_ack) begin
-            m_req <= 1'b0;
-            // assemble read data
-            if (!we_r) begin
-                if (!addr_r[0]) begin
-                    case (size_r)
-                        2'd0: acc[7:0] <= m_rdata[7:0];
-                        2'd1: acc[15:0] <= m_rdata;
-                        default: begin
-                            if (cyc == 0) acc[15:0]  <= m_rdata;
-                            else          acc[31:16] <= m_rdata;
-                        end
-                    endcase
-                end
-                else begin
-                    if (cyc == 0) acc[7:0] <= m_rdata[15:8];
-                    else if (cyc == cycs && size_r == 2'd2) acc[31:24] <= m_rdata[7:0];
-                    else if (cyc == cycs && size_r == 2'd1) acc[15:8]  <= m_rdata[7:0];
-                    else acc[23:8] <= m_rdata;
-                end
-            end
+
+        T_T4: begin
             if (cyc == cycs) begin
-                bst <= I_IDLE;
+                ts <= T_TI;
                 if (c_req) c_ack <= 1'b1;
+                io_recover <= 2'd3;
             end
             else begin
-                cyc <= cyc + 1'd1;
-                bst <= I_CYC;
+                cyc <= cyc + 2'd1;
+                ts  <= T_T1;
             end
         end
-        default: bst <= I_IDLE;
+
+        T_TH: if (hldrq !== 1'b1) ts <= T_TI;
+
+        default: ts <= T_TI;
         endcase
 
-        // read data out (combinable timing: valid with c_ack)
-        if (bst == I_WAIT && m_ack && cyc == cycs && !we_r) begin
-            // merge final lane into output
+        // read data out (combinable timing: valid with c_ack).  Lifted from
+        // the pre-existing I_WAIT completion; the condition is the same
+        // moment, now named as the end of T3/TW.
+        if ((ts == T_T3 || ts == T_TW) && ready_now && cyc == cycs && !we_r) begin
             c_rdata <= acc;
             if (!addr_r[0]) begin
                 case (size_r)
@@ -175,6 +378,33 @@ always @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
+// Engaged-clock counter (simulation only)
+// ---------------------------------------------------------------------------
+// Counts the clocks one logical access occupies -- the accepting edge through
+// the completing edge, inclusive.  That is the basis the audit's cycle table
+// is quoted on, and measuring it inside the module avoids the sampling
+// ambiguity a bench has: read the state after a rising edge and the accepting
+// clock merges into the next one, differently in each timing mode, because
+// databook timing does the address phase ON the accepting edge.
+`ifndef SYNTHESIS
+integer eng_cnt = 0;
+integer last_access_clocks = 0;
+
+always @(posedge clk) begin
+    if (rst) begin
+        eng_cnt <= 0;
+    end
+    else if (ce) begin
+        if (busy) eng_cnt <= eng_cnt + 1;
+        else if (eng_cnt != 0) begin
+            last_access_clocks <= eng_cnt;
+            eng_cnt <= 0;
+        end
+    end
+end
+`endif
+
+// ---------------------------------------------------------------------------
 // Adapter-side handshake invariants (audit S03 / S07.2)
 // ---------------------------------------------------------------------------
 // Immediate assertions rather than concurrent SVA: Icarus, which is what this
@@ -190,8 +420,8 @@ integer v60bus_inv_fails = 0;
 task automatic v60bus_inv_fail(input [8*8:1] id, input [8*64:1] what);
 begin
     v60bus_inv_fails = v60bus_inv_fails + 1;
-    $display("V60BUS-INVARIANT FAIL %0s: %0s  (bst=%0d c_req=%0b c_ack=%0b)",
-             id, what, bst, c_req, c_ack);
+    $display("V60BUS-INVARIANT FAIL %0s: %0s  (ts=%0d c_req=%0b c_ack=%0b)",
+             id, what, ts, c_req, c_ack);
 `ifndef V60_INVARIANT_NONFATAL
     $fatal(1, "V60 bus-adapter invariant violated");
 `endif
@@ -256,14 +486,14 @@ always @(posedge clk) begin
         end
         if (ce) begin
             // accept: the same condition I_IDLE uses to latch
-            if (bst == I_IDLE && c_req && c_req_armed && !c_ack) begin
+            if (ts == T_TI && c_req && c_req_armed && !c_ack) begin
                 inv_inflight <= 1'b1;
                 inv_addr     <= c_addr;
                 inv_size     <= c_size;
                 inv_we       <= c_we;
             end
             // completion: the edge that raises c_ack ends the contract
-            else if (bst == I_WAIT && m_ack && cyc == cycs) begin
+            else if ((ts == T_T3 || ts == T_TW) && ready_now && cyc == cycs) begin
                 inv_inflight <= 1'b0;
             end
         end

@@ -389,12 +389,40 @@ wire ce_cpu_ram = ce_cpu & ~ce_cpu_ram_d;
 
 wire v60_bus_ce = is_multi32 ? ce_cpu_ram : v60_ce_rise;
 
-s32_v60_bus vbus (
-    .clk(clk_ram), .ce(v60_bus_ce), .rst(rst),
+// DATABOOK_TIMING and HALF_CLOCK_SAMPLING both ship OFF.
+//
+// The adapter is now a real databook §4 T-state machine and its pin-level
+// status lines are live, which is the structural half of audit §07.4.  What is
+// held back is the half that changes what the bus COSTS: three clocks per
+// physical cycle instead of two, T4 on a normal cycle, and three TI states of
+// I/O recovery.  Byte and aligned 16-bit accesses are unaffected either way;
+// multi-cycle accesses go 5->6 and 7->9 clocks.
+//
+// The audit is explicit that changing the execute:bus ratio in isolation
+// breaks shipped games, and names the regression gate: the Golden Axe II /
+// Spider-Man / Rad Rally black-screen cases.  That gate needs real hardware.
+// Turning these on without running it would be shipping a timing change whose
+// only detector we cannot operate -- so they stay off until someone has.
+// verif/v60/tb_v60_tstate.sv measures both settings so the delta is known
+// rather than guessed.
+s32_v60_bus #(
+    .DATABOOK_TIMING(1'b0),
+    .HALF_CLOCK_SAMPLING(1'b0)
+) vbus (
+    .clk(clk_ram), .ce(v60_bus_ce), .ce_fall(v60_ce_fall), .rst(rst),
     .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),
     .c_wdata(c_wdata), .c_rdata(c_rdata), .c_ack(c_ack),
     .m_req(m_req), .m_we(m_we), .m_addr(m_addr), .m_wdata(m_wdata),
-    .m_be(m_be), .m_rdata(m_rdata), .m_ack(m_ack)
+    .m_be(m_be), .m_rdata(m_rdata), .m_ack(m_ack),
+    // Pin-level status (audit §07.4).  System 32 does not route these
+    // anywhere, which is exactly why they were absent before -- but a core
+    // that cannot emit them cannot be checked against a µPD71613 decode
+    // table, and "tied off" is a different statement from "not modelled".
+    .st(), .mrq(), .rw_n(), .bcy(), .ds(), .ube(), .hldak(), .rt_ep(),
+    // Board tie-offs.  BMODE high selects the short cycle; READY is asserted
+    // (active low) because the memory subsystem's own m_ack is the wait
+    // mechanism on this board; no bus error, freeze or hold exists here.
+    .bmode(1'b1), .ready_n(1'b0), .berr_n(1'b1), .bfrez_n(1'b1), .hldrq(1'b0)
 );
 
 // ---------------------------------------------------------------------------
