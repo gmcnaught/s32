@@ -9,10 +9,26 @@ name: Build RBF
 # Windows pipeline (tools/build-s32.bat) remains the one that performs release
 # staging and per-game qualification; this produces a testable artifact.
 #
-# Manual by default: a fit takes the better part of an hour.
+# A fit takes the better part of an hour, so this is deliberately not on every
+# push.  It runs on pull requests that touch the bitstream's inputs, which is
+# what makes a stack of RTL changes hardware-testable, and on demand.
+#
+# Note: workflow_dispatch only becomes usable once this file is on the default
+# branch -- GitHub will not list a dispatchable workflow that exists solely on
+# a topic branch.  The pull_request trigger is what works before then.
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'rtl/**'
+      - 'sys/**'
+      - 'files.qip'
+      - 'Arcade-SegaSystem32.qsf'
+      - 'Arcade-SegaSystem32.sdc'
+      - 'Arcade-SegaSystem32.sv'
+      - 'tools/build.sh'
+      - '.github/workflows/build-rbf.yml'
   push:
     branches: [main]
     paths:
