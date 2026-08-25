@@ -7,7 +7,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 ROOT="$PWD"
 PKG="rtl/s32_pkg.sv"
-CPU="rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv"
+CPU="rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv rtl/cpu/v60/s32_v60_timebase.sv"
 VERILATOR_SAFE="${VERILATOR_SAFE:-verilator-safe}"
 VERILATOR_SIM_SAFE="${VERILATOR_SIM_SAFE:-verilator-sim-safe}"
 command -v "$VERILATOR_SAFE" >/dev/null 2>&1 || { echo "missing $VERILATOR_SAFE" >&2; exit 127; }
@@ -26,6 +26,7 @@ declare -A TB=(
   [tb_v60_smoke]="SMOKE PASS"
   [tb_v60_directed]="DIRECTED PASS"
   [tb_v60_fetch]="FETCH PERF PASS"
+  [tb_v60_timebase]="V60 TIMEBASE PASS"
   [tb_v60_smc]="V60 SMC PASS"
   [tb_v60_smc_ext]="V60 SMC EXT PASS"
   [tb_v60_long_ea]="LONG EA PASS"
@@ -58,7 +59,7 @@ declare -A TB=(
 # (EnumItemRef can't deref back to an Enum). Route those through Icarus.
 ICARUS_ONLY="tb_v60_smc_ext tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_ea_overlap_disp"
 
-ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_smc tb_v60_smc_ext tb_v60_long_ea tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate tb_v60_ea_overlap_disp"
+ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_timebase tb_v60_smc tb_v60_smc_ext tb_v60_long_ea tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate tb_v60_ea_overlap_disp"
 
 is_icarus() { case " $ICARUS_ONLY " in *" $1 "*) return 0;; *) return 1;; esac; }
 

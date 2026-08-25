@@ -338,8 +338,59 @@ s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAM
 );
 
 
+// ---------------------------------------------------------------------------
+// V60 bus timebase (audit S01 / S07.3)
+// ---------------------------------------------------------------------------
+// The BIU moves off clk_sys onto clk_ram so that the V60 clock's FALLING edge
+// becomes representable.  clk_sys / f_V60 = 2.9996 -- odd -- so on clk_sys
+// there is no tick at the half period and databook S4's half-clock sampling
+// points (BMODE on the falling edge of T2, READY on the falling edge of T3 and
+// each TW, HLDAK a half-clock after tri-state) cannot be expressed at all.  On
+// clk_ram the ratio is 5.9992: six ticks per V60 clock, so both edges land on
+// real ticks.  This is a prerequisite for the T-state machine, not a step --
+// one written on clk_sys would have to be thrown away.
+//
+// Divisor per board, so the hardware-visible cadence is preserved:
+//   Arabian Fight  div=4 -> 24,158,654 Hz, EXACTLY today's rate (it is already
+//                          clk_sys/2, which is clk_ram/4)
+//   everything else div=6 -> 16,105,769 Hz, -122 ppm from the PCB's 16,107,950
+//
+// 122 ppm is 0.0122%.  For scale, the change this repo records as
+// black-screening Golden Axe: The Revenge of Death Adder, Spider-Man and Rad
+// Rally was +50% -- four thousand times larger.
+//
+// Multi 32's V70 (20 MHz) has no usable integer divisor: the nearest is five,
+// which is odd and so has no representable falling edge, defeating the point.
+// It is out of production scope (is_multi32 is forced low whenever
+// SYSTEM32_ONLY is set, which the QSF sets) and keeps the original NCO rather
+// than being silently re-rated.
+//
+// Both production divisors put ce_rise on a clk_ram tick that coincides with a
+// clk_sys edge (6 ticks = 3 clk_sys, 4 ticks = 2), so the memory interface sees
+// the adapter's transitions exactly where it does today.  Only the half-cycle
+// tick that div=6 adds sits between clk_sys edges -- which is the entire
+// reason for the move.
+wire [2:0] v60_tb_div = cfg_v25_table ? 3'd4 : 3'd6;
+wire       v60_ce_rise, v60_ce_fall;
+wire [2:0] v60_phase;
+
+s32_v60_timebase v60_timebase (
+    .clk_ram(clk_ram), .rst(rst), .pause(pause), .div(v60_tb_div),
+    .ce_rise(v60_ce_rise), .ce_fall(v60_ce_fall), .phase(v60_phase)
+);
+
+// Multi 32 fallback: re-time the existing NCO onto clk_ram as a one-tick
+// pulse.  ce_cpu arrives already pause-gated from the emu top.  No falling
+// edge is produced -- there isn't one to produce at 20 MHz -- so a T-state
+// machine must not claim to support this path.
+reg ce_cpu_ram_d = 1'b0;
+always @(posedge clk_ram) ce_cpu_ram_d <= ce_cpu;
+wire ce_cpu_ram = ce_cpu & ~ce_cpu_ram_d;
+
+wire v60_bus_ce = is_multi32 ? ce_cpu_ram : v60_ce_rise;
+
 s32_v60_bus vbus (
-    .clk(clk_sys), .ce(ce_cpu), .rst(rst),
+    .clk(clk_ram), .ce(v60_bus_ce), .rst(rst),
     .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),
     .c_wdata(c_wdata), .c_rdata(c_rdata), .c_ack(c_ack),
     .m_req(m_req), .m_we(m_we), .m_addr(m_addr), .m_wdata(m_wdata),

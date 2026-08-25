@@ -10,6 +10,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/s32_core.sv
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60_bus.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cpu/v60/s32_v60_timebase.sv
 # The universal segas32 revision adds the real NEC V25 QIP from segas32.qsf
 # alongside the standard-board protection responders. Runtime descriptors
 # select the real V25 for Golden Axe II/Arabian Fight and the HLE fallback for

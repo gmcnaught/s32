@@ -126,6 +126,16 @@ foreach pat $ungated_names {
     }
 }
 
+# The clk_ram bus adapter (audit S07.3).  Same silent-failure risk as above: if
+# this pattern stops matching, the adapter's cross-domain paths silently fall
+# back to a single clk_ram period -- half the budget they had on clk_sys.
+set v60_bus_regs [get_registers -nowarn {*|s32_v60_bus:vbus|*}]
+set n_bus [get_collection_size $v60_bus_regs]
+note "v60_bus_regs matches $n_bus register(s)"
+if {$n_bus == 0} {
+    bad "get_registers {*|s32_v60_bus:vbus|*} matched nothing -- the clk_ram adapter's multicycle exceptions are applying to NOTHING, so its cross-domain paths are being timed at one clk_ram period instead of two."
+}
+
 # ---------------------------------------------------------------------------
 # Slack, reported not gated.
 # ---------------------------------------------------------------------------
@@ -170,6 +180,7 @@ puts $fh "v60_ungated_count $n_ungated"
 foreach pat $ungated_names {
     puts $fh "ungated_$pat [get_collection_size [get_registers -nowarn "*|s32_v60:v60|${pat}*"]] expected_$expect_reg($pat)"
 }
+puts $fh "v60_bus_regs_count $n_bus"
 puts $fh "worst_setup_slack_v60_reg2reg $s_all"
 puts $fh "worst_setup_slack_from_ungated $s_ung"
 puts $fh "errors $errors"
