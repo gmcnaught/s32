@@ -9,7 +9,16 @@
 undefined/
 scratch/
 roms/
-/docs/
+# /docs/ stays ignored -- it holds unpublished design evidence and, under
+# docs/reference/, NEC's copyrighted scans, which must not be redistributed
+# from a public repository.  The exception below tracks exactly one file: the
+# document catalogue, which is our own writing and is the thing that stops
+# provenance living only in a chat artifact.  Narrow on purpose -- widen it and
+# the evidence tree starts leaking into commits.
+/docs/*
+!/docs/v60/
+/docs/v60/*
+!/docs/v60/REFERENCES.md
 /reference/
 /.codex-mister-build/
 /.playwright-mcp/
