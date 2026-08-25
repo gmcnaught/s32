@@ -31,7 +31,7 @@ s32_v60 #(.START_PC(32'h00000000)) cpu (
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
-    .ce_fall(1'b0), .c_fetch(1'b0), .bmode(1'b1), .ready_n(1'b0),
+    .ce_fall(1'b0), .c_fetch(1'b0), .c_lock(1'b0), .bmode(1'b1), .ready_n(1'b0),
     .berr_n(1'b1), .bfrez_n(1'b1), .hldrq(1'b0),
     .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),
     .c_wdata(c_wdata), .c_rdata(c_rdata), .c_ack(c_ack),

@@ -62,7 +62,7 @@ reg         am_ack = 0;
 
 s32_v60_bus adapter (
     .clk(clk), .ce(ce), .rst(rst),
-    .ce_fall(1'b0), .c_fetch(1'b0), .bmode(1'b1), .ready_n(1'b0),
+    .ce_fall(1'b0), .c_fetch(1'b0), .c_lock(1'b0), .bmode(1'b1), .ready_n(1'b0),
     .berr_n(1'b1), .bfrez_n(1'b1), .hldrq(1'b0),
     .c_req(a_req), .c_we(a_we), .c_addr(a_addr), .c_size(a_size),
     .c_wdata(a_wdata), .c_rdata(a_rdata), .c_ack(a_ack),

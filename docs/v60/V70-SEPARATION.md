@@ -46,6 +46,34 @@ with almost no overlap, and every existing V60 assertion would have to grow a
 "unless V70" clause. That is how the invariants this stack just added stop
 meaning anything.
 
+## The rule for using V70 documents on V60 work
+
+The V70 document is the most detailed NEC bus description we hold, which makes
+it tempting to reach for. **Architecture and encodings may cross. Timing may
+not.**
+
+| may cross | may not |
+|---|---|
+| the ST2-ST0 + MRQ bus-status encoding | any T-state name, count or ordering |
+| which instructions are indivisible (TASI, CAXI) | "asserted during T1", "trailing edge of T2" |
+| that BLOCK spans the whole indivisible operation | the two-clock bus cycle |
+| register set, MMU, exception model, SBT layout | READY/BERR/BFREZ sampling instants |
+| that string instructions are interruptible | the three TIO states and dynamic bus sizing |
+
+The V70 has **eight** bus states and a **two-clock** minimum cycle with no T3
+or T4. The V60 has **seven** and a three-clock short / four-clock normal cycle
+with BMODE. A V70 timing statement transplanted into a V60 T-state machine is
+not an approximation of the right answer -- it describes a different machine,
+and it would be invisible in simulation because our own benches would simply
+encode it too.
+
+Concretely, for the bus-lock work: take from the V70 document that TASI and
+CAXI are the indivisible pair and that the lock covers the whole operation
+including any interrupt-acknowledge cycle. Derive **when** it asserts and
+releases from the V60's own T-states in `s32_v60_bus.sv`, not from the V70's
+T1/T2. Where a statement's V60 form is genuinely unknown, say so rather than
+substituting the V70's.
+
 ## What a V70 BIU would need
 
 Not scheduled — Multi 32 is out of production scope — but recorded so the size

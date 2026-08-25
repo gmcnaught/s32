@@ -74,6 +74,12 @@ echo "== Timing analysis =="
 # than fatal.  The STA summary is the artifact that matters.
 quartus_sta "$PROJECT" || echo "(STA reported failing paths -- see the summary)"
 
+# Where the failing paths actually are.  The summary alone says a domain misses
+# and not which registers, which is not enough to fix anything and costs
+# another fit to find out.
+quartus_sta -t verif/timing/worst_paths.tcl || \
+  echo "(worst-path report failed; summary above still stands)"
+
 echo
 echo "== Output =="
 mkdir -p "$OUTDIR"

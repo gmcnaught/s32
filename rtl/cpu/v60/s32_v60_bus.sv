@@ -106,9 +106,15 @@ module s32_v60_bus #(
     output            ds,          // data strobe
     output            ube,         // upper byte enable
     output            hldak,       // hold acknowledge
+    // BLOCK, active low: asserted for the whole of an indivisible operation.
+    // Semantics from the µPD70632 document (TASI/CAXI, lock spans the whole
+    // operation); the WHEN is this part's own bus sequence, not the V70's
+    // two-clock T1/T2 -- see docs/v60/V70-SEPARATION.md.
+    output            block_n,
     output            rt_ep,       // retry / error-processing
 
     input             c_fetch,     // 1 = this access is an instruction prefetch
+    input             c_lock,      // indivisible operation in progress
     input             bmode,       // sampled falling T2: 1 = short cycle
     input             ready_n,     // sampled falling T3 and each TW, active low
     input             berr_n,      // bus error, active low
@@ -163,19 +169,18 @@ wire accept_now = (ts == T_TI) && (io_recover == 2'd0)
                   && c_req && c_req_armed && !c_ack;
 wire first_now  = DATABOOK_TIMING && accept_now;
 
-wire [31:0] eff_addr  = first_now ? c_addr  : addr_r;
-wire [1:0]  eff_size  = first_now ? c_size  : size_r;
-wire [31:0] eff_wdata = first_now ? c_wdata : wdata_r;
-wire        eff_we    = first_now ? c_we    : we_r;
-wire [1:0]  eff_cyc   = first_now ? 2'd0    : cyc;
-// Physical 16-bit cycles - 1 for the access currently being accepted.  This
-// is computed from the CPU's inputs and must be latched on every accept, in
-// both timing modes -- deriving it only on the databook path leaves cycs
-// unassigned and the access never terminates.
+// Physical 16-bit cycles - 1 for the access currently being accepted, computed
+// from the CPU's inputs.  Latched on every accept in both timing modes.
 wire [1:0]  acc_cycs  = (c_size == 2'd0) ? 2'd0
                       : (c_size == 2'd1) ? (c_addr[0] ? 2'd1 : 2'd0)
                                          : (c_addr[0] ? 2'd2 : 2'd1);
-wire [1:0]  eff_cycs  = first_now ? acc_cycs : cycs;
+
+// NOTE: there were six eff_* wires here selecting between the CPU's inputs and
+// the latched copies.  Every one of them was dead -- drive_cycle is called
+// with c_* directly from T_TI and with the latched regs from T_T1, so nothing
+// ever read them.  Removed: they synthesised away, but they described a
+// datapath that does not exist, which is worse than useless when someone is
+// tracing a critical path through this module.
 
 // READY.  With half-clock sampling the falling-edge latch decides; without it
 // the transition uses m_ack at the enabled edge exactly as the pre-existing
@@ -201,6 +206,7 @@ assign mrq_n = ~bcy;
 assign rw_n  = ~m_we;
 assign ube   = m_be[1];
 assign hldak = (ts == T_TH);
+assign block_n = ~c_lock;
 assign rt_ep = ~berr_n;
 // Data accesses are single mode: this adapter is only ever handed one operand
 // at a time, and string-mode accesses are an architectural feature the core

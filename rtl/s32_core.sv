@@ -260,7 +260,7 @@ wire is_multi32 = (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
 // ---------------------------------------------------------------------------
 // CPU + bus adapter
 // ---------------------------------------------------------------------------
-wire        c_req, c_fetch, c_we, c_ack;
+wire        c_req, c_fetch, c_lock, c_we, c_ack;
 wire [31:0] c_addr, c_wdata, c_rdata;
 wire [1:0]  c_size;
 wire        m_req, m_we, m_ack;
@@ -329,7 +329,8 @@ s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAM
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .fast_ifetch(fast_v60),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
-    .bus_req(c_req), .bus_fetch(c_fetch), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
+    .bus_req(c_req), .bus_fetch(c_fetch), .bus_lock(c_lock),
+    .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
     .nmi_n(1'b1),
@@ -398,13 +399,36 @@ wire v60_bus_ce = is_multi32 ? ce_cpu_ram : v60_ce_rise;
 // I/O recovery.  Byte and aligned 16-bit accesses are unaffected either way;
 // multi-cycle accesses go 5->6 and 7->9 clocks.
 //
-// The audit is explicit that changing the execute:bus ratio in isolation
-// breaks shipped games, and names the regression gate: the Golden Axe II /
-// Spider-Man / Rad Rally black-screen cases.  That gate needs real hardware.
-// Turning these on without running it would be shipping a timing change whose
-// only detector we cannot operate -- so they stay off until someone has.
-// verif/v60/tb_v60_tstate.sv measures both settings so the delta is known
-// rather than guessed.
+// THE GATE HAS NOW BEEN RUN ON HARDWARE, AND IT FAILS.  Both stay off.
+//
+// Measured on a real DE10-Nano, 2026-08-25, three fits from this tree:
+//
+//   DATABOOK_TIMING=0 HALF_CLOCK_SAMPLING=0   clk_ram +0.224 ns, TNS 0
+//       Golden Axe II, Spider-Man, Rad Rally and Dark Edge all render.
+//   DATABOOK_TIMING=1 HALF_CLOCK_SAMPLING=1   clk_ram -0.546 ns, TNS -1.501
+//       all four fail -- but the fit misses timing, so this run proves nothing.
+//   DATABOOK_TIMING=1 HALF_CLOCK_SAMPLING=0   clk_ram +0.648 ns, TNS 0
+//       CLOSES TIMING, better than the shipping build and 131 ALMs smaller --
+//       and all four games are black, sampled over 90 seconds to rule out a
+//       slow boot or a fade.
+//
+// The third build is the one that matters: it is timing-clean, so the failure
+// cannot be dismissed as a closure artifact.  The audit's prediction is
+// confirmed exactly -- "changing the execute:bus ratio in isolation breaks
+// shipped games".  Three clocks per physical cycle instead of two is correct
+// per databook S4 and this core cannot absorb it, because the serial
+// microsequencer's execute rate was tuned against the old bus cost.
+//
+// So DATABOOK_TIMING is not a switch waiting for permission.  It is blocked on
+// audit step S07.6 -- attacking execution timing with measured data -- which
+// the document catalogue records as a research project rather than an
+// implementation step, because no NEC publication states per-instruction
+// cycle counts.  See docs/v60/DATABOOK-TIMING-RESULT.md.
+//
+// HALF_CLOCK_SAMPLING is separately blocked on timing: it is what pushed
+// clk_ram negative, and it buys nothing while DATABOOK_TIMING is off.
+//
+// verif/v60/tb_v60_tstate.sv measures both settings so the delta stays known.
 s32_v60_bus #(
     .DATABOOK_TIMING(1'b0),
     .HALF_CLOCK_SAMPLING(1'b0)
@@ -418,11 +442,11 @@ s32_v60_bus #(
     // anywhere, which is exactly why they were absent before -- but a core
     // that cannot emit them cannot be checked against a µPD71613 decode
     // table, and "tied off" is a different statement from "not modelled".
-    .st(), .mrq_n(), .rw_n(), .bcy(), .ds(), .ube(), .hldak(), .rt_ep(),
+    .st(), .mrq_n(), .rw_n(), .bcy(), .ds(), .ube(), .hldak(), .rt_ep(), .block_n(),
     // Board tie-offs.  BMODE high selects the short cycle; READY is asserted
     // (active low) because the memory subsystem's own m_ack is the wait
     // mechanism on this board; no bus error, freeze or hold exists here.
-    .c_fetch(c_fetch),
+    .c_fetch(c_fetch), .c_lock(c_lock),
     .bmode(1'b1), .ready_n(1'b0), .berr_n(1'b1), .bfrez_n(1'b1), .hldrq(1'b0)
 );
 
@@ -489,7 +513,70 @@ wire        br_pram_we;
 wire [7:0]  br_pram_addr;
 wire [7:0]  br_pram_wdata;
 wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
-wire        work_pr_we = (pr_req && pr_we) || br_pram_we;
+// Indivisible-operation interlock (audit §04).
+//
+// Exposing BLOCK as a pin makes the core electrically describable; it does not
+// fix anything here, because System 32 has no external arbiter to honour it.
+// The hazard is internal: work RAM is a true dual-port array whose port B the
+// protection engines write with zero arbitration, so a TASI read-modify-write
+// -- two transactions with the request dropped between them, measured gap
+// >= 7 execute cycles, about 290 ns -- can have the protection MCU write the
+// same byte in the middle of it.  TASI is the architecture's atomic primitive;
+// if it is not atomic, the mailbox protocol built on it has no foundation.
+//
+// So port B is held off for the duration of the lock, and its acknowledgement
+// with it, which is what makes the protection module wait rather than lose the
+// write.  The lock covers one byte access pair and nothing else -- only TASI
+// raises it, because only TASI and CAXI carry the manual's `rwi` access type.
+// DEFAULT OFF, and the reason is a measured regression I cannot yet explain.
+//
+// ATTRIBUTED 2026-08-25 by a single-variable A/B (PR #12).  Two builds off the
+// same tree differing in this localparam alone, same toolchain, same device:
+//
+//   arm A  PROT_INTERLOCK=0   4/4 render   ga2 92.5  spidman 104.3  radr 88.8  darkedge 152.1
+//   arm B  PROT_INTERLOCK=1   1/4 render   ga2  0.0  spidman   0.0  radr 45.4  darkedge  65.5*
+//
+//   (mean luma of the first of two screenshots taken ~45 s apart; * darkedge
+//   under arm B is a FLAT olive frame, 1464 B, byte-identical across both
+//   samples -- frozen, not rendering)
+//
+// This corrects the first report, which said Rad Rally and Dark Edge kept
+// working.  Dark Edge does NOT: its 1464-byte shot was read as content because
+// it is not pure black, but it is a single flat colour and it never changes.
+// Only Rad Rally survives.  So the earlier puzzle -- "the one title that USES
+// the gated path is the one that still works" -- was an artefact of that
+// misreading and does not need explaining.  Dark Edge fails, which is what a
+// broken interlock should do.
+//
+// The A/B also exonerates the dead-wire removal that shipped in the same build
+// as the first attempt: arm A contains it and renders everything.
+//
+// What is still NOT explained is the mechanism for Golden Axe II and
+// Spider-Man.  For those two, pr_req resolves to dke_pr_req or jl_pr_req (both
+// tied low unless an HLE protection module is selected) and br_pram_we comes
+// from s32_prot_brival, whose pram_we is reachable only through a state
+// guarded by `enable` -- re-verified.  So work_pr_we and pr_ack below are
+// provably constant-0 for them with the lock on or off, and yet the hardware
+// difference is total and reproducible.  That points away from function and
+// towards synthesis/placement: PROT_INTERLOCK=1 is what gives c_lock real
+// fanout, and arm B does close timing everywhere except a -0.065 ns path in
+// the vendored HDMI OSD/ascal chain (osd_mux -> scaler filter-tap RAM), which
+// screenshots do not traverse -- they are captured at 320x224, native, ahead
+// of the scaler.
+//
+// Next probe when this is picked up: refit arm B with a different fitter seed.
+// Same tree rendering fine on another seed means placement; blacking out again
+// means the logic.  That discriminates the two remaining hypotheses in one
+// build.
+//
+// So the lock SIGNAL and the BLOCK pin stay -- they cost nothing and make the
+// core electrically describable -- and the part that changes behaviour is off
+// until the regression is understood.  Turning this on without that would be
+// shipping a fault to fix a hazard, which is a bad trade even though the
+// hazard is real.
+localparam  PROT_INTERLOCK = 1'b0;
+wire        pr_locked  = PROT_INTERLOCK && c_lock;
+wire        work_pr_we = ((pr_req && pr_we) || br_pram_we) && !pr_locked;
 wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
                                          ? {{(WRAM_ADDR_WIDTH-7){1'b0}},
                                             br_pram_addr[7:1]}
@@ -514,7 +601,7 @@ s32_big_dpram #(
 );
 
 always @(posedge clk_sys)
-    pr_ack <= pr_req;
+    pr_ack <= pr_req && !pr_locked;   // stall, do not drop, while locked
 
 // ---------------------------------------------------------------------------
 // V60 fetch-window coherency feed (audit V60-D2)
