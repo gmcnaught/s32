@@ -248,10 +248,21 @@ wire        use_fast_ifetch = FAST_IFETCH && fast_ifetch && fetch_is_rom;
 // instruction genuinely lacks bytes -- is never blocked, because a program
 // executing from an unusual region must still run.  Blocking lookahead cannot
 // starve the machine: the demand term re-evaluates every cycle.
-wire        fetch_spec_safe = (fetch_frontier[23:21] == 3'b000)  // ROM   000000-1FFFFF
-                           || (fetch_frontier[23:20] == 4'h2)    // work  200000-2FFFFF
-                           || (fetch_frontier[23:20] == 4'h7)    // shared 700000-7FFFFF
-                           || (fetch_frontier[23:20] == 4'hF);   // ROM hi F00000-FFFFFF
+// EXPERIMENT (PR #15): the region decode is computed exactly as in the real
+// change, so the netlist perturbation -- the 32-bit compare, the extra logic
+// cone, the placement it forces -- is retained, but the RESULT is discarded
+// and the guard term is forced true.  This build is FUNCTIONALLY IDENTICAL to
+// main.  If it still blacks out the games, the failures attributed to
+// DATABOOK_TIMING, PROT_INTERLOCK and this guard are perturbation, not
+// behaviour.  Not for merge.
+wire        fetch_spec_decode = (fetch_frontier[23:21] == 3'b000)  // ROM   000000-1FFFFF
+                             || (fetch_frontier[23:20] == 4'h2)    // work  200000-2FFFFF
+                             || (fetch_frontier[23:20] == 4'h7)    // shared 700000-7FFFFF
+                             || (fetch_frontier[23:20] == 4'hF);   // ROM hi F00000-FFFFFF
+/* verilator lint_off UNUSED */
+wire        fetch_spec_unused = fetch_spec_decode;
+/* verilator lint_on UNUSED */
+wire        fetch_spec_safe  = fetch_spec_decode | 1'b1;   // FORCED TRUE
 reg [7:0]  fb_prev[0:23];   // previous sequential window for tight loops
 reg [31:0] fb_prev_base;
 reg [4:0]  fb_prev_valid;
