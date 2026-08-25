@@ -46,6 +46,11 @@ echo "[3/35] V60 directed suite"
 iverilog -g2012 -o /tmp/s32_v60_dir \
   rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_directed.sv
 vvp /tmp/s32_v60_dir | grep -q "DIRECTED PASS" && echo "V60 DIRECTED: PASS" || { echo "V60 DIRECTED: FAIL"; exit 1; }
+echo "[3b] V60 fetch-window coherency vs other bus masters + physical aliasing"
+iverilog -g2012 -o /tmp/s32_v60_smc_ext \
+  rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smc_ext.sv
+vvp /tmp/s32_v60_smc_ext | grep -q "V60 SMC EXT PASS" || { echo "V60 SMC EXT: FAIL"; exit 1; }
+vvp /tmp/s32_v60_smc_ext +CEDIV=3 | grep -q "V60 SMC EXT PASS" && echo "V60 SMC EXT: PASS" || { echo "V60 SMC EXT (ce=/3): FAIL"; exit 1; }
 echo "[4/35] full-core integration boot (universal + System32-only profile)"
 iverilog -g2012 -DSIMULATION -o /tmp/s32_boot \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \

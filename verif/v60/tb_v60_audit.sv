@@ -25,7 +25,8 @@ s32_v60 #(.START_PC(32'h00000000)) cpu (
     .if_req(), .if_addr(), .if_data(64'd0), .if_ack(1'b0),
     .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
-    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1)
+    .irq_n(1'b1), .irq_vector(8'h00), .irq_ack(), .nmi_n(1'b1),
+    .ext_wr(1'b0), .ext_wr_addr(24'd0), .ext_wr_bytes(3'd0)
 );
 s32_v60_bus adapter (
     .clk(clk), .ce(1'b1), .rst(rst),
@@ -304,7 +305,10 @@ begin
         cpu.r[31] !== 32'h0000_7ff0 || cpu.psw !== 32'h9200_0000 ||
         {ram[16'h3ff9], ram[16'h3ff8]} !== 32'h0000_000b ||
         {ram[16'h3ffb], ram[16'h3ffa]} !== 32'h1000_0000 ||
-        {ram[16'h3ffd], ram[16'h3ffc]} !== 32'h1a00_0008 ||
+        // Audit V60-D1: MAME's EXCEPTION_CODE_AND_SIZE(0x1800 + op1, 8) puts
+        // the level in bits [19:16].  This bench previously encoded the RTL's
+        // malformed {8'h18 + op1[1:0], 8'h00, 16'h0008} (level in [27:24]).
+        {ram[16'h3ffd], ram[16'h3ffc]} !== 32'h1802_0008 ||
         {ram[16'h3fff], ram[16'h3ffe]} !== 32'hdead_beef) begin
         errors = errors + 1;
         $display("CHLVL FRAME FAIL halt=%0d pc=%08x sp=%08x psw=%08x ret=%08x old=%08x code=%08x data=%08x",
