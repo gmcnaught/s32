@@ -530,18 +530,44 @@ wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
 // raises it, because only TASI and CAXI carry the manual's `rwi` access type.
 // DEFAULT OFF, and the reason is a measured regression I cannot yet explain.
 //
-// Deploying this interlock to hardware blacked out Golden Axe II and
-// Spider-Man while Rad Rally and Dark Edge kept working -- and Dark Edge is
-// the title that actually USES the gated path (dke_pr_req), which is the
-// opposite of what a broken interlock should do.  The known-good baseline was
-// re-flashed immediately afterwards and both titles came back (88.9% and 69.0%
-// bright), so the device, the ROMs and the MRAs are not the variable.
+// ATTRIBUTED 2026-08-25 by a single-variable A/B (PR #12).  Two builds off the
+// same tree differing in this localparam alone, same toolchain, same device:
 //
-// My analysis said this is inert for those two games: pr_req resolves to
-// dke_pr_req or jl_pr_req, both tied low unless an HLE protection module is
-// selected, so work_pr_we and pr_ack should be unchanged for them.  The
-// hardware says otherwise, which means the analysis is wrong somewhere and I
-// do not yet know where.
+//   arm A  PROT_INTERLOCK=0   4/4 render   ga2 92.5  spidman 104.3  radr 88.8  darkedge 152.1
+//   arm B  PROT_INTERLOCK=1   1/4 render   ga2  0.0  spidman   0.0  radr 45.4  darkedge  65.5*
+//
+//   (mean luma of the first of two screenshots taken ~45 s apart; * darkedge
+//   under arm B is a FLAT olive frame, 1464 B, byte-identical across both
+//   samples -- frozen, not rendering)
+//
+// This corrects the first report, which said Rad Rally and Dark Edge kept
+// working.  Dark Edge does NOT: its 1464-byte shot was read as content because
+// it is not pure black, but it is a single flat colour and it never changes.
+// Only Rad Rally survives.  So the earlier puzzle -- "the one title that USES
+// the gated path is the one that still works" -- was an artefact of that
+// misreading and does not need explaining.  Dark Edge fails, which is what a
+// broken interlock should do.
+//
+// The A/B also exonerates the dead-wire removal that shipped in the same build
+// as the first attempt: arm A contains it and renders everything.
+//
+// What is still NOT explained is the mechanism for Golden Axe II and
+// Spider-Man.  For those two, pr_req resolves to dke_pr_req or jl_pr_req (both
+// tied low unless an HLE protection module is selected) and br_pram_we comes
+// from s32_prot_brival, whose pram_we is reachable only through a state
+// guarded by `enable` -- re-verified.  So work_pr_we and pr_ack below are
+// provably constant-0 for them with the lock on or off, and yet the hardware
+// difference is total and reproducible.  That points away from function and
+// towards synthesis/placement: PROT_INTERLOCK=1 is what gives c_lock real
+// fanout, and arm B does close timing everywhere except a -0.065 ns path in
+// the vendored HDMI OSD/ascal chain (osd_mux -> scaler filter-tap RAM), which
+// screenshots do not traverse -- they are captured at 320x224, native, ahead
+// of the scaler.
+//
+// Next probe when this is picked up: refit arm B with a different fitter seed.
+// Same tree rendering fine on another seed means placement; blacking out again
+// means the logic.  That discriminates the two remaining hypotheses in one
+// build.
 //
 // So the lock SIGNAL and the BLOCK pin stay -- they cost nothing and make the
 // core electrically describable -- and the part that changes behaviour is off
