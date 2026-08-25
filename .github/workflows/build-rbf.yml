@@ -1,0 +1,88 @@
+name: Build RBF
+
+# Builds the System 32 core into an RBF on ubuntu-latest using Quartus Lite
+# 17.0 in Docker -- the version this project is pinned to.  No self-hosted
+# runner.
+#
+# tools/build.sh used to refuse to run, on the grounds that a Linux/CI path
+# must not produce a public bitstream.  The maintainer has reversed that.  The
+# Windows pipeline (tools/build-s32.bat) remains the one that performs release
+# staging and per-game qualification; this produces a testable artifact.
+#
+# A fit takes the better part of an hour, so this is deliberately not on every
+# push.  It runs on pull requests that touch the bitstream's inputs, which is
+# what makes a stack of RTL changes hardware-testable, and on demand.
+#
+# Note: workflow_dispatch only becomes usable once this file is on the default
+# branch -- GitHub will not list a dispatchable workflow that exists solely on
+# a topic branch.  The pull_request trigger is what works before then.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'rtl/**'
+      - 'sys/**'
+      - 'files.qip'
+      - 'Arcade-SegaSystem32.qsf'
+      - 'Arcade-SegaSystem32.sdc'
+      - 'Arcade-SegaSystem32.sv'
+      - 'tools/build.sh'
+      - '.github/workflows/build-rbf.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'rtl/**'
+      - 'sys/**'
+      - 'files.qip'
+      - 'Arcade-SegaSystem32.qsf'
+      - 'Arcade-SegaSystem32.sdc'
+      - 'Arcade-SegaSystem32.sv'
+      - 'tools/build.sh'
+      - '.github/workflows/build-rbf.yml'
+
+concurrency:
+  group: build-rbf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rbf:
+    name: RBF (Quartus Lite 17.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
+      # Non-login `bash -c`: the image's entrypoint puts Quartus on PATH and a
+      # login shell re-reads /etc/profile and loses it.
+      - name: Build
+        run: |
+          docker run --rm -v "$PWD:/build" raetro/quartus:17.0 \
+            bash -c "cd /build && tools/build.sh _out"
+
+      - name: Upload RBF
+        uses: actions/upload-artifact@v4
+        with:
+          name: segasystem32-rbf
+          path: _out/*.rbf
+          if-no-files-found: error
+
+      - name: Upload Quartus reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quartus-reports
+          path: |
+            output_files/*.rpt
+            output_files/*.summary
+          if-no-files-found: warn
