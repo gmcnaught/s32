@@ -38,9 +38,24 @@ proc bad  {msg} {
 if {![is_project_open]} {
     project_open $project -revision $revision
 }
-create_timing_netlist -post_fit
+
+# create_timing_netlist defaults to the POST-FIT netlist.  There is no
+# -post_fit option -- the only mode flag is -post_map -- and passing one makes
+# Quartus 17.0 try to parse it as an operating condition and die with
+# "Values entered did not match any valid operating conditions".
+create_timing_netlist
 read_sdc
 update_timing_netlist
+
+# If read_sdc found nothing, every path is unconstrained and every check below
+# would pass vacuously.  files.qip registers the SDC
+# (set_global_assignment -name SDC_FILE Arcade-SegaSystem32.sdc), so no clocks
+# means the constraints did not reach the analyser at all.
+set n_clocks [get_collection_size [get_clocks]]
+note "SDC defines $n_clocks clock(s)"
+if {$n_clocks == 0} {
+    bad "no clocks are defined after read_sdc -- the SDC did not reach TimeQuest, so nothing below would mean anything."
+}
 
 # ---------------------------------------------------------------------------
 # The collections the SDC's exceptions are built from.  Patterns duplicated
@@ -94,12 +109,25 @@ proc worst_slack {label paths} {
     return $worst
 }
 
-set all_v60 [get_timing_paths -from $v60_regs -to $v60_regs -setup -npaths 200 -nworst 200]
-set s_all [worst_slack "v60 reg2reg" $all_v60]
+# Slack reporting must not be able to abort the run: the collection checks
+# above are the actual gate, and losing them to a Tcl error in a diagnostic
+# would waste a ~25-minute fit.
+set s_all "unavailable"
+if {[catch {
+    set all_v60 [get_timing_paths -from $v60_regs -to $v60_regs -setup -npaths 200 -nworst 200]
+    set s_all [worst_slack "v60 reg2reg" $all_v60]
+} err]} {
+    note "could not collect V60 register-to-register paths: $err"
+}
 note "worst setup slack, V60 register-to-register: $s_all"
 
-set ung_paths [get_timing_paths -from $v60_ungated -to $v60_regs -setup -npaths 200 -nworst 200]
-set s_ung [worst_slack "ungated-sourced" $ung_paths]
+set s_ung "unavailable"
+if {[catch {
+    set ung_paths [get_timing_paths -from $v60_ungated -to $v60_regs -setup -npaths 200 -nworst 200]
+    set s_ung [worst_slack "ungated-sourced" $ung_paths]
+} err]} {
+    note "could not collect paths from the raw-clk_sys registers: $err"
+}
 note "worst setup slack, from the raw-clk_sys registers: $s_ung"
 note "NOTE: the carve-out TIGHTENS these paths from two cycles to one. A"
 note "      violation appearing here is a previously hidden one surfacing,"
