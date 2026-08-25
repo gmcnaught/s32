@@ -40,7 +40,7 @@ reg         hldrq   = 1'b0;
     wire [2:0] NAME``_st; wire NAME``_mrq_n, NAME``_rw_n, NAME``_bcy;           \
     wire NAME``_ds, NAME``_ube, NAME``_hldak, NAME``_rt_ep;                   \
     s32_v60_bus #(.DATABOOK_TIMING(DB), .HALF_CLOCK_SAMPLING(1'b0)) NAME (    \
-        .clk(clk), .ce(1'b1), .ce_fall(1'b0), .c_fetch(1'b0), .rst(rst),                      \
+        .clk(clk), .ce(1'b1), .ce_fall(1'b0), .c_fetch(1'b0), .c_lock(1'b0), .rst(rst),                      \
         .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),         \
         .c_wdata(c_wdata), .c_rdata(NAME``_rdata), .c_ack(NAME``_ack),        \
         .m_req(NAME``_mreq), .m_we(NAME``_mwe), .m_addr(NAME``_maddr),        \

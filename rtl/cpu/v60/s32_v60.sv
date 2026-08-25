@@ -99,6 +99,10 @@ module s32_v60 #(
     // emit the right NEC bus-status code: instruction prefetch and single-mode
     // data access are different ST2-ST0 encodings.
     output            bus_fetch,
+    // Indivisible-operation lock.  High for the whole of a read-modify-write
+    // that the architecture requires to be atomic, so the board can hold off
+    // other masters.  See the note at bus_lock_r below.
+    output            bus_lock,
     output            bus_we,
     output     [31:0] bus_addr,
     output      [1:0] bus_size,      // 0=byte 1=half 2=word
@@ -498,6 +502,37 @@ reg signed [7:0] rotc_cnt;
 reg [31:0] rotc_val;
 reg        op2val_v;
 reg [2:0]  rmw_kind;   // 0=INC 1=DEC 2=SET1 3=CLR1 4=NOT1 5=TEST1
+
+// ---------------------------------------------------------------------------
+// Indivisible-operation lock (audit §04 "No bus lock; no prefetch range guard")
+// ---------------------------------------------------------------------------
+// The audit's finding: every read-modify-write here is two independently
+// arbitrated transactions with the request explicitly dropped between them --
+// measured gap >= 7 execute cycles, about 290 ns -- during which the
+// protection engines write work RAM on port B of a true dual-port BRAM with
+// zero arbitration.  TASI on work RAM is not atomic against the protection
+// MCU.
+//
+// Which operations actually require atomicity is not a judgement call: the
+// Programmer's Reference marks operands with an access type, and exactly two
+// instructions in the whole set carry `rwi` -- read-modify-write INTERLOCKED.
+// They are TASI and CAXI (docs/v60/v60_operand_access.csv; the µPD70632
+// document names the same pair).  Everything else that reads then writes --
+// INC, DEC, SET1, CLR1, NOT1 -- is plain `rw` and is correctly two separate
+// transactions.  So this lock deliberately covers TASI only.
+//
+// CAXI (opcode 0x4C) is NOT IMPLEMENTED by this core at all; it falls through
+// to the reserved-opcode path.  When it is added it must set this lock too.
+//
+// Scope note: the µPD70632 document supplies the SEMANTICS -- which
+// instructions are indivisible, and that the lock spans the whole operation.
+// It does NOT supply the timing: its BLOCK* is described against a two-clock,
+// eight-state bus that this part does not have.  When the lock asserts and
+// releases here is derived from the V60's own sequence -- from the first
+// physical cycle of the operation to the completion of the last -- not from
+// the V70's T-states.  See docs/v60/V70-SEPARATION.md.
+reg        bus_lock_r;
+assign bus_lock = bus_lock_r;
 reg [1:0]  rmw_dim;
 reg [31:0] xch_addr;
 reg [31:0] xch_addr2;
@@ -1185,6 +1220,7 @@ if (rst) begin
     dbus_req <= 0; dbus_we <= 0; irq_ack <= 0;
     dbus_addr <= 0; dbus_size <= 0; dbus_wdata <= 0;
     halted <= 0;
+    bus_lock_r <= 1'b0;
     // Track the detectors through reset so nothing is manufactured on release
     // and anything seen during reset is correctly discarded.
     nmi_ack_cnt <= nmi_edge_cnt;
@@ -2904,6 +2940,7 @@ else if (ce) begin
         end
         else if (dack) begin
             dbus_req <= 0; dbus_we <= 0;
+            bus_lock_r <= 1'b0;   // last cycle of the indivisible operation
             st <= S_NEXT;
         end
     end
@@ -4823,6 +4860,7 @@ task automatic exec_op;
     end
     8'he0, 8'he1: begin // TASI
         total_len <= 5'd1 + len1;
+        bus_lock_r <= 1'b1;     // indivisible: hold until S_TASI2 completes
         st <= S_TASI1;
     end
     8'hde, 8'hdf: begin // PREPARE: push FP (R30); FP=SP; SP -= imm

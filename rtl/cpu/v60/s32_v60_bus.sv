@@ -106,9 +106,15 @@ module s32_v60_bus #(
     output            ds,          // data strobe
     output            ube,         // upper byte enable
     output            hldak,       // hold acknowledge
+    // BLOCK, active low: asserted for the whole of an indivisible operation.
+    // Semantics from the µPD70632 document (TASI/CAXI, lock spans the whole
+    // operation); the WHEN is this part's own bus sequence, not the V70's
+    // two-clock T1/T2 -- see docs/v60/V70-SEPARATION.md.
+    output            block_n,
     output            rt_ep,       // retry / error-processing
 
     input             c_fetch,     // 1 = this access is an instruction prefetch
+    input             c_lock,      // indivisible operation in progress
     input             bmode,       // sampled falling T2: 1 = short cycle
     input             ready_n,     // sampled falling T3 and each TW, active low
     input             berr_n,      // bus error, active low
@@ -200,6 +206,7 @@ assign mrq_n = ~bcy;
 assign rw_n  = ~m_we;
 assign ube   = m_be[1];
 assign hldak = (ts == T_TH);
+assign block_n = ~c_lock;
 assign rt_ep = ~berr_n;
 // Data accesses are single mode: this adapter is only ever handed one operand
 // at a time, and string-mode accesses are an architectural feature the core
