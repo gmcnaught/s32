@@ -21,8 +21,10 @@
 //     un-dispatched 0x5C/0x5F sub-opcodes (MAME UNHANDLED). MMU/TLB effects are
 //     absent like MAME, but CLRTLB still decodes its complete operand. Address-
 //     trap and separate IN/OUT-space side effects remain outside the S32 profile.
-//     The V70 (IS_V70=1) 32-bit external bus is declared but s32_v60_bus still
-//     issues 16-bit cycles; System 32 is V60 only, so the parameter is unused.
+//     IS_V70 here selects only the Processor ID Register value, which is an
+//     architectural difference.  The V70's 32-bit external BUS is a separate
+//     implementation and s32_v60_bus no longer pretends to offer it --
+//     see docs/v60/V70-SEPARATION.md.
 //
 //  Bus: logical access port; unaligned/size handled by s32_v60_bus adapter.
 //============================================================================
@@ -93,6 +95,10 @@ module s32_v60 #(
     // sites drive dbus_* and observe `dack`, which is the bus ack gated to the
     // data owner so a prefetch ack is never mistaken for a data completion.
     output            bus_req,
+    // Which internal port owns the current access.  The adapter needs it to
+    // emit the right NEC bus-status code: instruction prefetch and single-mode
+    // data access are different ST2-ST0 encodings.
+    output            bus_fetch,
     output            bus_we,
     output     [31:0] bus_addr,
     output      [1:0] bus_size,      // 0=byte 1=half 2=word
@@ -173,6 +179,7 @@ reg        bus_req_d;
 wire sel_d  = (bus_owner == OWN_D)  || (bus_owner == OWN_NONE && dbus_req && !bus_req_d);
 wire sel_pf = (bus_owner == OWN_PF) || (bus_owner == OWN_NONE && !dbus_req && pf_req && !bus_req_d);
 assign bus_req   = sel_d ? dbus_req   : (sel_pf ? pf_req : 1'b0);
+assign bus_fetch = sel_pf && !sel_d;
 assign bus_we    = sel_d ? dbus_we    : 1'b0;      // prefetch is read-only
 assign bus_addr  = sel_d ? dbus_addr  : pf_addr;
 assign bus_size  = sel_d ? dbus_size  : 2'd2;      // prefetch is 32-bit

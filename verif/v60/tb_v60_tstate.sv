@@ -37,16 +37,16 @@ reg         hldrq   = 1'b0;
     wire [31:0] NAME``_rdata; wire NAME``_ack;                                \
     wire NAME``_mreq, NAME``_mwe; wire [23:1] NAME``_maddr;                   \
     wire [15:0] NAME``_mwdata; wire [1:0] NAME``_mbe;                         \
-    wire [2:0] NAME``_st; wire NAME``_mrq, NAME``_rw_n, NAME``_bcy;           \
+    wire [2:0] NAME``_st; wire NAME``_mrq_n, NAME``_rw_n, NAME``_bcy;           \
     wire NAME``_ds, NAME``_ube, NAME``_hldak, NAME``_rt_ep;                   \
     s32_v60_bus #(.DATABOOK_TIMING(DB), .HALF_CLOCK_SAMPLING(1'b0)) NAME (    \
-        .clk(clk), .ce(1'b1), .ce_fall(1'b0), .rst(rst),                      \
+        .clk(clk), .ce(1'b1), .ce_fall(1'b0), .c_fetch(1'b0), .rst(rst),                      \
         .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),         \
         .c_wdata(c_wdata), .c_rdata(NAME``_rdata), .c_ack(NAME``_ack),        \
         .m_req(NAME``_mreq), .m_we(NAME``_mwe), .m_addr(NAME``_maddr),        \
         .m_wdata(NAME``_mwdata), .m_be(NAME``_mbe),                           \
         .m_rdata(16'h5A5A), .m_ack(NAME``_mreq),                              \
-        .st(NAME``_st), .mrq(NAME``_mrq), .rw_n(NAME``_rw_n),                 \
+        .st(NAME``_st), .mrq_n(NAME``_mrq_n), .rw_n(NAME``_rw_n),                 \
         .bcy(NAME``_bcy), .ds(NAME``_ds), .ube(NAME``_ube),                   \
         .hldak(NAME``_hldak), .rt_ep(NAME``_rt_ep),                           \
         .bmode(bmode), .ready_n(ready_n), .berr_n(1'b1), .bfrez_n(1'b1),      \
@@ -219,7 +219,7 @@ initial begin
                 bcy_n = bcy_n + 1;
                 if (dbk_rw_n !== ~dbk_mwe)  bad_rw  = bad_rw + 1;
                 if (dbk_ube  !== dbk_mbe[1]) bad_ube = bad_ube + 1;
-                if (dbk_mrq !== dbk_bcy)     bad_rw  = bad_rw + 1;
+                if (dbk_mrq_n !== ~dbk_bcy)  bad_rw  = bad_rw + 1;
             end
             if (dbk_ds) ds_n = ds_n + 1;
         end

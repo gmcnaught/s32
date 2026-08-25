@@ -260,7 +260,7 @@ wire is_multi32 = (SYSTEM32_ONLY || GAME_ONLY) ? 1'b0 : cfg_multi32;
 // ---------------------------------------------------------------------------
 // CPU + bus adapter
 // ---------------------------------------------------------------------------
-wire        c_req, c_we, c_ack;
+wire        c_req, c_fetch, c_we, c_ack;
 wire [31:0] c_addr, c_wdata, c_rdata;
 wire [1:0]  c_size;
 wire        m_req, m_we, m_ack;
@@ -329,7 +329,7 @@ s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAM
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .fast_ifetch(fast_v60),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
-    .bus_req(c_req), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
+    .bus_req(c_req), .bus_fetch(c_fetch), .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
     .bus_wdata(c_wdata), .bus_rdata(c_rdata), .bus_ack(c_ack),
     .irq_n(irq_n), .irq_vector(irq_vector), .irq_ack(),
     .nmi_n(1'b1),
@@ -418,10 +418,11 @@ s32_v60_bus #(
     // anywhere, which is exactly why they were absent before -- but a core
     // that cannot emit them cannot be checked against a µPD71613 decode
     // table, and "tied off" is a different statement from "not modelled".
-    .st(), .mrq(), .rw_n(), .bcy(), .ds(), .ube(), .hldak(), .rt_ep(),
+    .st(), .mrq_n(), .rw_n(), .bcy(), .ds(), .ube(), .hldak(), .rt_ep(),
     // Board tie-offs.  BMODE high selects the short cycle; READY is asserted
     // (active low) because the memory subsystem's own m_ack is the wait
     // mechanism on this board; no bus error, freeze or hold exists here.
+    .c_fetch(c_fetch),
     .bmode(1'b1), .ready_n(1'b0), .berr_n(1'b1), .bfrez_n(1'b1), .hldrq(1'b0)
 );
 
