@@ -407,7 +407,7 @@ wire v60_bus_ce = is_multi32 ? ce_cpu_ram : v60_ce_rise;
 // rather than guessed.
 s32_v60_bus #(
     .DATABOOK_TIMING(1'b1),
-    .HALF_CLOCK_SAMPLING(1'b1)
+    .HALF_CLOCK_SAMPLING(1'b0)
 ) vbus (
     .clk(clk_ram), .ce(v60_bus_ce), .ce_fall(v60_ce_fall), .rst(rst),
     .c_req(c_req), .c_we(c_we), .c_addr(c_addr), .c_size(c_size),
