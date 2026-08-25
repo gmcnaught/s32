@@ -135,6 +135,59 @@ if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for
         post_message -type info "s32 SDC: no fp_a registers found (unexpected unless S32_V60_NO_FP is defined)"
     }
 }
+# ---------------------------------------------------------------------------
+# V60 bus adapter: clk_ram domain (audit S07.3)
+# ---------------------------------------------------------------------------
+# s32_v60_bus moved from clk_sys to clk_ram so the V60 clock's falling edge is
+# representable (clk_sys / f_V60 = 2.9996 -- odd -- so there is no clk_sys tick
+# at the half period, and databook S4's half-clock sampling points cannot be
+# expressed on it at all).  clk_ram is exactly 2x clk_sys from the same PLL at
+# phase 0, so this is a SYNCHRONOUS multi-rate boundary, not an asynchronous
+# one: no synchronisers, but the default analysis now gives these paths a
+# single clk_ram period (~10.35 ns) where they previously had a full clk_sys
+# period (~20.7 ns).
+#
+# Nothing about the data changed -- only the clock it is captured on.  The
+# adapter's state advances solely on its ce_rise, once every 4 or 6 clk_ram
+# ticks (41.4 or 62.1 ns), and the CPU holds the request payload stable for the
+# whole access, which invariant B2 in s32_v60_bus.sv asserts every run.  So the
+# exception below restores EXACTLY the budget these paths had before the move
+# and nothing more: two clk_ram cycles == 20.7 ns == one clk_sys cycle.
+#
+# Deliberately not larger.  A wider window would be defensible from the ce_rise
+# spacing alone, but this design has a documented history of exceptions that
+# rested on unasserted premises, so the number stays at "what it had before"
+# until something measured argues otherwise.
+# Why the default analysis is pessimistic rather than wrong: every clk_sys edge
+# coincides with an EVEN clk_ram edge, and the adapter's registers only ever
+# launch on its ce_rise, which lands on an even tick for both production
+# divisors (6 ticks = 3 clk_sys, 4 = 2).  So a real launch is always 2 clk_ram
+# ticks from its capture.  STA does not know about ce_rise and assumes any
+# clk_ram edge can launch, which is where the 1-cycle figure comes from.  The
+# exception corrects for exactly that and nothing else.
+set v60_bus_regs [get_registers -nowarn {*|s32_v60_bus:vbus|*}]
+if {[get_collection_size $v60_bus_regs] > 0} {
+    # Everything crossing the boundary in either direction: the CPU handshake
+    # AND the m_* interface to the clk_sys memory subsystem.  Left broad on
+    # purpose -- enumerating the far side would mean naming half of s32_core
+    # and would rot the moment a peripheral moves.
+    set_multicycle_path -setup 2 -from $v60_bus_regs
+    set_multicycle_path -hold  1 -from $v60_bus_regs
+    set_multicycle_path -setup 2 -to   $v60_bus_regs
+    set_multicycle_path -hold  1 -to   $v60_bus_regs
+
+    # ...except the adapter's own internal clk_ram -> clk_ram paths, which get
+    # no such relaxation.  A rule naming both -from and -to is more specific
+    # and takes priority over the two broad ones above.  Without this the move
+    # to clk_ram would quietly hand the adapter's own state machine twice the
+    # time it has -- the same shape of mistake the raw-clk_sys carve-out above
+    # exists to prevent.
+    set_multicycle_path -setup 1 -from $v60_bus_regs -to $v60_bus_regs
+    set_multicycle_path -hold  0 -from $v60_bus_regs -to $v60_bus_regs
+} else {
+    post_message -type critical_warning "s32 SDC: no s32_v60_bus registers matched; the clk_ram adapter exception is not being applied"
+}
+
 # Sprite words 0..6 are loaded at least two fetch clocks before decode; word 7
 # is intentionally excluded because clip commands consume it on the very next
 # decode edge.  x0/y0 are latched before the scale/row/pixel states consume

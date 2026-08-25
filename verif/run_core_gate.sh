@@ -11,6 +11,7 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 CORE_SRC="rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv
+     rtl/cpu/v60/s32_v60_timebase.sv
      rtl/video/*.sv rtl/crt_adjust.sv
      rtl/audio/s32_rf5c68.sv rtl/audio/s32_multipcm.sv
      rtl/audio/s32_audio_mix.sv rtl/audio/s32_soundsys.sv
