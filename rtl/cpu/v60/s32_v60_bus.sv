@@ -174,16 +174,101 @@ always @(posedge clk) begin
     end
 end
 
-// Reset is a bus epoch boundary: neither a held CPU acknowledgement nor an
-// in-flight physical request may survive it.
+// ---------------------------------------------------------------------------
+// Adapter-side handshake invariants (audit S03 / S07.2)
+// ---------------------------------------------------------------------------
+// Immediate assertions rather than concurrent SVA: Icarus, which is what this
+// repo's benches and CI run, rejects `assert property`.  The audit's
+// `c_ack |-> $stable(c_addr, c_size, c_we)` is therefore expressed as a shadow
+// copy latched at accept and compared while the access is in flight.
+//
+// Fatal by default; verif/v60/tb_v60_invariants.sv builds with
+// +define+V60_INVARIANT_NONFATAL to observe a fire and keep running.
 `ifndef SYNTHESIS
+integer v60bus_inv_fails = 0;
+
+task automatic v60bus_inv_fail(input [8*8:1] id, input [8*64:1] what);
+begin
+    v60bus_inv_fails = v60bus_inv_fails + 1;
+    $display("V60BUS-INVARIANT FAIL %0s: %0s  (bst=%0d c_req=%0b c_ack=%0b)",
+             id, what, bst, c_req, c_ack);
+`ifndef V60_INVARIANT_NONFATAL
+    $fatal(1, "V60 bus-adapter invariant violated");
+`endif
+end
+endtask
+
+// B1  Reset is a bus epoch boundary: neither a held CPU acknowledgement nor an
+//     in-flight physical request may survive it.
+//
+//     This check is pre-existing but was doing nothing under Icarus, in two
+//     separate ways, and both are worth recording because they are easy to
+//     re-introduce:
+//
+//       * its guard was `!$isunknown({c_ack, m_req})`, and Icarus 13.0 returns
+//         1 from $isunknown() for ANY concatenation argument regardless of the
+//         values in it -- so the guard was permanently false and the assertion
+//         never ran.  Verified with a two-line reproducer; $isunknown() on the
+//         individual signals is correct.  Nothing anywhere in this tree should
+//         pass a concatenation to $isunknown().  Use === / !==, which are
+//         X-safe by construction and need no guard at all.
+//       * the checks were bare `assert (...)` statements.  Icarus prints a
+//         failure and walks on, so even had the guard passed, the bench would
+//         still have reached its own PASS marker and the runner would have
+//         reported success.
 reg reset_sampled = 1'b0;
 always @(posedge clk) reset_sampled <= rst;
 always @(negedge clk)
-    if (reset_sampled && !$isunknown({c_ack,m_req})) begin
-        assert (!c_ack);
-        assert (!m_req);
+    if (reset_sampled === 1'b1) begin
+        if (c_ack === 1'b1) v60bus_inv_fail("B1", "c_ack survived reset");
+        if (m_req === 1'b1) v60bus_inv_fail("B1", "m_req survived reset");
     end
+
+// B2  The accepted payload is stable from accept to acknowledgement.  The
+//     adapter latches addr/size/we into addr_r/size_r/we_r on the accepting
+//     edge and never re-reads the CPU-side inputs, so a payload that moved
+//     underneath it would complete a transaction against an address the CPU
+//     believes it never issued -- silently, and only on some cadences, since
+//     the accept and the ack sit on opposite sides of the enable split.
+//     c_wdata is deliberately NOT in the contract: it is latched into wdata_r
+//     at accept and never sampled again.
+reg        inv_inflight = 1'b0;
+reg [31:0] inv_addr;
+reg [1:0]  inv_size;
+reg        inv_we;
+
+always @(posedge clk) begin
+    if (rst) begin
+        inv_inflight <= 1'b0;
+    end
+    else begin
+        // No blanket $isunknown() guard: !== is already X-safe, and a guard
+        // over every signal disables all three checks whenever any one of them
+        // is momentarily X.  inv_inflight is only ever set alongside the
+        // shadow copies, so they cannot be X while it is high.
+        if (inv_inflight === 1'b1) begin
+            if (c_addr !== inv_addr)
+                v60bus_inv_fail("B2", "c_addr changed while the access was in flight");
+            else if (c_size !== inv_size)
+                v60bus_inv_fail("B2", "c_size changed while the access was in flight");
+            else if (c_we !== inv_we)
+                v60bus_inv_fail("B2", "c_we changed while the access was in flight");
+        end
+        if (ce) begin
+            // accept: the same condition I_IDLE uses to latch
+            if (bst == I_IDLE && c_req && c_req_armed && !c_ack) begin
+                inv_inflight <= 1'b1;
+                inv_addr     <= c_addr;
+                inv_size     <= c_size;
+                inv_we       <= c_we;
+            end
+            // completion: the edge that raises c_ack ends the contract
+            else if (bst == I_WAIT && m_ack && cyc == cycs) begin
+                inv_inflight <= 1'b0;
+            end
+        end
+    end
+end
 `endif
 
 endmodule

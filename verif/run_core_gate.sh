@@ -72,6 +72,22 @@ run exec_retire "" \
     "rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/common/tb_v60_exec_retire.sv" \
     tb_v60_exec_retire "V60 EXEC RETIRE PASS"
 
+# The bus-handshake invariants, deliberately violated.  Built NON-fatal so the
+# bench can observe each fire and keep going; everywhere else they are $fatal.
+# Needs the core sources because the SDC-premise assertion lives in
+# s32_v60_exec_cadence, which is part of s32_core.
+run invariants "$CADENCE_DEFS -DV60_INVARIANT_NONFATAL" \
+    "$CORE_SRC verif/v60/tb_v60_invariants.sv" \
+    tb_v60_invariants "V60 INVARIANTS PASS"
+
+# Constraints, not RTL: no simulator can catch this one.
+echo -n "      "
+if python3 verif/timing/check_v60_ce_premise.py; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); failed="$failed ce_premise"
+fi
+
 echo "======================================================"
 echo "CORE ICARUS GATE: $pass passed, $fail failed${failed:+ -> FAILED:$failed}"
 [ "$fail" -eq 0 ] && echo "CORE ICARUS GATE: ALL PASS"

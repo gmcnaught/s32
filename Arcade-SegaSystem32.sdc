@@ -96,6 +96,34 @@ if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for
     set_multicycle_path -setup 2 -from $v60_regs -to $v60_regs
     set_multicycle_path -hold 1 -from $v60_regs -to $v60_regs
 
+    # ...except the registers that deliberately run on the RAW clk_sys rather
+    # than the execution enable.  They exist to catch events that occur BETWEEN
+    # enabled edges -- the NMI pin synchroniser and edge counter (a pulse
+    # shorter than one enable period is otherwise never seen at all) and the
+    # external-master write detector that keeps the fetch window coherent
+    # against the protection MCU and the sound Z80.  Those update on every
+    # clk_sys edge, so the idle edge the exception above assumes does not
+    # exist for them and they must keep a real single-cycle requirement.
+    #
+    # -from covers both hops that matter: ungated -> ungated, and ungated ->
+    # the FSM's reset branch, which is itself ungated and copies the detector
+    # counts every clk_sys edge while reset is asserted.
+    #
+    # verif/timing/check_v60_ce_premise.py fails the build if an ungated
+    # always block appears in s32_v60.sv whose registers are not listed here.
+    # Keep that list and this one in step.
+    set v60_ungated [get_registers -nowarn {*|s32_v60:v60|nmi_s1*}]
+    foreach pat {nmi_s2 nmi_lvl nmi_edge_cnt ext_fb_cnt ext_pv_cnt} {
+        set v60_ungated [add_to_collection $v60_ungated \
+            [get_registers -nowarn "*|s32_v60:v60|${pat}*"]]
+    }
+    if {[get_collection_size $v60_ungated] > 0} {
+        set_multicycle_path -setup 1 -from $v60_ungated -to $v60_regs
+        set_multicycle_path -hold 0 -from $v60_ungated -to $v60_regs
+    } else {
+        post_message -type critical_warning "s32 SDC: no ungated V60 registers matched; the raw-clk_sys carve-out is not being applied"
+    }
+
     # Every merged-profile build retains the optional FP state machine now
     # (S32_V60_NO_FP is no longer defined anywhere), so fp_a registers are
     # always expected; absence would indicate that macro reappeared.

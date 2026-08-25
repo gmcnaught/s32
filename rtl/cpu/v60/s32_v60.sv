@@ -1108,6 +1108,12 @@ reg [2:0] ext_pv_cnt  = 3'd0, ext_pv_ack  = 3'd0;
 wire ext_fb_inval = (ext_fb_cnt != ext_fb_ack);
 wire ext_pv_inval = (ext_pv_cnt != ext_pv_ack);
 
+// This block runs on the RAW clk_sys, not the execution enable: an external
+// master's write can land on an edge the ce-gated FSM never sees, which is the
+// entire point of it.  s32.sdc's two-cycle V60 exception therefore does NOT
+// apply to these registers and must carve them out; verif/timing/
+// check_v60_ce_premise.py fails the build if the two disagree.
+// synthesis-timing: ungated-registers ext_fb_cnt ext_pv_cnt
 always @(posedge clk) begin
     if (ext_wr && fw_overlap({8'b0, ext_wr_addr}, ext_wr_bytes,
                              fb_base, fb_wr))
@@ -1145,6 +1151,9 @@ reg [2:0] nmi_edge_cnt = 3'd0;   // ungated: one increment per detected edge
 reg [2:0] nmi_ack_cnt  = 3'd0;   // FSM: COPIES the count when it dispatches
 wire nmi_seen = (nmi_edge_cnt != nmi_ack_cnt);
 
+// Also raw clk_sys, and for the same reason: a pulse shorter than one enable
+// period has to be caught between enabled edges.  Same SDC carve-out.
+// synthesis-timing: ungated-registers nmi_s1 nmi_s2 nmi_lvl nmi_edge_cnt
 always @(posedge clk) begin
     nmi_s1  <= ~nmi_n;
     nmi_s2  <= nmi_s1;
@@ -5510,6 +5519,113 @@ task automatic fp_exec;
         endcase
     end
 endtask
+`endif
+
+// ---------------------------------------------------------------------------
+// Bus-handshake invariants (audit S03 / S07.2)
+// ---------------------------------------------------------------------------
+// The four-phase c_req/c_ack/c_req_armed handshake across the execute/bus
+// enable split was analysed exhaustively by the audit and found correct -- but
+// correct BECAUSE of four properties that were asserted nowhere, and that a
+// cadence change can break silently.  The audit's own measurement: moving the
+// bus adapter's un-gated re-arm inside the ce gate leaves the 16.1 MHz and
+// Arabian Fight cadences untouched (2,564 and 2,942 transactions) and wedges
+// Multi 32's 20 MHz cadence after SEVEN, at pc=cdcdce41.  Nothing in the tree
+// would have reported that as anything but a hang.
+//
+// Three of the four live here; the fourth (payload stability from accept to
+// ack) lives in s32_v60_bus.sv, and the execution-enable spacing the SDC rests
+// on lives in s32_v60_exec_cadence.
+//
+// These are immediate assertions, not concurrent SVA: Icarus -- which is what
+// this repo's benches and CI actually run -- rejects `assert property` with
+// "sorry: concurrent_assertion_item not supported".  Every property below is
+// therefore expressed against explicit one-deep history registers sampled on
+// the CPU clock enable.
+//
+// A violation is FATAL by default.  Each one means a bus transaction completed
+// against the wrong requester or a request vanished mid-flight, so no result a
+// bench checks afterwards means anything, and a bench that kept going would
+// report a misleading pass.  verif/v60/tb_v60_invariants.sv compiles with
+// +define+V60_INVARIANT_NONFATAL so it can observe a fire and keep running.
+`ifndef SYNTHESIS
+integer v60_inv_fails = 0;
+
+task automatic v60_inv_fail(input [8*8:1] id, input [8*64:1] what);
+begin
+    v60_inv_fails = v60_inv_fails + 1;
+    $display("V60-INVARIANT FAIL %0s: %0s  (bus_owner=%0d dbus_req=%0b bus_req=%0b bus_ack=%0b)",
+             id, what, bus_owner, dbus_req, bus_req, bus_ack);
+`ifndef V60_INVARIANT_NONFATAL
+    $fatal(1, "V60 bus-handshake invariant violated");
+`endif
+end
+endtask
+
+reg       inv_primed    = 1'b0;   // history valid (one enabled edge seen)
+reg       inv_dbus_req_d= 1'b0;
+reg       inv_dack_d    = 1'b0;
+reg       inv_ungranted_d = 1'b0;
+
+always @(posedge clk) begin
+    if (rst) begin
+        inv_primed      <= 1'b0;
+        inv_dbus_req_d  <= 1'b0;
+        inv_dack_d      <= 1'b0;
+        inv_ungranted_d <= 1'b0;
+    end
+    else if (ce) begin
+        // Each check is written with === / !== rather than sitting behind one
+        // $isunknown() guard over every signal: a blanket guard disables ALL
+        // the checks whenever any one unrelated signal is momentarily X, which
+        // is exactly how an assertion ends up silently doing nothing.
+        begin
+
+            // I1  A data acknowledgement implies the request that earned it is
+            //     still outstanding.  dack with dbus_req low means bus_owner
+            //     stayed OWN_D across a transaction boundary and this ack
+            //     belongs to a completed access -- the stale-grant failure the
+            //     un-granted-window reasoning exists to rule out.
+            if (dack === 1'b1 && dbus_req === 1'b0)
+                v60_inv_fail("I1", "dack asserted with no outstanding data request");
+
+            // I2  Same for the prefetch owner.  A pf_ack with no pf_req would
+            //     commit a fetch nobody asked for into the window.
+            if (pf_ack === 1'b1 && pf_req === 1'b0)
+                v60_inv_fail("I2", "pf_ack asserted with no outstanding prefetch");
+
+            // I3  All 57 data sites clear dbus_req ONLY on dack.  Checked as a
+            //     transition: dbus_req fell between two enabled edges, so the
+            //     clear was decided on the earlier one, where dack must have
+            //     been true.  (The 58th clear is the reset branch, excluded by
+            //     inv_primed.)
+            if (inv_primed === 1'b1 && inv_dbus_req_d === 1'b1
+                && dbus_req === 1'b0 && inv_dack_d === 1'b0)
+                v60_inv_fail("I3", "dbus_req cleared without a data acknowledgement");
+
+            // I4  The un-granted arbiter window is exactly one execute cycle:
+            //     bus_req rises, and the very next enabled edge grants it,
+            //     because bus_req_d gates the grant for one edge only.  Two
+            //     consecutive edges with a request up and no owner means the
+            //     grant is stuck and the payload mux is exposed for longer
+            //     than the audit's one-cycle proof allows.
+            if (inv_primed === 1'b1 && inv_ungranted_d === 1'b1
+                && bus_req === 1'b1 && bus_owner === OWN_NONE)
+                v60_inv_fail("I4", "request un-granted for more than one execute cycle");
+
+            // (There is deliberately no "bus_ack implies bus_req" check here.
+            //  The handshake is four-phase: the adapter holds c_ack until it
+            //  has SEEN c_req go low, so ack-with-request-low is the re-arm
+            //  phase, not a fault.  bus_owner is what makes dack immune to it,
+            //  and I1/I2 are the checks that matter.)
+        end
+
+        inv_dbus_req_d  <= dbus_req;
+        inv_dack_d      <= dack;
+        inv_ungranted_d <= bus_req && (bus_owner == OWN_NONE);
+        inv_primed      <= 1'b1;
+    end
+end
 `endif
 
 endmodule

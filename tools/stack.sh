@@ -14,6 +14,11 @@
 #                                          before any cadence change -- today
 #                                          every cadence experiment fails
 #                                          silently.
+#                +- v60/03b-quartus-sdc-ci Quartus CI for the SDC carve-out
+#                                          stage 03 added.  Not an audit stage:
+#                                          no simulator can check a timing
+#                                          constraint, so this is the only way
+#                                          that change is verifiable at all.
 #                +- v60/04-clock-tree      audit S07.3: BIU onto clk_ram with a
 #                                          six-phase T-state counter.  A
 #                                          prerequisite, not a step: clk_sys /
@@ -66,6 +71,7 @@ STACK=(
   v60/01-ci-icarus-gate
   v60/02-defect-fixes
   v60/03-handshake-sva
+  v60/03b-quartus-sdc-ci
   v60/04-clock-tree
   v60/05-tstate-biu
   v60/06-retire-fast-ifetch

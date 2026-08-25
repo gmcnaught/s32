@@ -25,6 +25,38 @@ always @(posedge clk) begin
     else              phase <= ~phase;
 end
 assign ce = !pause && !phase;
+
+// ---------------------------------------------------------------------------
+// The invariant s32.sdc rests on (audit S01 / S07.2).
+// ---------------------------------------------------------------------------
+// s32.sdc relaxes every s32_v60 register-to-register path to a two-cycle setup
+// requirement, justified by "every board leaves at least one idle clk_sys edge
+// between V60 updates".  That is a property of THIS module and nothing else,
+// and it was checked only by tb_v60_exec_cadence -- a bench that has to be run
+// deliberately.  Assert it here so it holds in every simulation that
+// instantiates the core, not just in its own bench.
+//
+// Deliberately gated on !rst: while reset is asserted `phase` is held at 0, so
+// `ce` is continuously high.  That is harmless -- s32_v60's reset branch is
+// ungated anyway and assigns constants -- but it means the idle edge genuinely
+// does not exist during reset, and asserting it there would be asserting
+// something false.  The reset branch's few register-to-register copies are
+// covered by the SDC's v60_ungated carve-out instead.
+`ifndef SYNTHESIS
+integer cad_inv_fails = 0;
+reg cad_ce_d = 1'b0;
+always @(posedge clk) begin
+    if (!rst && ce && cad_ce_d) begin
+        cad_inv_fails = cad_inv_fails + 1;
+        $display("V60-CADENCE FAIL: execution enable on adjacent clk_sys edges (t=%0t)",
+                 $time);
+`ifndef V60_INVARIANT_NONFATAL
+        $fatal(1, "s32.sdc's two-cycle V60 exception is no longer sound");
+`endif
+    end
+    cad_ce_d <= !rst && ce;
+end
+`endif
 endmodule
 
 // The universal production revision uses the single-port synchronous V60

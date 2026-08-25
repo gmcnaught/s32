@@ -53,6 +53,20 @@ jobs:
       - name: V60 vs independent Python reference
         run: sh verif/cosim/run_diff.sh 50
 
+  constraints:
+    name: SDC premise vs RTL
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # No simulator can catch this: it is a property of the timing
+      # constraints, not of the RTL.
+      - name: s32.sdc two-cycle exception covers only ce-gated registers
+        run: python3 verif/timing/check_v60_ce_premise.py
+
   core:
     name: Full-core lint / boot / soak
     runs-on: ubuntu-latest
