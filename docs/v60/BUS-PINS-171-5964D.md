@@ -24,8 +24,8 @@ live, so that work does not have to guess.
 | **`/BLOCK`** | **NOT CONNECTED** | — drawn as an open pin, no net |
 | **`DL0`** | **NOT CONNECTED** | — open pin |
 | **`DL1`** | **NOT CONNECTED** | — open pin |
-| `/HLDRQ` | driven **and** pulled up 4.7 k | from sheet 7/9 |
-| `/HLDAK` | driven out, pulled up 4.7 k | to `IC38` / `IC51` |
+| `/HLDRQ` | pulled up 4.7 k; **input from expansion connector C.N. I** | via sheet 9/9, C.N. I pin 4-b |
+| `/HLDAK` | driven out, pulled up 4.7 k | `IC38` / `IC51`; also leaves as `/SHLDAK` to C.N. I pin 3-a |
 | `/CPBUSY` | **pulled up 4.7 k, inactive** | no driver |
 | `/BERR` | **pulled up 4.7 k, inactive** | no driver |
 | `RT/EP` | **pulled up 4.7 k, inactive** | no driver |
@@ -54,19 +54,36 @@ board they are the bus decode. Anything claiming to be electrically correct has
 to drive them with the right values at the right T-states, not merely export
 them.
 
-**3. `HLDRQ` is driven, so bus hold is live hardware here.** It arrives from
-sheet 7/9 (SOUND CPU) and `HLDAK` goes back out. The audit lists HLDRQ/HLDAK
-under §07.4 as pins to model; this says they are not a formality on System 32 —
-something on the sound side really does request the bus. What issues it, and
-how often, is **not yet checked** and is the obvious next question, because a
-hold that the core does not model is missing bus cycles that the real board
-spends parked.
+**3. `HLDRQ` is an expansion input, and on a standard board nothing drives
+it.** Sheet 9/9 puts `/HLDRQ` on **C.N. I**, a 48-pin DIN plug connector, pin
+4-b, flowing *into* the main board, with the acknowledge leaving as `/SHLDAK`
+on pin 3-a. `/VWAT`, `BMOD` and `/UBE` are routed to the same connector. So bus
+hold on System 32 is there for a board plugged into C.N. I to take the bus —
+and with nothing plugged in, the 4.7 k pull-up on sheet 1/9 holds it inactive
+for the life of the machine.
+
+That is a **scope reduction**, not an extra requirement. This core supports the
+standard single-screen board only (README: Multi 32 and AS-1 are out of scope),
+so a correct model can hold `HLDRQ` deasserted and never enter TH. The pins
+should still be exposed, for the same describability reason as `BLOCK`, but
+§07.4's TH state has no way to be entered on the hardware this core targets and
+does not need to be exercised to claim correctness on it.
 
 `BERR`, `CPBUSY` and `RT/EP` are the ones genuinely tied off inactive, and
 `BFREZ` is pulled low through a jumper — so a *correct* model can hold those
-three at their inactive levels and treat `BFREZ` as strapped.
+three at their inactive levels and treat `BFREZ` as strapped. With `HLDRQ`
+added to that list on a bare board, the only V60 inputs that actually move on
+this hardware are `CLK`, `RESET`, `/NMI`, `INT`, `READY` (`/VWAT`) and
+`BMODE`.
 
 ## Caveats
+
+**Corrected 2026-08-25.** The first version of this note said `/HLDRQ` was
+driven from sheet 7/9 (SOUND CPU) and that bus hold was therefore live
+hardware. That was wrong: the sheet reference beside the pin is smudged on the
+scan, and sheet 7/9 carries no such signal — what it has is `ZBRQ`/`ZBAK` into
+the *Z80's* `BUSRQ`/`BUSAK`, which is a different bus. Sheet 9/9 has the real
+answer, above.
 
 Pin designators (`E11`, `B2`, `D11`, …) are read off a hand-lettered 1990 scan
 at high magnification and are the least reliable thing here; the *signal*
