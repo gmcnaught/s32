@@ -82,17 +82,47 @@ foreach pat [lrange $ungated_names 1 end] {
 set n_ungated [get_collection_size $v60_ungated]
 note "v60_ungated matches $n_ungated register(s)"
 if {$n_ungated == 0} {
-    bad "the raw-clk_sys carve-out matched nothing. Every one of $ungated_names is being timed with two clk_sys cycles when it has one."
+    bad "the raw-clk_sys carve-out matched nothing at all. Every register that runs on the raw clk_sys is being timed with two clk_sys cycles when it has one."
 }
 
-# Per-name detail, so a single renamed or optimised-away register is visible
-# rather than hidden inside a total.
+# Per-name expectations, checked in BOTH directions.
+#
+#   present  the register exists and its carve-out is load-bearing.  If it
+#            disappears, either it was renamed (the pattern is now stale and
+#            silently constrains nothing) or it was optimised away (and the
+#            marker in s32_v60.sv is lying about what runs on the raw clock).
+#
+#   absent   the register is expected NOT to survive synthesis, for the reason
+#            recorded below.  Failing when one of these APPEARS is the point:
+#            it means the thing that made it dead has changed, and its
+#            single-cycle carve-out just became load-bearing without anyone
+#            deciding that.
+#
+# The four NMI registers are absent because s32_core ties .nmi_n(1'b1) at the
+# only instantiation of s32_v60.  ~nmi_n is then a constant, the two-flop
+# synchroniser and the level history fold to constants with it, and the edge
+# counter can never increment -- so synthesis removes the lot.  The D7 NMI fix
+# is real but DORMANT in this design: it starts costing silicon, and starts
+# needing its carve-out, the moment anything drives nmi_n.
+array set expect_reg {
+    nmi_s1        absent
+    nmi_s2        absent
+    nmi_lvl       absent
+    nmi_edge_cnt  absent
+    ext_fb_cnt    present
+    ext_pv_cnt    present
+}
+
 foreach pat $ungated_names {
     set c [get_registers -nowarn "*|s32_v60:v60|${pat}*"]
     set n [get_collection_size $c]
-    note "  $pat -> $n"
-    if {$n == 0} {
-        bad "no register matches '$pat'. It is named in s32_v60.sv's synthesis-timing marker and in the SDC, but does not survive to the fitted netlist -- the carve-out for it is dead."
+    set want $expect_reg($pat)
+    note "  $pat -> $n (expected $want)"
+    if {$want eq "present" && $n == 0} {
+        bad "no register matches '$pat', but it is expected to exist. Either it was renamed -- in which case the SDC pattern for it now constrains nothing -- or it was optimised away, in which case s32_v60.sv's synthesis-timing marker is wrong."
+    }
+    if {$want eq "absent" && $n != 0} {
+        bad "'$pat' now exists ($n register(s)) but was expected to be optimised away. Something is driving nmi_n. That is fine, but its single-cycle carve-out is now load-bearing rather than dormant: re-read the note above and update this expectation deliberately."
     }
 }
 
@@ -138,7 +168,7 @@ set fh [open $summary_path w]
 puts $fh "v60_regs_count $n_v60"
 puts $fh "v60_ungated_count $n_ungated"
 foreach pat $ungated_names {
-    puts $fh "ungated_$pat [get_collection_size [get_registers -nowarn "*|s32_v60:v60|${pat}*"]]"
+    puts $fh "ungated_$pat [get_collection_size [get_registers -nowarn "*|s32_v60:v60|${pat}*"]] expected_$expect_reg($pat)"
 }
 puts $fh "worst_setup_slack_v60_reg2reg $s_all"
 puts $fh "worst_setup_slack_from_ungated $s_ung"

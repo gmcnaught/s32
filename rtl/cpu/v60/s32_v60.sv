@@ -1153,6 +1153,17 @@ wire nmi_seen = (nmi_edge_cnt != nmi_ack_cnt);
 
 // Also raw clk_sys, and for the same reason: a pulse shorter than one enable
 // period has to be caught between enabled edges.  Same SDC carve-out.
+//
+// DORMANT IN THIS DESIGN.  s32_core ties .nmi_n(1'b1) at the only
+// instantiation, so ~nmi_n is constant, the synchroniser and level history
+// fold to constants with it, the counter can never increment, and synthesis
+// removes all four registers -- measured on a real fit: nmi_s1, nmi_s2,
+// nmi_lvl and nmi_edge_cnt each match zero registers post-fit, while
+// ext_fb_cnt and ext_pv_cnt survive.  The logic is correct and costs nothing
+// today; it starts costing silicon, and starts needing its SDC carve-out, the
+// moment anything drives nmi_n.  verif/timing/sdc_check.tcl asserts that in
+// both directions, so wiring nmi_n up will fail the Quartus check rather than
+// quietly re-introducing an under-constrained path.
 // synthesis-timing: ungated-registers nmi_s1 nmi_s2 nmi_lvl nmi_edge_cnt
 always @(posedge clk) begin
     nmi_s1  <= ~nmi_n;
