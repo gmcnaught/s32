@@ -18,7 +18,7 @@ roms/
 /docs/*
 !/docs/v60/
 /docs/v60/*
-!/docs/v60/REFERENCES.md
+!/docs/v60/*.md
 /reference/
 /.codex-mister-build/
 /.playwright-mcp/

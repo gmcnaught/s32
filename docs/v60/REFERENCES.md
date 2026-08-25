@@ -107,37 +107,94 @@ the 1986 databook: its symbol → PGA-coordinate table OCRs cleanly (GND→F2,
 BMODE→K3, A18→L10 …), where the 1986 book renders the same information as a
 dot-matrix graphic. Vol. 1 has zero hits for 70616.
 
+### µPD70632 (V70) Advance Product Information, May 1987
+`upd70632_v70.pdf` · 19 pp · NEC Electronics Inc., "Preliminary Information"
+
+**Held. This contradicts the earlier survey, which recorded that no public V70
+datasheet existed in any language** — the one known copy was on a dead host.
+One exists and we have it.
+
+It is a product overview, not a full data sheet: no AC characteristics, no DC
+characteristics, no pinout coordinates. What it does carry is directly useful:
+
+- **The complete MRQ + ST2–ST0 bus-status encoding table** (p.2), all sixteen
+  codes including string mode, short path data access, system base table
+  access, translation table access, demand-mode instruction fetch, instruction
+  prefetch, machine fault acknowledge, halt acknowledge and interrupt
+  acknowledge. Plus the DL1–DL0 data-length encoding for single and string
+  mode. **This is what unblocked `st` in `rtl/cpu/v60/s32_v60_bus.sv`** — see
+  the caveat below.
+- Full pin-function prose for ST2–ST0, MRQ, R/W, DL1–DL0, FAS, BCYST, IOBCY,
+  BLOCK, BERR, RT/EP, BFREZ, MSMAT, FMST/FCHK, NMI, INT, HLDRQ, HLDAK, READY,
+  IOSZEN, IO8/IO16, B3E–B0E.
+- Bus timing diagrams: normal read/write, READY, and I/O read/write.
+- The System Base Table layout with every vector number and byte offset (p.10).
+- The instruction-set appendix with opcodes, formats, flags and exceptions.
+
+**Caveat that governs how far this can be used.** The V70 is a *different bus*:
+32-bit, a **two-clock** minimum cycle, and eight states (T1, T2, TW, TI, TIO1,
+TIO2, TIO3, TH). The V60 has a 16-bit bus, a three-clock short / four-clock
+normal cycle, and seven states (TI, T1, T2, T3, T4, TW, TH). **V70 bus timing
+must not be transplanted onto the V60.** What is reasonable to carry across is
+architecture, which p.7 states explicitly: *"The µPD70632 has the same
+architecture as the µPD70616 (V60)."*
+
+Note also: the instruction appendix has a **"Clocks" column and every cell in
+it is blank**, exactly as in the V60 databook. Independent confirmation, on a
+second NEC document, that per-instruction timing was never published.
+
+### Yamahata, Suzuki, Koumoto & Shiiba — "Architecture of the microprocessor V60"
+`IPSJARC86043002.pdf` · 8 pp · IPSJ マイクロコンピュータ 43-2, 1987-02-06 · Japanese
+
+**Held.** This is one of the two IPSJ SIG reports the earlier survey listed as
+paywalled and flagged as "likely the cheapest route to a real pipeline
+description".
+
+It is an *architecture* paper, not a microarchitecture or timing paper. It does
+not close the internal-timing gap. What it does give, first-hand from the
+design team at NEC's Micro-computer Products Division:
+
+- **6-stage pipeline executing up to 4 instructions simultaneously**, 1.5 µm
+  double metal-layer CMOS, 375,000 transistors, 16 MHz — confirming the
+  audit's characterisation of what this core's serial microsequencer is
+  standing in for.
+- **Peak 3.5 MIPS at 16 MHz on a 16-bit bus.** That is ~4.6 clocks per
+  instruction at peak. Useful as an order-of-magnitude anchor for audit step
+  §07.6: this repository's `verif/v60/BASELINE.md` records ~22.7 cycles per
+  instruction on real game code.
+- TLB: 16 entries, fully associative, **pseudo-LRU** replacement.
+- Four execution levels, two protection mechanisms (area table entry and page
+  table entry), the four-section / 1024-area / 256-page virtual layout.
+- Interrupt and exception model including AST/ATT asynchronous traps and the
+  nesting behaviour of multiple exceptions.
+
+No per-instruction cycle counts and no hazard/interlock specification, so the
+gap below stands unchanged.
+
+### 1987 NEC Microcomputer Products Vol. 2
+`1987_Microcomputer_Products_Vol_2.pdf` · 1019 pp · 38 MB · bitsavers
+
+**Held.** <https://bitsavers.org/components/nec/_dataBooks/1987_Microcomputer_Products_Vol_2.pdf>
+(bitsavers 403s a default `curl` user-agent; send a browser one.)
+
+The µPD70616 short-form data sheet is at **PDF pages 266–269** — four pages,
+exactly as catalogued. Vol. 1 has zero hits for 70616.
+
+What it is good for: **the complete PGA pinout table**, signal ↔ coordinate,
+which OCRs cleanly where the 1986 databook renders the same information as a
+dot-matrix graphic. It confirms the V60's pin set first-hand — ST2–ST0, MRQ,
+DL1–DL0, BLOCK, R/W, BCY, UBE, FAS, DS, **BMODE**, INT, NMI, BERR, RT/EP,
+BFREZ, HLDRQ, HLDAK, READY, CPBUSY, CLK, RESET — in a **68-pin PGA at 16 MHz**.
+
+That last detail matters for how far the V70 document can be trusted: the V60
+has BMODE and the V70 does not (it uses IOSZEN and IO8/IO16 for dynamic bus
+sizing instead), and the packages and clocks differ. The two parts share an
+architecture and a status-pin set; they do **not** share a bus.
+
+What it does not contain: no AC or DC characteristics, no §4 bus operation, no
+status encoding table. For those, still the 1986 databook.
+
 ## Does not exist publicly
-
-### µPD70632 (V70) data sheet or hardware manual
-
-No public copy located, in any language. The one PDF that used to exist —
-`mess.redump.net/_media/datasheets/nec/upd70632_v70.pdf`, reported to hold
-signal descriptions and memory-access timing diagrams but no pinout and no AC
-specs — is gone; the host is dead.
-
-**A Wayback copy may survive. That check is the single highest-value lead left
-and it needs a browser** — `web.archive.org` was blocked from the environment
-the survey was run in.
-
-The best living source is a Japanese hobbyist building a V70 board:
-「V70 μPD70632 に挑む」, むらたのおと, 2025. He obtained NEC internal documents
-(pinout, signal roles, timing scans) privately via X from an account called
-"parsec den", and reports that **AC characteristics are unavailable even in
-those**, forcing him to clock the part conservatively. Independent confirmation
-that V70 timing is not in circulation.
-
-Partial corroboration of the signal set comes from HP's 64758 in-circuit
-emulator manuals on archive.org: 132-pin PGA, 20 MHz internal, 8–20 MHz target
-clock with no wait states, and independent configuration for /READY, /BERR,
-BFREZ, RT/EP, /NMI, INT, /HLDRQ. No AC/DC appendix, no waveforms.
-
-NDL returns zero results for µPD70616. Every datasheet aggregator —
-datasheetarchive, datasheetq, datasheetbank, searchdatasheet, ic37 — resolves
-to the same one-line entry in NEC's *Semiconductor Selection Guide 1995*.
-**Don't chase them.** Since `IS_V70` is already an unused parameter and System
-32 is V60-only, the practical call is to leave V70 out of scope until a
-datasheet surfaces.
 
 ### A usable die shot
 
@@ -199,7 +256,9 @@ exist.
 
 The 1986 databook fully specifies the external interface. That is finite,
 well-defined work. But the instruction-set summary in that same databook has a
-"Clocks" column and **every cell in it is blank**. The pipeline description is a
+"Clocks" column and **every cell in it is blank** — and the V70 Advance Product
+Information, a separate document for a separate part, has a blank "Clocks"
+column too. Two independent NEC publications decline to state it. The pipeline description is a
 page of prose plus a stage-occupancy table, not a hazard and interlock
 specification. So internal timing has to come from one of three places:
 
@@ -229,16 +288,51 @@ boundary is exactly where this core sits: its own header declares the
 behavioural contract to be MAME's v60 core, which is why it is
 instruction-accurate and not cycle-accurate.
 
-## Open items in the RTL that these documents would close
+## Open items in the RTL
 
-- **`st` (ST2–ST0) in `rtl/cpu/v60/s32_v60_bus.sv` carries this core's own
-  codes, not NEC's** — the header says so. Needs databook §1's status encoding
-  table. This is the one blocking gap in the T-state work.
-- Normal-vs-short cycle selection is implemented from the audit's prose. Needs
-  the §4 read/write waveform plates to confirm the sampling instants and T4's
-  contents.
+**Closed by the V70 document:** `st` and `mrq_n` in
+`rtl/cpu/v60/s32_v60_bus.sv` now carry NEC's bus-status encoding rather than
+this core's invented codes. Sourced from µPD70632 Advance Product Information
+p.2, which is legitimate to carry across because the two parts share an
+architecture (ibid. p.7) and the same ST2–ST0 + MRQ + DL1–DL0 pin set, which
+the 1987 short-form V60 PGA table confirms independently.
+
+**Still to confirm against databook §1:** that the V60 assigns the same *codes*
+and not merely covers the same *cases*. The audit reports the V60's own table
+covers string mode, demand-mode fetch, machine-fault acknowledge and halt
+acknowledge — all four appear in the V70 table — but "same cases" is not "same
+encoding". The RTL says so at the point of use.
+
+**Still open:**
+
+- Normal-vs-short cycle selection is implemented from the audit's prose (BMODE
+  sampled on the falling edge of T2). Needs the §4 read/write waveform plates
+  to confirm the sampling instants and what T4 contains. The V70 cannot help:
+  it has no BMODE and a two-clock cycle.
 - The three-TI I/O recovery is implemented and dormant. Needs §4's statement of
-  whether it applies to I/O cycles only or to any back-to-back cycle.
-- The ~30 AC parameters, several of them TBD in the preliminary edition, are
-  needed before any claim that the BIU is "electrically describable" against a
+  whether it applies to I/O cycles only or to any back-to-back cycle. Note the
+  V70 states a **five-clock minimum** for its I/O cycles with three TIO states,
+  which is a different mechanism and must not be read across.
+- The ~30 AC parameters, several TBD in the preliminary edition, are needed
+  before any claim that the BIU is "electrically describable" against a
   µPD71613 decode table.
+
+## A cross-check worth running
+
+The V70 document's System Base Table (p.10) lists every vector number and byte
+offset. Two things fall straight out of it, both consistent with this core:
+
+- Application interrupt vectors begin at **vector 64 (offset +256)**, which is
+  the `+0x40` the IRQ path adds. Audit defect D5 — the eight-bit wrap that made
+  a vector ≥ 0xC0 land back at the bottom of the table — was therefore a real
+  bug against NEC's own layout, not merely against MAME.
+- CHLVL's `24 + level` maps to **Change to Execution Level 0–3 (vectors
+  24–27)**. Correct.
+
+But the same table assigns vector 8 to *Area Not Present* and vector 16 to
+*Reserved Opcode*, while this core uses vector 8 for reserved-opcode and
+illegal-addressing conditions because that is what MAME does. **That is worth
+investigating and is not yet resolved** — it may be a V60/V70 difference, or a
+MAME divergence this core faithfully inherits. It is exactly the class of thing
+the note above about MAME being an architectural but not authoritative oracle
+was written for. Do not "fix" it against the V70 table alone.

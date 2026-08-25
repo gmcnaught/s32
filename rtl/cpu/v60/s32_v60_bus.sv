@@ -2,7 +2,15 @@
 //  V60 logical-bus adapter (DESIGN.md §5.4 "bus unit")
 //  Turns the CPU's logical accesses (any address, size 1/2/4 bytes) into
 //  1..3 aligned 16-bit cycles on the system bus (V60 has a 16-bit external
-//  data bus).  V70 (IS_V70=1) uses 1..2 aligned 32-bit cycles.
+//  data bus).
+//
+//  This is a V60 bus unit and should stay one.  It used to carry an IS_V70
+//  parameter that was declared and never referenced, while the header claimed
+//  V70 support -- setting it promised a 32-bit bus and silently delivered a
+//  16-bit one.  The V70's bus is a different machine, not this one with a
+//  width parameter: 32-bit data, B3E-B0E instead of UBE+A0, a TWO-clock
+//  minimum cycle with no T3 or T4, three extra TIO states for I/O sizing, and
+//  no BMODE.  See docs/v60/V70-SEPARATION.md before adding it back.
 //
 //  Sequenced as a databook §4 T-state machine (audit §07.4).  The states are
 //  the real ones -- TI, T1, T2, T3, TW, T4, TH -- and the pin-level status
@@ -44,7 +52,6 @@
 //============================================================================
 
 module s32_v60_bus #(
-    parameter IS_V70 = 1'b0,
     parameter DATABOOK_TIMING = 1'b0,
     parameter HALF_CLOCK_SAMPLING = 1'b0
 )(
@@ -79,15 +86,21 @@ module s32_v60_bus #(
     // what lets the core be checked against a µPD71613 decode table instead of
     // only against MAME's behaviour.
     //
-    // HONEST GAP: `st` is NOT NEC's encoding.  The audit names ST2-ST0 and the
-    // MRQ+ST bus-status table, but the databook plate that defines the codes
-    // is not in this repository, and inventing codes that look official would
-    // be worse than having none.  The values below are this core's own, and
-    // the localparams are named so a diff against the real table is mechanical
-    // once someone has the plate.  Everything else here -- BCY, DS, R/W, MRQ,
-    // UBE, HLDAK -- has unambiguous meaning and is driven correctly.
-    output      [2:0] st,          // bus status (see gap note above)
-    output            mrq,         // memory request
+    // `st` and `mrq_n` now carry NEC's encoding, from the µPD70632 (V70)
+    // Advance Product Information, May 1987, p.2 -- see docs/v60/REFERENCES.md.
+    // The V70 is the same V-Series architecture ("The µPD70632 has the same
+    // architecture as the µPD70616 (V60)", ibid. p.7) and carries the same
+    // ST2-ST0 + MRQ + DL1-DL0 pin set, which the 1987 short-form V60 data
+    // sheet's PGA table confirms.  The audit independently reports that the
+    // V60 databook's own table covers the same cases (string mode, demand-mode
+    // fetch, machine-fault ack, halt ack).
+    //
+    // STILL TO CONFIRM against databook §1: that the V60 assigns the same
+    // CODES, not merely the same cases.  The V70's BUS differs -- 32-bit,
+    // two-clock, eight states, no BMODE -- so nothing about its TIMING is
+    // carried across here, only the status encoding.
+    output      [2:0] st,          // ST2-ST0 bus status
+    output            mrq_n,       // memory request, ACTIVE LOW
     output            rw_n,        // 0 = write, 1 = read
     output            bcy,         // bus cycle in progress
     output            ds,          // data strobe
@@ -95,6 +108,7 @@ module s32_v60_bus #(
     output            hldak,       // hold acknowledge
     output            rt_ep,       // retry / error-processing
 
+    input             c_fetch,     // 1 = this access is an instruction prefetch
     input             bmode,       // sampled falling T2: 1 = short cycle
     input             ready_n,     // sampled falling T3 and each TW, active low
     input             berr_n,      // bus error, active low
@@ -110,11 +124,22 @@ typedef enum logic [2:0] {
 } tstate_t;
 tstate_t ts;
 
-// This core's bus-status codes -- NOT NEC's.  See the gap note above.
-localparam [2:0] ST_IDLE  = 3'd0;
-localparam [2:0] ST_MEMRD = 3'd1;
-localparam [2:0] ST_MEMWR = 3'd2;
-localparam [2:0] ST_HOLD  = 3'd3;
+// NEC bus-status codes, µPD70632 Advance Product Information May 1987 p.2.
+// Listed in full so a diff against databook §1 is mechanical; only the ones
+// this core can actually emit are driven.
+//                                              MRQ  ST2 ST1 ST0
+localparam [2:0] ST_RESERVED_0  = 3'b000;   //   0    reserved
+localparam [2:0] ST_STRING_DATA = 3'b001;   //   0    string mode data access
+localparam [2:0] ST_SHORT_PATH  = 3'b010;   //   0    short path data access
+localparam [2:0] ST_SINGLE_DATA = 3'b011;   //   0    single mode data access
+localparam [2:0] ST_SBT         = 3'b100;   //   0    system base table access
+localparam [2:0] ST_XLAT_TABLE  = 3'b101;   //   0    translation table access
+localparam [2:0] ST_DEMAND_FETCH= 3'b110;   //   0    demand mode instruction fetch
+localparam [2:0] ST_PREFETCH    = 3'b111;   //   0    instruction prefetch
+// With MRQ high: 001 string I/O, 011 single I/O, 100 machine fault ack,
+// 101 halt ack, 110 interrupt ack.  This core emits none of them: System 32
+// has no separate I/O space (MAME maps it as memory), and the audit records
+// that there is no INTAK bus cycle -- the vector arrives on a wire.
 
 reg [1:0]  cyc, cycs;        // current / total 16-bit cycles - 1
 reg [31:0] acc;
@@ -170,14 +195,20 @@ assign bcy   = (ts == T_T1) || (ts == T_T2) || (ts == T_T3)
 // audit's cycle table is quoted in.
 wire busy = (ts != T_TI) || accept_now;
 assign ds    = (ts == T_T2) || (ts == T_T3) || (ts == T_TW);
-assign mrq   = bcy;
+// MRQ is active low and asserted when the cycle is directed at memory space.
+// Every cycle this core issues is a memory cycle.
+assign mrq_n = ~bcy;
 assign rw_n  = ~m_we;
 assign ube   = m_be[1];
 assign hldak = (ts == T_TH);
 assign rt_ep = ~berr_n;
-assign st    = (ts == T_TH) ? ST_HOLD
-             : bcy ? (m_we ? ST_MEMWR : ST_MEMRD)
-                   : ST_IDLE;
+// Data accesses are single mode: this adapter is only ever handed one operand
+// at a time, and string-mode accesses are an architectural feature the core
+// does not implement (the audit records string instructions as
+// non-interruptible and non-resumable, driven from internal registers).
+// c_fetch distinguishes the CPU's instruction prefetch from its data port.
+assign st    = bcy ? (c_fetch ? ST_PREFETCH : ST_SINGLE_DATA)
+                   : ST_RESERVED_0;
 
 // Physical-cycle payload for one 16-bit cycle.  Lifted verbatim from the
 // pre-existing I_CYC body -- this decode is bit-exact against the reference
