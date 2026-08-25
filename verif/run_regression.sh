@@ -50,6 +50,10 @@ echo "[3a2] V60 bus timebase (clk_ram six-phase; audit S07.3)"
 iverilog -g2012 -DSIMULATION -DV60_INVARIANT_NONFATAL -s tb_v60_timebase \
   -o /tmp/s32_v60_timebase rtl/cpu/v60/s32_v60_timebase.sv verif/v60/tb_v60_timebase.sv
 vvp /tmp/s32_v60_timebase | grep -q "V60 TIMEBASE PASS" && echo "V60 TIMEBASE: PASS" || { echo "V60 TIMEBASE: FAIL"; exit 1; }
+echo "[3a3] V60 bus adapter as a databook S4 T-state machine (audit S07.4)"
+iverilog -g2012 -DSIMULATION -s tb_v60_tstate -o /tmp/s32_v60_tstate \
+  rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_tstate.sv
+vvp /tmp/s32_v60_tstate | grep -q "V60 T-STATE PASS" && echo "V60 T-STATE: PASS" || { echo "V60 T-STATE: FAIL"; exit 1; }
 echo "[3b] V60 fetch-window coherency vs other bus masters + physical aliasing"
 iverilog -g2012 -o /tmp/s32_v60_smc_ext \
   rtl/s32_pkg.sv rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv verif/v60/tb_v60_smc_ext.sv
