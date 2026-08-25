@@ -132,6 +132,23 @@ critical path, this is the order to try things in. Cheapest first:
 
 The T-state work is exonerated, and the question becomes whether this
 design has any `clk_ram` headroom at all at 89% ALMs and 99% RAM blocks. That
-is a fitting problem, and the lever recorded elsewhere is audit step §07.5:
-retiring `FAST_IFETCH` removes the 64×8-byte ROM instruction cache, which frees
-M10K — the constraint at 99% — and removes its lookup from the fetch path.
+is a fitting problem.
+
+**The lever this note originally named does not exist.** It said audit §07.5 —
+retiring `FAST_IFETCH` — "removes the 64×8-byte ROM instruction cache, which
+frees M10K, the constraint at 99%". Measured against the fit report, that is
+wrong twice:
+
+- The cache is **not removed**. `s32_ga_rom_cache` has three client ports, and
+  `data_req` — every V60 read from `sel_rom`/`sel_romhi` — is wired to it
+  unconditionally (`s32_core.sv:1594`). Retiring `FAST_IFETCH` retires the
+  `if_` port only. The cache stays because the data path needs it.
+- It would not be a lever even if it did. The fit report attributes the cache
+  exactly **2 M10K blocks** (`M10K_X26_Y30_N0`, `M10K_X26_Y32_N0`, 64×76 =
+  4864 bits). Two of 546 is 0.4%, which does not relieve a 99% constraint.
+
+So §07.5 is still worth doing — the speculative-fetch range guard is a real
+defect fix, and making fetch honest on the modelled bus is the point of the
+stage — but **not as a timing or utilisation lever**. Whatever frees `clk_ram`
+headroom has to come from the tilemap and sprite paths the report actually
+names, or from accepting the domain as it is.

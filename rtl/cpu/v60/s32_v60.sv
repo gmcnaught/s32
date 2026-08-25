@@ -240,6 +240,25 @@ wire [31:0] fetch_frontier = fb_base + {27'b0, fb_wr};
 wire        fetch_is_rom = (fetch_frontier[23:21] == 3'b000) ||
                            (fetch_frontier[23:20] == 4'hf);
 wire        use_fast_ifetch = FAST_IFETCH && fast_ifetch && fetch_is_rom;
+// Regions a SPECULATIVE fetch may touch without a side effect (audit §07.5).
+// The issue condition below reads up to pf_high (20, or 24 under a loop hint)
+// bytes past PC.  fetch_is_rom above selects the TRANSPORT and is not a safety
+// check -- when it is false the fetch still goes out on the shared bus, which
+// reaches the whole System 32 map.  One peripheral on that map has a genuine
+// read side effect: the MSM6253 ADC at 0xC00050-57 shifts its serial register
+// on every read (rtl/io/s32_io.sv, s32_msm6253: `cs && !we && !rd_d` shifts),
+// so a stray lookahead there corrupts an analog conversion in progress for the
+// wheel/gun titles.  (The INTC acts only on `cs && we`, and the RNG is a
+// free-running LFSR whose read is a pure fold, so neither is at risk.)
+//
+// Only the LOOKAHEAD is gated.  A demand fetch -- fb_wr < fb_need, the current
+// instruction genuinely lacks bytes -- is never blocked, because a program
+// executing from an unusual region must still run.  Blocking lookahead cannot
+// starve the machine: the demand term re-evaluates every cycle.
+wire        fetch_spec_safe = (fetch_frontier[23:21] == 3'b000)  // ROM   000000-1FFFFF
+                           || (fetch_frontier[23:20] == 4'h2)    // work  200000-2FFFFF
+                           || (fetch_frontier[23:20] == 4'h7)    // shared 700000-7FFFFF
+                           || (fetch_frontier[23:20] == 4'hF);   // ROM hi F00000-FFFFFF
 reg [7:0]  fb_prev[0:23];   // previous sequential window for tight loops
 reg [31:0] fb_prev_base;
 reg [4:0]  fb_prev_valid;
@@ -4028,7 +4047,8 @@ else if (ce) begin
         // bytes with zero bus traffic, so prefetching them just thrashes SDRAM.
         // fb_wr<=20 keeps the append within the 24-byte window.
         if (fb_base == pc && !fb_realigning && fb_wr <= 5'd20
-            && (fb_wr < fb_need || (fb_wr < pf_high && !pf_suppress))) begin
+            && (fb_wr < fb_need
+                || (fb_wr < pf_high && !pf_suppress && fetch_spec_safe))) begin
             pf_addr      <= fetch_frontier;
             pf_iss_epoch <= pf_epoch;
             pf_busy      <= 1'b1;
