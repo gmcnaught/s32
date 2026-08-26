@@ -105,6 +105,10 @@ if [ -f output_files/"${PROJECT}".sta.summary ]; then
   # Deliberately AFTER the RBF is written, so a failing bitstream still lands in
   # the artifact and can be examined -- it just must not be flashed, which is
   # what the non-zero exit says.
+  # Report the interpreter once per build.  The container's python3 version was
+  # inferred from a SyntaxError rather than known, which is a poor way to learn
+  # a build dependency.
+  echo "-- interpreter: $(python3 --version 2>&1)"
   set +e
   python3 verif/timing/check_timing_gate.py \
     output_files/"${PROJECT}".sta.summary
