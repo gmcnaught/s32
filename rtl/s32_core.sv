@@ -201,7 +201,13 @@ module s32_core #(
 
     output signed [15:0] audio_l,
     output signed [15:0] audio_r,
-    output      [7:0] out_lamps
+    output      [7:0] out_lamps,
+
+    // Debug observability bundle (audit follow-up, 2026-08-25).  Always
+    // driven; the consumer decides whether to render it.  With the HUD off at
+    // the top level this whole cone is dangling and Quartus removes it, so a
+    // production build is unaffected.
+    output     [63:0] dbg_bus
 );
 
 // The universal production profile is a single-screen System 32 build with
@@ -324,6 +330,58 @@ s32_v60_exec_cadence v60_cadence (
 wire        v60_ext_wr;
 wire [23:0] v60_ext_wr_addr;
 wire  [2:0] v60_ext_wr_bytes;
+
+// ---------------------------------------------------------------------------
+// Debug observability bundle
+//
+// Every failure investigated on 2026-08-25 presented as one bit -- "the screen
+// is black" -- and three separate investigations stalled at "the hardware
+// disagrees with the analysis and I cannot see why".  There is no probe in
+// this core: the only debug_* ports in the tree belong to the vendored s80x86
+// and are tied off.  This is that probe.
+//
+// Video is the transport rather than DDR, for two reasons.  DDR is owned end
+// to end by s32_fb_if and is clocked by clk_ram -- the domain under suspicion
+// -- so a DDR probe shares the fault it is meant to observe.  And the failing
+// builds still emit frames (flat-colour screenshots, 1316 bytes, not dead
+// signal), so the video output path demonstrably survives whatever kills the
+// game.
+//
+// What each field answers:
+//   heartbeat  is clk_sys running at all?             (free-running)
+//   pc         where is the V60, and is it moving?
+//   st         which sequencer state is it stuck in?
+//   halted     did it execute HALT rather than wedge?
+//   bus_txns   is the external bus doing anything?
+//   ce_viol    STICKY.  s32.sdc relaxes every V60 register-to-register path to
+//              a two-cycle setup requirement, justified by "at least one idle
+//              clk_sys edge between V60 updates".  Nothing in the RTL asserts
+//              it.  If this bit is ever set, STA has been checking the wrong
+//              requirement and every "timing closes" result is void.
+// ---------------------------------------------------------------------------
+reg  [7:0] dbg_heartbeat = 8'd0;
+reg [15:0] dbg_bus_txns  = 16'd0;
+reg        dbg_ce_viol   = 1'b0;
+reg        dbg_ce_d      = 1'b0;
+always @(posedge clk_sys) begin
+    dbg_heartbeat <= dbg_heartbeat + 8'd1;
+    dbg_ce_d      <= v60_exec_ce;
+    if (v60_exec_ce && dbg_ce_d) dbg_ce_viol <= 1'b1;  // two CEs back to back
+    if (rst) begin
+        dbg_bus_txns <= 16'd0;
+        dbg_ce_viol  <= 1'b0;
+        dbg_ce_d     <= 1'b0;
+    end
+    else if (m_req && m_ack) dbg_bus_txns <= dbg_bus_txns + 16'd1;
+end
+
+assign dbg_bus = {dbg_heartbeat,          // [63:56]
+                  dbg_bus_txns,           // [55:40]
+                  v60.pc[23:0],           // [39:16]
+                  v60.st[6:0],            // [15:9]
+                  v60.halted,             // [8]
+                  dbg_ce_viol,            // [7]
+                  7'd0};                  // [6:0]
 
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),

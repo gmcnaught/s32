@@ -913,7 +913,8 @@ s32_core core (
     .hs(core_hs), .vs(core_vs), .hb(core_hb), .vb(core_vb),
     .mode_416_active(mode_416_active),
     .audio_l(aud_l), .audio_r(aud_r),
-    .out_lamps()
+    .out_lamps(),
+    .dbg_bus(dbg_bus)
 );
 
 // Do not leave a held DAC sample audible while the game clocks are frozen.
@@ -1087,7 +1088,32 @@ end
 // can change the output geometry independently of the native gun coordinates;
 // suppress the crosshair in that optional mode rather than presenting a
 // silently misregistered sight.  The native (default) path is exact.
-wire [23:0] video_rgb_pre = crt_adjust_active ? {crt_r, crt_g, crt_b} : game_rgb;
+wire [23:0] video_rgb_raw = crt_adjust_active ? {crt_r, crt_g, crt_b} : game_rgb;
+
+// ---------------------------------------------------------------------------
+// Debug HUD (compile-time, default OFF -- production is unaffected).
+//
+// Build with -DS32_DEBUG_HUD to paint the core's 64-bit debug word into the
+// top six scanlines.  Placed here, at the very end of the video path, so it
+// renders even when the tilemap, sprite, mixer or CPU are dead -- which is the
+// entire point.  See rtl/s32_debug_hud.sv for the bit encoding and
+// tools/decode_hud.py for the screenshot decoder.
+// ---------------------------------------------------------------------------
+wire [63:0] dbg_bus;
+`ifdef S32_DEBUG_HUD
+wire [23:0] video_rgb_pre;
+s32_debug_hud hud (
+    .clk     (clk_sys),
+    .ce_pix  (crt_adjust_active ? crt_rd_ce : ce_pix_core),
+    .hblank  (core_hb),
+    .vblank  (core_vb),
+    .dbg     (dbg_bus),
+    .rgb_in  (video_rgb_raw),
+    .rgb_out (video_rgb_pre)
+);
+`else
+wire [23:0] video_rgb_pre = video_rgb_raw;
+`endif
 wire        video_ce_pre  = crt_adjust_active ? crt_rd_ce : ce_pix_core;
 wire        video_hs_pre  = crt_adjust_active ? crt_hs : core_hs;
 wire        video_vs_pre  = crt_adjust_active ? crt_vs : core_vs;
