@@ -69,10 +69,18 @@ echo "== Assembler =="
 quartus_asm "$PROJECT"
 echo
 echo "== Timing analysis =="
-# Not a gate: this revision is recorded as NOT YET TIMING-CLOSED in the QSF
-# header, so a non-zero failing-path count is expected and is reported rather
-# than fatal.  The STA summary is the artifact that matters.
-quartus_sta "$PROJECT" || echo "(STA reported failing paths -- see the summary)"
+# quartus_sta's own exit code stays non-fatal: this revision is recorded as NOT
+# YET TIMING-CLOSED in the QSF header because of one vendored HDMI/ascal setup
+# path that main itself misses and ships with.  Gating on quartus_sta directly
+# would block every build including known-good ones.
+#
+# But "not a gate" used to mean NO gate, and the summary was only ever echoed
+# `head -20` deep -- so on 2026-08-25 two builds reached hardware with HOLD
+# violations on the core clock domains, both reported by CI as a passing RBF,
+# and both blacked out every game.  check_timing_gate.py reads all four corners
+# and applies the distinction that was missing: hold anywhere and setup on a
+# core domain are fatal, the vendored HDMI setup path is tolerated.
+quartus_sta "$PROJECT" || echo "(STA reported failing paths -- the gate below decides)"
 
 # Where the failing paths actually are.  The summary alone says a domain misses
 # and not which registers, which is not enough to fix anything and costs
@@ -93,7 +101,15 @@ sha256sum "$RBF" 2>/dev/null || shasum -a 256 "$RBF"
 
 if [ -f output_files/"${PROJECT}".sta.summary ]; then
   echo
-  echo "== STA summary (slack) =="
-  grep -iE "slack|Timing Analyzer Summary|^; +(Setup|Hold)" \
-    output_files/"${PROJECT}".sta.summary | head -20 || true
+  echo "== Timing gate (all corners) =="
+  # Deliberately AFTER the RBF is written, so a failing bitstream still lands in
+  # the artifact and can be examined -- it just must not be flashed, which is
+  # what the non-zero exit says.
+  python3 verif/timing/check_timing_gate.py \
+    output_files/"${PROJECT}".sta.summary || TIMING_GATE_FAILED=1
+fi
+
+if [ "${TIMING_GATE_FAILED:-0}" = "1" ]; then
+  echo "BUILD FAILED: timing gate rejected this bitstream" >&2
+  exit 1
 fi
