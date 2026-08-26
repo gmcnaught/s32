@@ -59,6 +59,25 @@ QG="$(find_qsys qsys-generate)" || { echo "ERROR: qsys-generate not found" >&2; 
 test -f rtl/pll/synthesis/pll.qip || { echo "ERROR: PLL IP not generated" >&2; exit 1; }
 
 echo
+# Fitter seed override, for a seed sweep.  The QSF header records a long
+# history of one fact: the winning fitter seed changes whenever the netlist
+# changes, so every netlist change needs a fresh exploration and a single
+# rebuild is not a fair test of an RTL change.  S32_SEED rewrites the QSF
+# assignment rather than passing quartus_fit --seed, because the assignment is
+# what the QSF header documents and it cannot silently be an unsupported
+# option on this Quartus version.
+if [ -n "${S32_SEED:-}" ]; then
+  case "$S32_SEED" in
+    ''|*[!0-9]*) echo "ERROR: S32_SEED must be a non-negative integer, got '$S32_SEED'" >&2; exit 2 ;;
+  esac
+  echo
+  echo "== Fitter seed override: $S32_SEED =="
+  sed -i.seedbak "s/^set_global_assignment -name SEED .*/set_global_assignment -name SEED ${S32_SEED}/" "${PROJECT}.qsf"
+  grep -q "^set_global_assignment -name SEED ${S32_SEED}\$" "${PROJECT}.qsf" || {
+    echo "ERROR: could not set SEED in ${PROJECT}.qsf" >&2; exit 2; }
+  grep -n "^set_global_assignment -name SEED" "${PROJECT}.qsf"
+fi
+
 echo "== Analysis & Synthesis =="
 quartus_map "$PROJECT" --read_settings_files=on
 echo
@@ -94,7 +113,7 @@ mkdir -p "$OUTDIR"
 SOF="output_files/${PROJECT}.sof"
 test -f "$SOF" || { echo "ERROR: no .sof produced" >&2; exit 1; }
 STAMP="$(date -u +%Y%m%d)"
-RBF="$OUTDIR/SegaSystem32_${STAMP}.rbf"
+RBF="$OUTDIR/SegaSystem32_${STAMP}${S32_SEED:+_seed${S32_SEED}}.rbf"
 quartus_cpf -c -o bitstream_compression=on "$SOF" "$RBF"
 ls -lh "$RBF"
 sha256sum "$RBF" 2>/dev/null || shasum -a 256 "$RBF"

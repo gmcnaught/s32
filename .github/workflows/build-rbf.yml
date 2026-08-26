@@ -19,6 +19,14 @@ name: Build RBF
 
 on:
   workflow_dispatch:
+    inputs:
+      seed:
+        description: >-
+          Fitter seed override (integer).  Leave empty to use the QSF's
+          documented seed.  Dispatch the same ref once per seed to run a
+          sweep in parallel -- the winning seed changes with the netlist.
+        required: false
+        default: ''
   pull_request:
     paths:
       - 'rtl/**'
@@ -42,12 +50,12 @@ on:
       - '.github/workflows/build-rbf.yml'
 
 concurrency:
-  group: build-rbf-${{ github.ref }}
+  group: build-rbf-${{ github.ref }}-${{ github.event.inputs.seed || 'qsf' }}
   cancel-in-progress: true
 
 jobs:
   rbf:
-    name: RBF (Quartus Lite 17.0)
+    name: RBF (Quartus Lite 17.0)${{ github.event.inputs.seed && format(' seed {0}', github.event.inputs.seed) || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
@@ -66,14 +74,16 @@ jobs:
       # Non-login `bash -c`: the image's entrypoint puts Quartus on PATH and a
       # login shell re-reads /etc/profile and loses it.
       - name: Build
+        env:
+          S32_SEED: ${{ github.event.inputs.seed }}
         run: |
-          docker run --rm -v "$PWD:/build" raetro/quartus:17.0 \
+          docker run --rm -v "$PWD:/build" -e S32_SEED raetro/quartus:17.0 \
             bash -c "cd /build && tools/build.sh _out"
 
       - name: Upload RBF
         uses: actions/upload-artifact@v4
         with:
-          name: segasystem32-rbf
+          name: segasystem32-rbf${{ github.event.inputs.seed && format('-seed{0}', github.event.inputs.seed) || '' }}
           path: _out/*.rbf
           if-no-files-found: error
 
@@ -81,7 +91,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quartus-reports
+          name: quartus-reports${{ github.event.inputs.seed && format('-seed{0}', github.event.inputs.seed) || '' }}
           path: |
             output_files/*.rpt
             output_files/*.summary
