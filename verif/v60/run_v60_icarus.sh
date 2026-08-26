@@ -11,6 +11,7 @@ declare -A TB=(
   [tb_v60_directed]="DIRECTED PASS"
   [tb_v60_fetch]="FETCH PERF PASS"
   [tb_v60_timebase]="V60 TIMEBASE PASS"
+  [tb_v60_ce_alignment]="V60 CE ALIGNMENT PASS"
   [tb_v60_tstate]="V60 T-STATE PASS"
   [tb_v60_smc]="V60 SMC PASS"
   [tb_v60_smc_ext]="V60 SMC EXT PASS"
@@ -39,7 +40,7 @@ declare -A TB=(
   [tb_v60_spidman_gate]="SPIDMAN GATE PASS"
   [tb_v60_ea_overlap_disp]="V60 EA_OVERLAP DISP PASS"
 )
-ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_timebase tb_v60_tstate tb_v60_smc tb_v60_smc_ext tb_v60_long_ea tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate tb_v60_ea_overlap_disp"
+ORDER="tb_v60_smoke tb_v60_directed tb_v60_fetch tb_v60_timebase tb_v60_ce_alignment tb_v60_tstate tb_v60_smc tb_v60_smc_ext tb_v60_long_ea tb_v60_bus_lanes tb_v60_divx tb_v60_divxmem tb_v60_flags tb_v60_ga2_bossbar tb_v60_incdecmem tb_v60_rotate tb_v60_shaov tb_v60_xch tb_v60_audit tb_v60_bits tb_v60_decimal tb_v60_search tb_v60_cmpc tb_v60_movcd tb_v60_schd tb_v60_strfs tb_v60_fp tb_v60_fpdecode tb_v60_spidman_xchh tb_v60_spidman_window tb_v60_spidman_gate tb_v60_ea_overlap_disp"
 WORK="${WORK:-/tmp/s32_v60_ut}"
 mkdir -p "$WORK"
 pass=0; fail=0; failed=""
