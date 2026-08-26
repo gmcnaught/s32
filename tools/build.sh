@@ -105,11 +105,26 @@ if [ -f output_files/"${PROJECT}".sta.summary ]; then
   # Deliberately AFTER the RBF is written, so a failing bitstream still lands in
   # the artifact and can be examined -- it just must not be flashed, which is
   # what the non-zero exit says.
+  set +e
   python3 verif/timing/check_timing_gate.py \
-    output_files/"${PROJECT}".sta.summary || TIMING_GATE_FAILED=1
+    output_files/"${PROJECT}".sta.summary
+  TIMING_GATE_RC=$?
+  set -e
 fi
 
-if [ "${TIMING_GATE_FAILED:-0}" = "1" ]; then
-  echo "BUILD FAILED: timing gate rejected this bitstream" >&2
-  exit 1
-fi
+# The gate's exit codes are distinct on purpose.  The first version of this
+# script used f-strings, crashed on the CI container's older python3, and
+# build.sh announced "timing gate rejected this bitstream" -- reporting a
+# broken check as a failing design.  That is the same defect this gate exists
+# to fix, so the two are never conflated again.
+case "${TIMING_GATE_RC:-0}" in
+  0) : ;;
+  3) echo "BUILD FAILED: timing gate REJECTED this bitstream -- do not flash it" >&2
+     exit 1 ;;
+  2) echo "BUILD FAILED: timing gate could not evaluate the STA summary" >&2
+     echo "  (STA did not run, or output_files/${PROJECT}.sta.summary is unreadable)" >&2
+     exit 1 ;;
+  *) echo "BUILD FAILED: the timing gate itself is broken (exit ${TIMING_GATE_RC})" >&2
+     echo "  This is a TOOLING fault, not a verdict on the bitstream." >&2
+     exit 1 ;;
+esac

@@ -34,6 +34,17 @@ SETUP on the vendored HDMI path  WARN.  main ships with pll_hdmi setup at
 RECOVERY / REMOVAL / MPW         FATAL on any domain.
 
 Pass --allow-hdmi-setup-ns N to tighten or loosen the one tolerated class.
+
+Exit codes -- deliberately distinct, because the first version of this script
+crashed on the CI container's older python3 and build.sh reported the crash as
+"timing gate rejected this bitstream".  A check whose failure mode is
+indistinguishable from the thing it checks is the exact defect this gate exists
+to fix, so:
+
+    0   pass
+    3   REJECT -- real violations, do not flash this bitstream
+    2   ERROR  -- the gate could not evaluate (missing/unparseable summary)
+    1   anything else, i.e. the gate itself is broken (a crash lands here)
 """
 import argparse
 import re
@@ -51,10 +62,10 @@ def classify(kind, domain, slack, tol):
     if "Setup" in kind:
         if HDMI_DOMAIN.search(domain):
             if slack >= -tol:
-                return "WARN", f"vendored HDMI/ascal setup, within the {tol} ns allowance"
-            return "FATAL", f"HDMI setup worse than the {tol} ns allowance"
+                return "WARN", "vendored HDMI/ascal setup, within the %g ns allowance" % tol
+            return "FATAL", "HDMI setup worse than the %g ns allowance" % tol
         return "FATAL", "setup violation on a core clock"
-    return "FATAL", f"{kind.split()[-2] if len(kind.split())>1 else kind} violation"
+    return "FATAL", "%s violation" % (kind.split()[-2] if len(kind.split()) > 1 else kind)
 
 
 def main():
@@ -66,13 +77,13 @@ def main():
     try:
         text = open(args.summary, encoding="utf-8", errors="replace").read()
     except OSError as exc:
-        print(f"TIMING GATE FAIL: cannot read {args.summary}: {exc}", file=sys.stderr)
+        sys.stderr.write("TIMING GATE ERROR: cannot read %s: %s\n" % (args.summary, exc))
         return 2
 
     blocks = BLOCK.findall(text)
     if not blocks:
-        print(f"TIMING GATE FAIL: no timing checks parsed from {args.summary} -- "
-              "STA did not run, or the format changed", file=sys.stderr)
+        sys.stderr.write("TIMING GATE ERROR: no timing checks parsed from %s -- "
+                         "STA did not run, or the format changed\n" % args.summary)
         return 2
 
     fatal, warn = [], []
@@ -88,22 +99,21 @@ def main():
         (fatal if verdict == "FATAL" else warn).append(
             (slack, float(tns_s), kind, domain, why))
 
-    print(f"TIMING GATE: {len(blocks)} checks, "
-          f"{len(fatal)} fatal, {len(warn)} tolerated")
-    for slack, tns, kind, domain, why in sorted(warn):
-        print(f"  WARN   {slack:+.3f} TNS {tns:+.3f}  {kind}\n"
-              f"         {domain}\n         -> {why}")
-    for slack, tns, kind, domain, why in sorted(fatal):
-        print(f"  FATAL  {slack:+.3f} TNS {tns:+.3f}  {kind}\n"
-              f"         {domain}\n         -> {why}")
+    print("TIMING GATE: %d checks, %d fatal, %d tolerated"
+          % (len(blocks), len(fatal), len(warn)))
+    for label, rows in (("WARN ", sorted(warn)), ("FATAL", sorted(fatal))):
+        for slack, tns, kind, domain, why in rows:
+            print("  %s  %+.3f TNS %+.3f  %s\n         %s\n         -> %s"
+                  % (label, slack, tns, kind, domain, why))
 
     if fatal:
-        print("\nTIMING GATE FAIL: this bitstream must not be flashed.", file=sys.stderr)
-        print("A hold violation or a core-domain setup violation makes the design "
-              "functionally wrong, not merely slow.", file=sys.stderr)
-        print("If the RTL is right, the next move is a fitter-seed exploration -- "
-              "see the seed history in Arcade-SegaSystem32.qsf.", file=sys.stderr)
-        return 1
+        sys.stderr.write(
+            "\nTIMING GATE REJECT: this bitstream must not be flashed.\n"
+            "A hold violation or a core-domain setup violation makes the design\n"
+            "functionally wrong, not merely slow.\n"
+            "If the RTL is right, the next move is a fitter-seed exploration --\n"
+            "see the seed history in Arcade-SegaSystem32.qsf.\n")
+        return 3
 
     print("TIMING GATE PASS")
     return 0
