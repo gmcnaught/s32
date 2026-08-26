@@ -187,20 +187,40 @@ if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for
 set v60_bus_regs [get_registers -nowarn {*|s32_v60_bus:vbus|*}]
 if {[get_collection_size $v60_bus_regs] > 0} {
     # Everything crossing the boundary in either direction: the CPU handshake
-    # AND the m_* interface to the clk_sys memory subsystem.  Left broad on
-    # purpose -- enumerating the far side would mean naming half of s32_core
-    # and would rot the moment a peripheral moves.
-    set_multicycle_path -setup 2 -from $v60_bus_regs
-    set_multicycle_path -hold  1 -from $v60_bus_regs
-    set_multicycle_path -setup 2 -to   $v60_bus_regs
-    set_multicycle_path -hold  1 -to   $v60_bus_regs
+    # AND the m_* interface to the clk_sys memory subsystem.  The far side is
+    # named by its CLOCK rather than enumerated -- listing the registers would
+    # mean naming half of s32_core and would rot the moment a peripheral moves.
+    #
+    # Naming the clock is not merely a tidier spelling of the same thing.  The
+    # whole justification above is a property of the clk_sys -> clk_ram
+    # BOUNDARY: a clk_sys register can only launch on a clk_sys edge, and every
+    # clk_sys edge coincides with an even clk_ram tick, so a real launch is two
+    # clk_ram ticks from its capture.  A bare `-to $v60_bus_regs` does not say
+    # that.  It also catches clk_ram -> clk_ram paths from sources that are not
+    # the adapter, and those launch on ANY clk_ram edge, odd ones included.
+    #
+    # Such paths exist, and they are the worst ones available: the adapter's
+    # own clock enable.  s32_v60_timebase and ce_cpu_ram_d are clk_ram
+    # registers in s32_core, so they match neither `-from $v60_bus_regs` nor
+    # the internal carve-out below, and they were being granted 20.7 ns to
+    # deliver v60_bus_ce when they have 10.35 ns.  A clock enable with twice
+    # its real budget does not fail STA; it fails on the device, for some
+    # placements and not others.
+    set sys_clk [get_clocks -nowarn {*|pll|pll_inst|altera_pll_i|*[1].*|divclk}]
+    if {[s32_require [expr {[get_collection_size $sys_clk] == 1}] \
+            "clk_sys PLL output clock for the adapter boundary exception"]} {
+        set_multicycle_path -setup 2 -from $sys_clk      -to $v60_bus_regs
+        set_multicycle_path -hold  1 -from $sys_clk      -to $v60_bus_regs
+        set_multicycle_path -setup 2 -from $v60_bus_regs -to $sys_clk
+        set_multicycle_path -hold  1 -from $v60_bus_regs -to $sys_clk
+    }
 
-    # ...except the adapter's own internal clk_ram -> clk_ram paths, which get
-    # no such relaxation.  A rule naming both -from and -to is more specific
-    # and takes priority over the two broad ones above.  Without this the move
-    # to clk_ram would quietly hand the adapter's own state machine twice the
-    # time it has -- the same shape of mistake the raw-clk_sys carve-out above
-    # exists to prevent.
+    # ...and the adapter's own internal clk_ram -> clk_ram paths get no
+    # relaxation.  With the rules above scoped to clk_sys these no longer match
+    # anything broad, so this is now a restatement of the default rather than a
+    # correction to it -- kept because it is the invariant that matters, and
+    # because the previous spelling depended on -from/-to specificity beating
+    # a bare -to, which is exactly the kind of reasoning that failed here.
     set_multicycle_path -setup 1 -from $v60_bus_regs -to $v60_bus_regs
     set_multicycle_path -hold  0 -from $v60_bus_regs -to $v60_bus_regs
 } else {
