@@ -177,11 +177,18 @@ localparam CONF_STR = {
     "O[34],Gun Crosshair,Off,On;",
     "O[37:36],Gun Sensitivity,Normal,High,Low,Lowest;",
     // status[29] is RESERVED and intentionally unused.  It used to select
-    // "V60 Fetch,Fast,PCB (Reset)"; the Fast instruction-fetch transport has
-    // been removed and the core always uses the PCB fetch path.  The bit is
-    // left allocated rather than reclaimed so every later option
-    // (Scale = status[28:27], etc.) keeps its existing meaning for users with
-    // saved settings.
+    // "V60 Fetch,Fast,PCB (Reset)"; the option is gone, so the transport is no
+    // longer switchable at runtime.  The bit is left allocated rather than
+    // reclaimed so every later option (Scale = status[28:27], etc.) keeps its
+    // existing meaning for users with saved settings.
+    //
+    // What is NOT true, and what this comment claimed until 2026-08-26: that
+    // the fast transport "has been removed and the core always uses the PCB
+    // fetch path".  It is compiled in and selected -- `FAST_IFETCH_EN` defaults
+    // to 1'b1 (rtl/s32_core.sv) and this file ties .fast_v60(1'b1) below.
+    // Removing the option removed the choice, not the transport.  Retiring it
+    // for real is audit S07.5, and reading this comment as a statement of the
+    // current design is how that work starts from a false premise.
     "-;",
     "O[9],CRT Adjust,Off,On;",
     "H1O[14:10],CRT H-Size,0,+1,+2,+3,+4,+5,+6,+7,+8,+9,+10,+11,+12,+13,+14,+15,-16,-15,-14,-13,-12,-11,-10,-9,-8,-7,-6,-5,-4,-3,-2,-1;",
