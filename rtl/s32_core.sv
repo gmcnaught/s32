@@ -375,17 +375,22 @@ always @(posedge clk_sys) begin
     else if (m_req && m_ack) dbg_bus_txns <= dbg_bus_txns + 16'd1;
 end
 
+wire [31:0] v60_dbg_pc;
+wire  [6:0] v60_dbg_st;
+wire        v60_dbg_halted;
+
 assign dbg_bus = {dbg_heartbeat,          // [63:56]
                   dbg_bus_txns,           // [55:40]
-                  v60.pc[23:0],           // [39:16]
-                  v60.st[6:0],            // [15:9]
-                  v60.halted,             // [8]
+                  v60_dbg_pc[23:0],       // [39:16]
+                  v60_dbg_st,             // [15:9]
+                  v60_dbg_halted,         // [8]
                   dbg_ce_viol,            // [7]
                   7'd0};                  // [6:0]
 
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .fast_ifetch(fast_v60),
+    .dbg_pc(v60_dbg_pc), .dbg_st(v60_dbg_st), .dbg_halted(v60_dbg_halted),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_fetch(c_fetch), .bus_lock(c_lock),
     .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
