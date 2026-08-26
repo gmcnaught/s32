@@ -574,7 +574,7 @@ wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
 // until the regression is understood.  Turning this on without that would be
 // shipping a fault to fix a hazard, which is a bad trade even though the
 // hazard is real.
-localparam  PROT_INTERLOCK = 1'b0;
+localparam  PROT_INTERLOCK = 1'b1;   // EXPERIMENT ONLY -- not for merge
 wire        pr_locked  = PROT_INTERLOCK && c_lock;
 wire        work_pr_we = ((pr_req && pr_we) || br_pram_we) && !pr_locked;
 wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
