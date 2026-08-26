@@ -27,6 +27,13 @@ on:
           sweep in parallel -- the winning seed changes with the netlist.
         required: false
         default: ''
+      defines:
+        description: >-
+          Extra Verilog macros, comma separated (NAME or NAME=VALUE).  For a
+          diagnostic build: S32_DEBUG_HUD=1,PROT_INTERLOCK_EN=1.  Leave empty
+          for a production build.
+        required: false
+        default: ''
   pull_request:
     paths:
       - 'rtl/**'
@@ -50,7 +57,9 @@ on:
       - '.github/workflows/build-rbf.yml'
 
 concurrency:
-  group: build-rbf-${{ github.ref }}-${{ github.event.inputs.seed || 'qsf' }}
+  group: >-
+    build-rbf-${{ github.ref }}-${{ github.event.inputs.seed || 'qsf' }}-${{
+    github.event.inputs.defines || 'none' }}
   cancel-in-progress: true
 
 jobs:
@@ -76,8 +85,9 @@ jobs:
       - name: Build
         env:
           S32_SEED: ${{ github.event.inputs.seed }}
+          S32_DEFINES: ${{ github.event.inputs.defines }}
         run: |
-          docker run --rm -v "$PWD:/build" -e S32_SEED raetro/quartus:17.0 \
+          docker run --rm -v "$PWD:/build" -e S32_SEED -e S32_DEFINES raetro/quartus:17.0 \
             bash -c "cd /build && tools/build.sh _out"
 
       - name: Upload RBF
