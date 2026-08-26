@@ -105,9 +105,20 @@ if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for
     # clk_sys edge, so the idle edge the exception above assumes does not
     # exist for them and they must keep a real single-cycle requirement.
     #
-    # -from covers both hops that matter: ungated -> ungated, and ungated ->
-    # the FSM's reset branch, which is itself ungated and copies the detector
-    # counts every clk_sys edge while reset is asserted.
+    # THREE hops matter, not two.  `-from $v60_ungated` covers ungated ->
+    # ungated and ungated -> the FSM's reset branch (itself ungated, copying
+    # the detector counts every clk_sys edge while reset is asserted).  The
+    # third is the one that was missing: gated -> UNGATED.
+    #
+    # ext_fb_cnt and ext_pv_cnt are members of $v60_regs, so the broad
+    # two-cycle exception above applies to paths INTO them -- and the ungated
+    # block computes fw_overlap() combinationally from fb_base, fb_wr,
+    # fb_prev_base and fb_prev_valid, which are ce-gated V60 registers.  So STA
+    # was granting two clk_sys cycles to logic that captures on every clk_sys
+    # edge, on precisely the detector whose reason to exist is seeing events
+    # BETWEEN enabled edges.  A relaxed setup requirement on a real one-cycle
+    # path does not fail STA; it fails on the device, and whether it fails at
+    # all depends on placement, which is why it survived every timing report.
     #
     # verif/timing/check_v60_ce_premise.py fails the build if an ungated
     # always block appears in s32_v60.sv whose registers are not listed here.
@@ -120,6 +131,14 @@ if {[s32_require [expr {[get_collection_size $v60_regs] > 0}] "V60 registers for
     if {[get_collection_size $v60_ungated] > 0} {
         set_multicycle_path -setup 1 -from $v60_ungated -to $v60_regs
         set_multicycle_path -hold 0 -from $v60_ungated -to $v60_regs
+
+        # ...and the reverse.  Specified with both -from and -to so it matches
+        # the broad exception's specificity class and, being declared later,
+        # takes precedence over it.  A bare `-to $v60_ungated` would NOT: it is
+        # less specific than `-from $v60_regs -to $v60_regs`, so the two-cycle
+        # relaxation would keep winning and this would silently do nothing.
+        set_multicycle_path -setup 1 -from $v60_regs -to $v60_ungated
+        set_multicycle_path -hold 0 -from $v60_regs -to $v60_ungated
     } else {
         post_message -type critical_warning "s32 SDC: no ungated V60 registers matched; the raw-clk_sys carve-out is not being applied"
     }
