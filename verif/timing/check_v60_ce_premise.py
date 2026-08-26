@@ -25,6 +25,15 @@ Contract:
   * The union of those names must equal the `v60_ungated` collection in the
     SDC.
 
+  * The carve-out must run in BOTH directions.  An ungated register is a
+    member of $v60_regs, so the broad two-cycle exception applies to paths
+    INTO it as well as out of it -- and the external-write detector computes
+    its D input combinationally from ce-gated fetch state (fb_base, fb_wr,
+    fb_prev_base, fb_prev_valid).  Carving out only `-from $v60_ungated`
+    leaves STA granting two clk_sys cycles to logic that captures on every
+    edge.  That does not fail STA; it fails on the device, and only for some
+    placements, which is exactly the kind of bug no report will ever name.
+
 Exempt: the main microsequencer block (identified by `case (st)`), whose only
 ungated part is the reset branch, and which the SDC handles via `-from
 $v60_ungated`; and anything inside `ifndef SYNTHESIS`, which is not synthesised.
@@ -122,6 +131,18 @@ def sdc_ungated():
     return {m.group(1)} | set(m.group(2).split())
 
 
+MC_FROM_UNGATED = re.compile(
+    r"set_multicycle_path\s+-setup\s+1\s+-from\s+\$v60_ungated\s+-to\s+\$v60_regs")
+MC_TO_UNGATED = re.compile(
+    r"set_multicycle_path\s+-setup\s+1\s+-from\s+\$v60_regs\s+-to\s+\$v60_ungated")
+
+
+def sdc_directions():
+    """Which of the two carve-out directions the SDC actually declares."""
+    text = SDC.read_text(encoding="utf-8")
+    return bool(MC_FROM_UNGATED.search(text)), bool(MC_TO_UNGATED.search(text))
+
+
 def main():
     src = strip_sim_only(RTL.read_text())
     declared, problems = set(), []
@@ -168,6 +189,23 @@ def main():
                 f"block drives any more -- stale carve-out, remove it"
             )
 
+    out_ok, in_ok = sdc_directions()
+    if not out_ok:
+        problems.append(
+            f"{SDC.name}: no `-setup 1 -from $v60_ungated -to $v60_regs`. "
+            f"Paths OUT of the raw-clk_sys registers are back on the two-cycle "
+            f"requirement."
+        )
+    if not in_ok:
+        problems.append(
+            f"{SDC.name}: no `-setup 1 -from $v60_regs -to $v60_ungated`. "
+            f"The raw-clk_sys registers are members of $v60_regs, so the broad "
+            f"two-cycle exception covers paths INTO them -- including the "
+            f"external-write detector's fw_overlap() inputs, which are ce-gated "
+            f"fetch state. STA then checks a two-cycle requirement on logic "
+            f"that captures every clk_sys edge."
+        )
+
     if problems:
         print("V60 CE-PREMISE CHECK: FAIL")
         for p in problems:
@@ -176,8 +214,8 @@ def main():
 
     print(
         f"V60 CE-PREMISE CHECK: PASS "
-        f"({len(declared)} raw-clk_sys registers, all carved out of the "
-        f"two-cycle exception)"
+        f"({len(declared)} raw-clk_sys registers, carved out of the two-cycle "
+        f"exception in both directions)"
     )
     return 0
 
