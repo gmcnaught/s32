@@ -101,3 +101,6 @@ __pycache__/
 
 # Left behind by tools/build.sh when S32_SEED overrides the fitter seed.
 *.seedbak
+
+# Hardware-gate captures pulled from a device by tools/hwgate.sh.
+/_hwgate/
