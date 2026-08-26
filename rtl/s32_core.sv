@@ -647,7 +647,19 @@ wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
 // until the regression is understood.  Turning this on without that would be
 // shipping a fault to fix a hazard, which is a bad trade even though the
 // hazard is real.
-localparam  PROT_INTERLOCK = 1'b0;
+//
+// Arm B is a build option rather than an edit.  Both probes the comment above
+// asks for -- a different fitter seed, and reading the HUD while arm B fails
+// -- need a bitstream with this on, and the way to get one was to edit this
+// line on a branch (v60/exp-prot-interlock).  An experiment that exists only
+// as a divergent branch measures whatever netlist that branch happens to hold,
+// which is how the first attribution went wrong.  Default is unchanged and the
+// macro is absent from every production build, so the netlist is identical
+// unless it is asked for:  S32_DEFINES=PROT_INTERLOCK_EN=1
+`ifndef PROT_INTERLOCK_EN
+  `define PROT_INTERLOCK_EN 0
+`endif
+localparam  PROT_INTERLOCK = (`PROT_INTERLOCK_EN != 0);
 wire        pr_locked  = PROT_INTERLOCK && c_lock;
 wire        work_pr_we = ((pr_req && pr_we) || br_pram_we) && !pr_locked;
 wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
