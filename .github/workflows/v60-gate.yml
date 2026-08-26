@@ -76,6 +76,13 @@ jobs:
       - name: Worst-path reporter self-test
         run: tclsh verif/timing/test_worst_paths.tcl
 
+      # Every timing exception is a claim.  A rule naming one endpoint
+      # collection asserts something about every path reaching or leaving it,
+      # which is almost never what the comment above it says -- that is how the
+      # clk_ram adapter exception came to cover its own clock enable.
+      - name: SDC exceptions are scoped to what they claim
+        run: python3 verif/timing/check_sdc_exceptions.py
+
   core:
     name: Full-core lint / boot / soak
     runs-on: ubuntu-latest
