@@ -80,6 +80,13 @@ module s32_v60 #(
     // dedicated instruction-fetch port (used only when FAST_IFETCH=1): request an
     // 8-byte line at if_addr; if_data/if_ack return it.  Left unconnected when
     // FAST_IFETCH=0 (the internal reads are forced to 0 so no X propagates).
+    // Debug observability.  Real ports, not a hierarchical reference: Quartus
+    // Lite 17.0 cannot resolve an XMR into an instance (Error 10207), even
+    // though Icarus accepts one, so reaching in from s32_core does not build.
+    output     [31:0] dbg_pc,
+    output      [6:0] dbg_st,
+    output            dbg_halted,
+
     output reg        if_req,
     output     [23:0] if_addr,       // frontier byte address; s32_core reads the
                                      // containing 8-byte line and returns it already
@@ -162,6 +169,7 @@ wire        psw_is = psw_rest[28];
 
 reg halted;
 
+
 // ---------------------------------------------------------------------------
 // Data/prefetch bus arbiter.  The CPU's DATA accesses drive dbus_* and observe
 // `dack`; the instruction prefetcher drives pf_* and observes `pf_ack`.  A
@@ -233,6 +241,25 @@ wire [31:0] fetch_frontier = fb_base + {27'b0, fb_wr};
 wire        fetch_is_rom = (fetch_frontier[23:21] == 3'b000) ||
                            (fetch_frontier[23:20] == 4'hf);
 wire        use_fast_ifetch = FAST_IFETCH && fast_ifetch && fetch_is_rom;
+// Regions a SPECULATIVE fetch may touch without a side effect (audit §07.5).
+// The issue condition below reads up to pf_high (20, or 24 under a loop hint)
+// bytes past PC.  fetch_is_rom above selects the TRANSPORT and is not a safety
+// check -- when it is false the fetch still goes out on the shared bus, which
+// reaches the whole System 32 map.  One peripheral on that map has a genuine
+// read side effect: the MSM6253 ADC at 0xC00050-57 shifts its serial register
+// on every read (rtl/io/s32_io.sv, s32_msm6253: `cs && !we && !rd_d` shifts),
+// so a stray lookahead there corrupts an analog conversion in progress for the
+// wheel/gun titles.  (The INTC acts only on `cs && we`, and the RNG is a
+// free-running LFSR whose read is a pure fold, so neither is at risk.)
+//
+// Only the LOOKAHEAD is gated.  A demand fetch -- fb_wr < fb_need, the current
+// instruction genuinely lacks bytes -- is never blocked, because a program
+// executing from an unusual region must still run.  Blocking lookahead cannot
+// starve the machine: the demand term re-evaluates every cycle.
+wire        fetch_spec_safe = (fetch_frontier[23:21] == 3'b000)  // ROM   000000-1FFFFF
+                           || (fetch_frontier[23:20] == 4'h2)    // work  200000-2FFFFF
+                           || (fetch_frontier[23:20] == 4'h7)    // shared 700000-7FFFFF
+                           || (fetch_frontier[23:20] == 4'hF);   // ROM hi F00000-FFFFFF
 reg [7:0]  fb_prev[0:23];   // previous sequential window for tight loops
 reg [31:0] fb_prev_base;
 reg [4:0]  fb_prev_valid;
@@ -621,6 +648,15 @@ typedef enum logic [6:0] {
 } st_t;
 
 st_t st, st_after_ea, st_after_fill;
+
+// Debug observability taps (see s32_debug_hud).  Placed here rather than
+// beside pc/halted because `st` is declared at this point and Icarus rejects
+// use-before-declaration; Quartus tolerates it, which is how the reverse
+// mistake -- a cross-module hierarchical reference -- passed simulation and
+// then failed elaboration with Error 10207.
+assign dbg_pc     = pc;
+assign dbg_st     = st;
+assign dbg_halted = halted;
 
 // Bytes shifted out this step, capped at 4.  Kept at 4 for the same
 // timing-closure reason S_FILL is (see the note there): widening the fb[] input
@@ -4012,7 +4048,8 @@ else if (ce) begin
         // bytes with zero bus traffic, so prefetching them just thrashes SDRAM.
         // fb_wr<=20 keeps the append within the 24-byte window.
         if (fb_base == pc && !fb_realigning && fb_wr <= 5'd20
-            && (fb_wr < fb_need || (fb_wr < pf_high && !pf_suppress))) begin
+            && (fb_wr < fb_need
+                || (fb_wr < pf_high && !pf_suppress && fetch_spec_safe))) begin
             pf_addr      <= fetch_frontier;
             pf_iss_epoch <= pf_epoch;
             pf_busy      <= 1'b1;

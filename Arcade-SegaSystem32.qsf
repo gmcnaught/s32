@@ -169,6 +169,9 @@ set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 # Quartus 17 does not predefine SYNTHESIS; keep simulation-only assertions out
 # of the production HDL parse (the verification harnesses do not define it).
 set_global_assignment -name VERILOG_MACRO "SYNTHESIS=1"
+# EXPERIMENT ONLY -- NOT FOR MERGE.  Turns on the debug HUD so a failing build
+# can be read off a screenshot instead of being a single black bit.
+set_global_assignment -name VERILOG_MACRO "S32_DEBUG_HUD=1"
 
 # All supported standard protection responders remain available; descriptor
 # selection keeps them inactive for games that do not use them.
