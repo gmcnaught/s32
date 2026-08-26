@@ -69,10 +69,18 @@ echo "== Assembler =="
 quartus_asm "$PROJECT"
 echo
 echo "== Timing analysis =="
-# Not a gate: this revision is recorded as NOT YET TIMING-CLOSED in the QSF
-# header, so a non-zero failing-path count is expected and is reported rather
-# than fatal.  The STA summary is the artifact that matters.
-quartus_sta "$PROJECT" || echo "(STA reported failing paths -- see the summary)"
+# quartus_sta's own exit code stays non-fatal: this revision is recorded as NOT
+# YET TIMING-CLOSED in the QSF header because of one vendored HDMI/ascal setup
+# path that main itself misses and ships with.  Gating on quartus_sta directly
+# would block every build including known-good ones.
+#
+# But "not a gate" used to mean NO gate, and the summary was only ever echoed
+# `head -20` deep -- so on 2026-08-25 two builds reached hardware with HOLD
+# violations on the core clock domains, both reported by CI as a passing RBF,
+# and both blacked out every game.  check_timing_gate.py reads all four corners
+# and applies the distinction that was missing: hold anywhere and setup on a
+# core domain are fatal, the vendored HDMI setup path is tolerated.
+quartus_sta "$PROJECT" || echo "(STA reported failing paths -- the gate below decides)"
 
 # Where the failing paths actually are.  The summary alone says a domain misses
 # and not which registers, which is not enough to fix anything and costs
@@ -93,7 +101,34 @@ sha256sum "$RBF" 2>/dev/null || shasum -a 256 "$RBF"
 
 if [ -f output_files/"${PROJECT}".sta.summary ]; then
   echo
-  echo "== STA summary (slack) =="
-  grep -iE "slack|Timing Analyzer Summary|^; +(Setup|Hold)" \
-    output_files/"${PROJECT}".sta.summary | head -20 || true
+  echo "== Timing gate (all corners) =="
+  # Deliberately AFTER the RBF is written, so a failing bitstream still lands in
+  # the artifact and can be examined -- it just must not be flashed, which is
+  # what the non-zero exit says.
+  # Report the interpreter once per build.  The container's python3 version was
+  # inferred from a SyntaxError rather than known, which is a poor way to learn
+  # a build dependency.
+  echo "-- interpreter: $(python3 --version 2>&1)"
+  set +e
+  python3 verif/timing/check_timing_gate.py \
+    output_files/"${PROJECT}".sta.summary
+  TIMING_GATE_RC=$?
+  set -e
 fi
+
+# The gate's exit codes are distinct on purpose.  The first version of this
+# script used f-strings, crashed on the CI container's older python3, and
+# build.sh announced "timing gate rejected this bitstream" -- reporting a
+# broken check as a failing design.  That is the same defect this gate exists
+# to fix, so the two are never conflated again.
+case "${TIMING_GATE_RC:-0}" in
+  0) : ;;
+  3) echo "BUILD FAILED: timing gate REJECTED this bitstream -- do not flash it" >&2
+     exit 1 ;;
+  2) echo "BUILD FAILED: timing gate could not evaluate the STA summary" >&2
+     echo "  (STA did not run, or output_files/${PROJECT}.sta.summary is unreadable)" >&2
+     exit 1 ;;
+  *) echo "BUILD FAILED: the timing gate itself is broken (exit ${TIMING_GATE_RC})" >&2
+     echo "  This is a TOOLING fault, not a verdict on the bitstream." >&2
+     exit 1 ;;
+esac
