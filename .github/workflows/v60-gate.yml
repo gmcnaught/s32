@@ -67,6 +67,15 @@ jobs:
       - name: s32.sdc two-cycle exception covers only ce-gated registers
         run: python3 verif/timing/check_v60_ce_premise.py
 
+      # worst_paths.tcl runs nowhere but inside a Quartus run, so every Tcl
+      # mistake in it has so far been discovered 25 to 50 minutes in.  The
+      # stub harness executes the real script against fake collections and
+      # takes under a second.
+      - name: Install Tcl
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends tcl
+      - name: Worst-path reporter self-test
+        run: tclsh verif/timing/test_worst_paths.tcl
+
   core:
     name: Full-core lint / boot / soak
     runs-on: ubuntu-latest
