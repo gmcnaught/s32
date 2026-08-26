@@ -80,6 +80,13 @@ module s32_v60 #(
     // dedicated instruction-fetch port (used only when FAST_IFETCH=1): request an
     // 8-byte line at if_addr; if_data/if_ack return it.  Left unconnected when
     // FAST_IFETCH=0 (the internal reads are forced to 0 so no X propagates).
+    // Debug observability.  Real ports, not a hierarchical reference: Quartus
+    // Lite 17.0 cannot resolve an XMR into an instance (Error 10207), even
+    // though Icarus accepts one, so reaching in from s32_core does not build.
+    output     [31:0] dbg_pc,
+    output      [6:0] dbg_st,
+    output            dbg_halted,
+
     output reg        if_req,
     output     [23:0] if_addr,       // frontier byte address; s32_core reads the
                                      // containing 8-byte line and returns it already
@@ -621,6 +628,15 @@ typedef enum logic [6:0] {
 } st_t;
 
 st_t st, st_after_ea, st_after_fill;
+
+// Debug observability taps (see s32_debug_hud).  Placed here rather than
+// beside pc/halted because `st` is declared at this point and Icarus rejects
+// use-before-declaration; Quartus tolerates it, which is how the reverse
+// mistake -- a cross-module hierarchical reference -- passed simulation and
+// then failed elaboration with Error 10207.
+assign dbg_pc     = pc;
+assign dbg_st     = st;
+assign dbg_halted = halted;
 
 // Bytes shifted out this step, capped at 4.  Kept at 4 for the same
 // timing-closure reason S_FILL is (see the note there): widening the fb[] input

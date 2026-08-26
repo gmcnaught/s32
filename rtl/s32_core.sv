@@ -201,7 +201,13 @@ module s32_core #(
 
     output signed [15:0] audio_l,
     output signed [15:0] audio_r,
-    output      [7:0] out_lamps
+    output      [7:0] out_lamps,
+
+    // Debug observability bundle (audit follow-up, 2026-08-25).  Always
+    // driven; the consumer decides whether to render it.  With the HUD off at
+    // the top level this whole cone is dangling and Quartus removes it, so a
+    // production build is unaffected.
+    output     [63:0] dbg_bus
 );
 
 // The universal production profile is a single-screen System 32 build with
@@ -325,9 +331,76 @@ wire        v60_ext_wr;
 wire [23:0] v60_ext_wr_addr;
 wire  [2:0] v60_ext_wr_bytes;
 
+// ---------------------------------------------------------------------------
+// Debug observability bundle
+//
+// Every failure investigated on 2026-08-25 presented as one bit -- "the screen
+// is black" -- and three separate investigations stalled at "the hardware
+// disagrees with the analysis and I cannot see why".  There is no probe in
+// this core: the only debug_* ports in the tree belong to the vendored s80x86
+// and are tied off.  This is that probe.
+//
+// Video is the transport rather than DDR, for two reasons.  DDR is owned end
+// to end by s32_fb_if and is clocked by clk_ram -- the domain under suspicion
+// -- so a DDR probe shares the fault it is meant to observe.  And the failing
+// builds still emit frames (flat-colour screenshots, 1316 bytes, not dead
+// signal), so the video output path demonstrably survives whatever kills the
+// game.
+//
+// What each field answers:
+//   heartbeat  is clk_sys running at all?             (free-running)
+//   pc         where is the V60, and is it moving?
+//   st         which sequencer state is it stuck in?
+//   halted     did it execute HALT rather than wedge?
+//   bus_txns   is the external bus doing anything?
+//   ce_viol    STICKY.  s32.sdc relaxes every V60 register-to-register path to
+//              a two-cycle setup requirement, justified by "at least one idle
+//              clk_sys edge between V60 updates".  s32_v60_exec_cadence above
+//              does assert exactly that -- but under `ifndef SYNTHESIS`, so it
+//              is a simulation property only, and the premise is about
+//              silicon.  This is the same check surviving into the bitstream.
+//              If this bit is ever set, STA has been checking the wrong
+//              requirement and every "timing closes" result is void.
+//
+//              Reset masks it on purpose, matching the assertion's own
+//              carve-out: `phase` is held at 0 while rst is high, so ce is
+//              continuously asserted and the idle edge genuinely does not
+//              exist.  The rst branch below clears dbg_ce_d as well as the
+//              sticky bit, so the first post-reset edge starts clean rather
+//              than firing on the boundary.
+// ---------------------------------------------------------------------------
+reg  [7:0] dbg_heartbeat = 8'd0;
+reg [15:0] dbg_bus_txns  = 16'd0;
+reg        dbg_ce_viol   = 1'b0;
+reg        dbg_ce_d      = 1'b0;
+always @(posedge clk_sys) begin
+    dbg_heartbeat <= dbg_heartbeat + 8'd1;
+    dbg_ce_d      <= v60_exec_ce;
+    if (v60_exec_ce && dbg_ce_d) dbg_ce_viol <= 1'b1;  // two CEs back to back
+    if (rst) begin
+        dbg_bus_txns <= 16'd0;
+        dbg_ce_viol  <= 1'b0;
+        dbg_ce_d     <= 1'b0;
+    end
+    else if (m_req && m_ack) dbg_bus_txns <= dbg_bus_txns + 16'd1;
+end
+
+wire [31:0] v60_dbg_pc;
+wire  [6:0] v60_dbg_st;
+wire        v60_dbg_halted;
+
+assign dbg_bus = {dbg_heartbeat,          // [63:56]
+                  dbg_bus_txns,           // [55:40]
+                  v60_dbg_pc[23:0],       // [39:16]
+                  v60_dbg_st,             // [15:9]
+                  v60_dbg_halted,         // [8]
+                  dbg_ce_viol,            // [7]
+                  7'd0};                  // [6:0]
+
 s32_v60 #(.START_PC(32'hFFFFFFF0), .FAST_IFETCH(`FAST_IFETCH_EN)) v60 (   // MAME reset PC (audit R20 V60-21)
     .clk(clk_sys), .ce(v60_exec_ce), .rst(rst),
     .fast_ifetch(fast_v60),
+    .dbg_pc(v60_dbg_pc), .dbg_st(v60_dbg_st), .dbg_halted(v60_dbg_halted),
     .if_req(if_req), .if_addr(if_addr), .if_data(if_data), .if_ack(if_ack),
     .bus_req(c_req), .bus_fetch(c_fetch), .bus_lock(c_lock),
     .bus_we(c_we), .bus_addr(c_addr), .bus_size(c_size),
@@ -574,7 +647,19 @@ wire [WRAM_ADDR_WIDTH-1:0] pr_wram_a = pr_addr[WRAM_ADDR_WIDTH-1:0];
 // until the regression is understood.  Turning this on without that would be
 // shipping a fault to fix a hazard, which is a bad trade even though the
 // hazard is real.
-localparam  PROT_INTERLOCK = 1'b0;
+//
+// Arm B is a build option rather than an edit.  Both probes the comment above
+// asks for -- a different fitter seed, and reading the HUD while arm B fails
+// -- need a bitstream with this on, and the way to get one was to edit this
+// line on a branch (v60/exp-prot-interlock).  An experiment that exists only
+// as a divergent branch measures whatever netlist that branch happens to hold,
+// which is how the first attribution went wrong.  Default is unchanged and the
+// macro is absent from every production build, so the netlist is identical
+// unless it is asked for:  S32_DEFINES=PROT_INTERLOCK_EN=1
+`ifndef PROT_INTERLOCK_EN
+  `define PROT_INTERLOCK_EN 0
+`endif
+localparam  PROT_INTERLOCK = (`PROT_INTERLOCK_EN != 0);
 wire        pr_locked  = PROT_INTERLOCK && c_lock;
 wire        work_pr_we = ((pr_req && pr_we) || br_pram_we) && !pr_locked;
 wire [WRAM_ADDR_WIDTH-1:0] work_pr_addr = br_pram_we
