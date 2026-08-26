@@ -59,6 +59,58 @@ QG="$(find_qsys qsys-generate)" || { echo "ERROR: qsys-generate not found" >&2; 
 test -f rtl/pll/synthesis/pll.qip || { echo "ERROR: PLL IP not generated" >&2; exit 1; }
 
 echo
+# Fitter seed override, for a seed sweep.  The QSF header records a long
+# history of one fact: the winning fitter seed changes whenever the netlist
+# changes, so every netlist change needs a fresh exploration and a single
+# rebuild is not a fair test of an RTL change.  S32_SEED rewrites the QSF
+# assignment rather than passing quartus_fit --seed, because the assignment is
+# what the QSF header documents and it cannot silently be an unsupported
+# option on this Quartus version.
+if [ -n "${S32_SEED:-}" ]; then
+  case "$S32_SEED" in
+    ''|*[!0-9]*) echo "ERROR: S32_SEED must be a non-negative integer, got '$S32_SEED'" >&2; exit 2 ;;
+  esac
+  echo
+  echo "== Fitter seed override: $S32_SEED =="
+  sed -i.seedbak "s/^set_global_assignment -name SEED .*/set_global_assignment -name SEED ${S32_SEED}/" "${PROJECT}.qsf"
+  grep -q "^set_global_assignment -name SEED ${S32_SEED}\$" "${PROJECT}.qsf" || {
+    echo "ERROR: could not set SEED in ${PROJECT}.qsf" >&2; exit 2; }
+  grep -n "^set_global_assignment -name SEED" "${PROJECT}.qsf"
+fi
+
+# Extra Verilog macros, for a diagnostic build.  Same reasoning as S32_SEED:
+# the alternative is a throwaway branch whose only content is three QSF lines
+# (v60/exp-hud-on was exactly that), which cannot be dispatched against another
+# ref and rots the moment main moves.  The debug HUD is the motivating case:
+#
+#   S32_DEFINES=S32_DEBUG_HUD=1,PROT_INTERLOCK_EN=1
+#
+# builds the HUD bitstream with the protection interlock armed -- the exact
+# diagnostic build the PROT_INTERLOCK regression needs -- from any ref, with no
+# branch to merge and nothing to revert afterwards.
+#
+# Appended rather than substituted: these are additions to the project's macro
+# set, and a name that is already assigned is Quartus's conflict to report, not
+# something to paper over here.
+if [ -n "${S32_DEFINES:-}" ]; then
+  echo
+  echo "== Extra Verilog macros: $S32_DEFINES =="
+  printf '\n# Added by tools/build.sh from S32_DEFINES for this build only.\n' \
+      >> "${PROJECT}.qsf"
+  IFS=','
+  for macro in $S32_DEFINES; do
+    unset IFS
+    case "$macro" in
+      *[!A-Za-z0-9_=]*|''|=*|*=*=*)
+        echo "ERROR: bad macro '$macro' (want NAME or NAME=VALUE)" >&2; exit 2 ;;
+    esac
+    echo "set_global_assignment -name VERILOG_MACRO \"$macro\"" >> "${PROJECT}.qsf"
+    echo "   + $macro"
+    IFS=','
+  done
+  unset IFS
+fi
+
 echo "== Analysis & Synthesis =="
 quartus_map "$PROJECT" --read_settings_files=on
 echo
@@ -94,7 +146,13 @@ mkdir -p "$OUTDIR"
 SOF="output_files/${PROJECT}.sof"
 test -f "$SOF" || { echo "ERROR: no .sof produced" >&2; exit 1; }
 STAMP="$(date -u +%Y%m%d)"
-RBF="$OUTDIR/SegaSystem32_${STAMP}.rbf"
+# A diagnostic bitstream must be identifiable once it is a file on an SD card,
+# not only in the CI artifact it came from.
+DEFTAG=""
+if [ -n "${S32_DEFINES:-}" ]; then
+  DEFTAG="_$(printf '%s' "$S32_DEFINES" | tr -cd 'A-Za-z0-9' | cut -c1-24)"
+fi
+RBF="$OUTDIR/SegaSystem32_${STAMP}${S32_SEED:+_seed${S32_SEED}}${DEFTAG}.rbf"
 quartus_cpf -c -o bitstream_compression=on "$SOF" "$RBF"
 ls -lh "$RBF"
 sha256sum "$RBF" 2>/dev/null || shasum -a 256 "$RBF"
