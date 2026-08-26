@@ -355,9 +355,19 @@ wire  [2:0] v60_ext_wr_bytes;
 //   bus_txns   is the external bus doing anything?
 //   ce_viol    STICKY.  s32.sdc relaxes every V60 register-to-register path to
 //              a two-cycle setup requirement, justified by "at least one idle
-//              clk_sys edge between V60 updates".  Nothing in the RTL asserts
-//              it.  If this bit is ever set, STA has been checking the wrong
+//              clk_sys edge between V60 updates".  s32_v60_exec_cadence above
+//              does assert exactly that -- but under `ifndef SYNTHESIS`, so it
+//              is a simulation property only, and the premise is about
+//              silicon.  This is the same check surviving into the bitstream.
+//              If this bit is ever set, STA has been checking the wrong
 //              requirement and every "timing closes" result is void.
+//
+//              Reset masks it on purpose, matching the assertion's own
+//              carve-out: `phase` is held at 0 while rst is high, so ce is
+//              continuously asserted and the idle edge genuinely does not
+//              exist.  The rst branch below clears dbg_ce_d as well as the
+//              sticky bit, so the first post-reset edge starts clean rather
+//              than firing on the boundary.
 // ---------------------------------------------------------------------------
 reg  [7:0] dbg_heartbeat = 8'd0;
 reg [15:0] dbg_bus_txns  = 16'd0;

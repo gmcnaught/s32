@@ -81,12 +81,31 @@ run invariants "$CADENCE_DEFS -DV60_INVARIANT_NONFATAL" \
     "$CORE_SRC verif/v60/tb_v60_invariants.sv" \
     tb_v60_invariants "V60 INVARIANTS PASS"
 
+# The debug HUD.  Nothing else in this gate elaborates it -- the benches above
+# build s32_core, and the HUD sits above that in Arcade-SegaSystem32.sv -- and
+# it is the one module whose entire value is being believed when nothing else
+# can be.  The bench reconstructs the painted word using tools/decode_hud.py's
+# exact sampling rule, so painter and decoder cannot drift apart unnoticed.
+run hud_encoding "" \
+    "rtl/s32_debug_hud.sv verif/common/tb_hud_encoding.sv" \
+    tb_hud_encoding "HUD ENCODING PASS"
+
 # Constraints, not RTL: no simulator can catch this one.
 echo -n "      "
 if python3 verif/timing/check_v60_ce_premise.py; then
   pass=$((pass+1))
 else
   fail=$((fail+1)); failed="$failed ce_premise"
+fi
+
+# Two source files, one field layout: the `assign dbg_bus` concatenation and
+# the decoder's FIELDS table.  A shifted field paints a valid band and decodes
+# to a plausible wrong pc, which no simulation can see.
+echo -n "      "
+if python3 verif/common/check_hud_layout.py; then
+  pass=$((pass+1))
+else
+  fail=$((fail+1)); failed="$failed hud_layout"
 fi
 
 echo "======================================================"

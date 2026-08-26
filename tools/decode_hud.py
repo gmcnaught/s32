@@ -19,6 +19,20 @@ except ImportError:
 
 CELL_W, ROWS = 4, 6
 
+# name -> (lsb, width), matching the `assign dbg_bus` concatenation in
+# rtl/s32_core.sv.  Machine-readable on purpose: verif/common/check_hud_layout.py
+# derives the same table from the RTL and fails the gate if the two drift.
+# A silently shifted field here would report a confident wrong pc during the
+# one kind of investigation where nothing else is trustworthy.
+FIELDS = {
+    "heartbeat": (56, 8),
+    "bus_txns":  (40, 16),
+    "pc":        (16, 24),
+    "st":        (9, 7),
+    "halted":    (8, 1),
+    "ce_viol":   (7, 1),
+}
+
 
 def decode(path):
     im = Image.open(path).convert("RGB")
@@ -48,15 +62,10 @@ def decode(path):
     v = 0
     for bit in bits:
         v = (v << 1) | bit
-    return {
-        "raw":       v,
-        "heartbeat": (v >> 56) & 0xFF,
-        "bus_txns":  (v >> 40) & 0xFFFF,
-        "pc":        (v >> 16) & 0xFFFFFF,
-        "st":        (v >> 9) & 0x7F,
-        "halted":    (v >> 8) & 1,
-        "ce_viol":   (v >> 7) & 1,
-    }
+    out = {"raw": v}
+    for name, (lsb, width) in FIELDS.items():
+        out[name] = (v >> lsb) & ((1 << width) - 1)
+    return out
 
 
 def main(paths):
