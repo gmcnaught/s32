@@ -169,6 +169,9 @@ set_global_assignment -name VERILOG_MACRO "S32_V60_NO_FP=1"
 # Quartus 17 does not predefine SYNTHESIS; keep simulation-only assertions out
 # of the production HDL parse (the verification harnesses do not define it).
 set_global_assignment -name VERILOG_MACRO "SYNTHESIS=1"
+# EXPERIMENT ONLY -- NOT FOR MERGE.  Fitter seed only.  The RTL is main,
+# unmodified: this build differs from 825e2a28 in placement and nothing else.
+set_global_assignment -name SEED 3
 
 # All supported standard protection responders remain available; descriptor
 # selection keeps them inactive for games that do not use them.
