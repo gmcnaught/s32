@@ -40,13 +40,15 @@ open item recorded in `docs/v60/DATA-ACCESS-SPLIT.md` — *which* PC a
 PC-relative operand is relative to — and `v60_idu.insn_pc` is already exactly
 that value.
 
-**Verified while reviewing, and it corrects the scoping pass:** integer
-overflow does not need a trap-enable bit, and its absence is not a silence.
+**Verified while reviewing, and it corrects the scoping pass:** there is no
+trap-enable bit for integer overflow -- PSW bits 19:23 are RFU -- and that is
+not the gap it looks like.
 `BRKV` (opcode **C9**, Format V) is the instruction that raises it — "The OV
 flag is tested and if set, an Integer Overflow Exception occurs. Otherwise,
 instruction execution continues with the next instruction" (PgmRef §7).
-Arithmetic sets OV; software tests it. The same page prints the frame it
-builds, which is the concrete layout E5 needs:
+Arithmetic sets OV; software tests it, which is why no enable bit is needed.
+The same page prints the frame it builds, which is the concrete layout E5
+needs:
 
     [-SP] <- CurrentPC ; [-SP] <- Exception Code ; [-SP] <- PSW ; [-SP] <- NextPC
     PC <- [ Exception Vector 21 ]
