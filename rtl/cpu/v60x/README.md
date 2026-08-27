@@ -158,17 +158,25 @@ instructions with described operands.
 
 The next stage is **execution**: the register file, the PSW, the ALU and the
 exception model. Everything below it now exists — an instruction arrives,
-decodes, and its operands can be resolved to addresses and fetched — so what is
-missing is the part that does something with them.
+decodes, and its operands can be resolved to addresses and fetched (see
+`tb_v60_front`) — so what is missing is the part that does something with them.
+`docs/v60/EXECUTION-STAGE-PLAN.md` scopes it: six increments, what each one's
+bench would assert, what has to change in the modules that exist, and the
+traps — including that both PSW *figures* are unreadable at scan resolution
+while both bit *lists* survive and agree.
 
 Two smaller things are open and neither blocks that:
 
 - **Three subops in the bit-string group** could not be read off the scan
   (`ORNBS`, `XORNBS`, `SCH1BS`). Their format is not in doubt; see
   `docs/v60/INSTRUCTION-DECODE.md`.
-- **Nothing yet drives `v60_ea` from `v60_idu`.** The descriptions are in the
-  shape it takes, but the wire between them belongs to the sequencer, which is
-  part of execution.
+- **`v60_idu` passes a fixed operand width** (`opbytes = 4`) to
+  `v60_am_decode`, because the data type is in the opcode's `siz` / `s` / `c`
+  field and belongs to execution. It is the first increment of the plan above,
+  and until then an immediate's width is wrong for every non-word operand.
+- **`v60_idu`'s `reserved` is one flag** for two exceptions with different
+  vectors — reserved opcode and reserved addressing mode. It has to be split
+  before anything chooses a vector from it.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus

@@ -110,8 +110,12 @@ against the rest of the document; the other three are in
 
 ## Boundaries
 
-- **Which PC** a PC-relative displacement is relative to is not decided here.
-  `v60_ea` takes `pc_val` as given; that question belongs to instruction fetch.
+- **Which PC** a PC-relative displacement is relative to is not decided *here*,
+  but it is on a page, found while scoping the execution stage: the PC
+  "contains the memory address of the first byte of the instruction currently
+  being executed" (Programmer's Reference §3). `v60_idu.insn_pc` is already
+  that value, so the sequencer has it to present; `v60_ea` still takes
+  `pc_val` as given.
 - **The address is 32 bits, the bus is 24** (A23-A0, p. 3.235). `v60_ea`
   reports all 32 and the top eight are dropped at the pins.
 - **A doubleword register-direct operand** needs a register *pair*. `v60_ea` is
