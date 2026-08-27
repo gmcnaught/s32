@@ -83,6 +83,12 @@ jobs:
       - name: SDC exceptions are scoped to what they claim
         run: python3 verif/timing/check_sdc_exceptions.py
 
+      # The V25 asynchronous group does not relax paths, it removes them from
+      # analysis entirely.  Its justification names "its two crossings", and an
+      # enumeration rots: a third would be cut silently and forever.
+      - name: V25 clock-domain crossings are all declared
+        run: python3 verif/timing/check_v25_crossings.py
+
   core:
     name: Full-core lint / boot / soak
     runs-on: ubuntu-latest
