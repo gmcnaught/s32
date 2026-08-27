@@ -76,6 +76,12 @@ No bus timing and no electricals — that is what the databook is for. Its value
 here is as the reference against which this core's MAME-derived instruction
 semantics should be audited.
 
+Its **OCR text layer** is also held, as `NEC_V60pgmRef_djvu.txt` (archive.org
+item `NEC_V60pgmRef`, 513 KB) — the form the timing sweep in
+`INSTRUCTION-TIMING.md` was run over, and the second printing of the
+addressing-mode figure used by `ADDRESSING-MODES.md`. Same caveat as the
+databook extract: search it, read the plates.
+
 Use the archive item's `_text.pdf` derivative: same page images but with a real
 OCR text layer. **The plain `NEC_V60pgmRef.pdf` is image-only — do not use it.**
 A flat dump ships as `V60_ProgrammersRef_1986_text.txt`.

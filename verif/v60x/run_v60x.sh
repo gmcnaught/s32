@@ -9,7 +9,8 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 export PATH="/opt/homebrew/bin:$PATH"
 
-RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv"
+RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
+     rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv"
 WORK="${WORK:-/tmp/v60x}"
 mkdir -p "$WORK"
 pass=0; fail=0
@@ -38,6 +39,7 @@ run() {
 
 run tb_v60_biu_tstates "V60 BIU T-STATE PASS"
 run tb_v60_biu_pins    "V60 BIU PINS PASS"
+run tb_v60_am_decode   "V60 AM DECODE PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"
