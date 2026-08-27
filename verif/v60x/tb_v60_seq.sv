@@ -47,10 +47,17 @@ wire  [23:0] p_addr;
 wire   [1:0] p_dl;
 wire  [15:0] biu_rdata;
 
+wire         seq_redirect;
+wire  [31:0] seq_redirect_pc;
+
 v60_pfu pfu (
     .clk(clk), .rst(rst),
     .byte_out(byte_out), .byte_valid(byte_valid), .byte_take(byte_take),
-    .byte_pc(byte_pc), .redirect(redirect), .redirect_pc(redirect_pc),
+    .byte_pc(byte_pc),
+    // A control transfer comes from the sequencer; the bench uses the same
+    // input to place the program counter before a program starts.
+    .redirect(redirect | seq_redirect),
+    .redirect_pc(redirect ? redirect_pc : seq_redirect_pc),
     .bus_req(p_req), .bus_status(p_status), .bus_addr(p_addr), .bus_dl(p_dl),
     .bus_ack(p_ack), .bus_rdata(biu_rdata), .level()
 );
@@ -61,6 +68,7 @@ insn_fmt_e   idu_fmt;
 wire   [7:0] idu_op;
 wire         idu_d;
 wire   [4:0] idu_reg, idu_subop;
+wire  [31:0] idu_disp;
 wire  [31:0] idu_pc;
 wire   [4:0] idu_len;
 wire         o1_valid, o1_index, o2_valid, o2_index;
@@ -77,7 +85,7 @@ v60_idu idu (
     .start(idu_start), .busy(), .done(idu_done),
     .fmt(idu_fmt), .op(idu_op), .m(), .m2(), .d(idu_d),
     .reg_field(idu_reg), .subop(idu_subop),
-    .br_disp(), .insn_pc(idu_pc), .insn_len(idu_len),
+    .br_disp(idu_disp), .insn_pc(idu_pc), .insn_len(idu_len),
     .reserved_op(res_op), .reserved_mode(res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
@@ -104,6 +112,7 @@ v60_regfile rf (
 
 // ---- address unit and data unit ------------------------------------------------
 wire        ea_start, ea_index, ea_we, ea_rmw, ea_rmw_go, ea_rmw_pending;
+wire        ea_addr_only;
 am_mode_e   ea_mode;
 wire [31:0] ea_disp, ea_douter, ea_rn_val, ea_rx_val, ea_pc_val, ea_ea;
 wire [63:0] ea_imm, ea_wdata, ea_rmw_data, ea_rdata;
@@ -122,6 +131,7 @@ v60_ea ea (
     .disp(ea_disp), .disp_outer(ea_douter), .imm(ea_imm),
     .rn_val(ea_rn_val), .rx_val(ea_rx_val), .pc_val(ea_pc_val),
     .opbytes(ea_opbytes), .we(ea_we), .wdata(ea_wdata),
+    .addr_only(ea_addr_only),
     .rmw(ea_rmw), .rmw_pending(ea_rmw_pending), .rmw_go(ea_rmw_go),
     .rmw_data(ea_rmw_data),
     .ea(ea_ea), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
@@ -159,6 +169,7 @@ v60_seq seq (
     .idu_start(idu_start), .idu_done(idu_done), .idu_fmt(idu_fmt),
     .idu_op(idu_op), .idu_pc(idu_pc), .idu_len(idu_len),
     .idu_d(idu_d), .idu_reg(idu_reg), .idu_subop(idu_subop),
+    .idu_disp(idu_disp),
     .idu_res_op(res_op), .idu_res_mode(res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
@@ -172,10 +183,12 @@ v60_seq seq (
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
     .ea_rn_val(ea_rn_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
     .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_wdata(ea_wdata),
+    .ea_addr_only(ea_addr_only),
     .ea_rmw(ea_rmw), .ea_rmw_go(ea_rmw_go), .ea_rmw_data(ea_rmw_data),
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
     .ea_rn_wb(ea_rn_wb), .ea_rn_wb_val(ea_rn_wb_val), .ea_done(ea_done),
     .ea_bus_cycles(ea_cycles),
+    .redirect(seq_redirect), .redirect_pc(seq_redirect_pc),
     .pc(seq_pc), .psw(seq_psw), .retired(retired), .insn_cycles(insn_cycles),
     .stopped(stopped), .stop_reason(stop_reason)
 );
@@ -257,6 +270,11 @@ begin
 end
 endtask
 
+function [31:0] mem_word(input [12:0] addr);
+    mem_word = {mem[addr + 13'd3], mem[addr + 13'd2],
+                mem[addr + 13'd1], mem[addr]};
+endfunction
+
 integer i;
 
 initial begin
@@ -319,6 +337,96 @@ initial begin
     // MOV.B R10, [R8]        09 0A 68   d = 0 again, to read R10 back out
     mem[11'h218] = 8'h09; mem[11'h219] = 8'h0A; mem[11'h21A] = 8'h68;
 
+    // ---- a third program, at 0x300: control flow -----------------------------
+    // A counted loop, a subroutine call and return, an unconditional branch
+    // over the subroutine's bytes, a jump through a register, and a
+    // conditional branch that is NOT taken.  The byte at 0x700 records what
+    // ran and in what order; the stack is at 0x600 and grows down.
+    // MOV.W #0x600, R31   the stack pointer
+    mem[11'h300] = 8'h2D; mem[11'h301] = 8'hA0; mem[11'h302] = 8'hF4;
+    mem[11'h303] = 8'h00; mem[11'h304] = 8'h06; mem[11'h305] = 8'h00;
+    mem[11'h306] = 8'h00; mem[11'h307] = 8'h7F;
+    // MOV.W #3, R9        the loop counter
+    mem[11'h308] = 8'h2D; mem[11'h309] = 8'hA0; mem[11'h30A] = 8'hF4;
+    mem[11'h30B] = 8'h03; mem[11'h30C] = 8'h00; mem[11'h30D] = 8'h00;
+    mem[11'h30E] = 8'h00; mem[11'h30F] = 8'h69;
+    // MOV.W #0x700, R8    the address of the record
+    mem[11'h310] = 8'h2D; mem[11'h311] = 8'hA0; mem[11'h312] = 8'hF4;
+    mem[11'h313] = 8'h00; mem[11'h314] = 8'h07; mem[11'h315] = 8'h00;
+    mem[11'h316] = 8'h00; mem[11'h317] = 8'h68;
+    // MOV.W #0x348, R10   where the JMP below goes
+    mem[11'h318] = 8'h2D; mem[11'h319] = 8'hA0; mem[11'h31A] = 8'hF4;
+    mem[11'h31B] = 8'h48; mem[11'h31C] = 8'h03; mem[11'h31D] = 8'h00;
+    mem[11'h31E] = 8'h00; mem[11'h31F] = 8'h6A;
+    // MOV.B #0, [R8]      the record starts empty
+    mem[11'h320] = 8'h09; mem[11'h321] = 8'h80; mem[11'h322] = 8'hF4;
+    mem[11'h323] = 8'h00; mem[11'h324] = 8'h68;
+    // loop: ADD.b #1, [R8]
+    mem[11'h325] = 8'h80; mem[11'h326] = 8'h80; mem[11'h327] = 8'hF4;
+    mem[11'h328] = 8'h01; mem[11'h329] = 8'h68;
+    // DBcc(True) R9, loop  disp16 = 0x325 - 0x32A = -5
+    mem[11'h32A] = 8'hC6; mem[11'h32B] = 8'hA9; mem[11'h32C] = 8'hFB;
+    mem[11'h32D] = 8'hFF;
+    // BSR sub              disp16 = 0x333 - 0x32E = 5
+    mem[11'h32E] = 8'h48; mem[11'h32F] = 8'h05; mem[11'h330] = 8'h00;
+    // BR after             disp8  = 0x33A - 0x331 = 9
+    mem[11'h331] = 8'h6A; mem[11'h332] = 8'h09;
+    // sub: ADD.b #0x10, [R8]
+    mem[11'h333] = 8'h80; mem[11'h334] = 8'h80; mem[11'h335] = 8'hF4;
+    mem[11'h336] = 8'h10; mem[11'h337] = 8'h68;
+    // RSR                  back to 0x331
+    mem[11'h338] = 8'hCA;
+    // after: JMP [R10]     to the address in R10, not to what is there
+    mem[11'h33A] = 8'hD6; mem[11'h33B] = 8'h6A;
+    // MOV.B #0x77, [R8]
+    mem[11'h348] = 8'h09; mem[11'h349] = 8'h80; mem[11'h34A] = 8'hF4;
+    mem[11'h34B] = 8'h77; mem[11'h34C] = 8'h68;
+    // BE +3, NOT taken     its target 0x350 is mid-instruction below
+    mem[11'h34D] = 8'h64; mem[11'h34E] = 8'h03;
+    // MOV.B #0x99, [R8]
+    mem[11'h34F] = 8'h09; mem[11'h350] = 8'h80; mem[11'h351] = 8'hF4;
+    mem[11'h352] = 8'h99; mem[11'h353] = 8'h68;
+
+    // TB R9, +0x0C         R9 is zero, so this one branches
+    mem[11'h354] = 8'hC7; mem[11'h355] = 8'hA9; mem[11'h356] = 8'h0C;
+    mem[11'h357] = 8'h00;
+    // MOV.B #0x11, [R8]    which this must not reach
+    mem[11'h358] = 8'h09; mem[11'h359] = 8'h80; mem[11'h35A] = 8'hF4;
+    mem[11'h35B] = 8'h11; mem[11'h35C] = 8'h68;
+    // MOV.W #1, R9
+    mem[11'h360] = 8'h2D; mem[11'h361] = 8'hA0; mem[11'h362] = 8'hF4;
+    mem[11'h363] = 8'h01; mem[11'h364] = 8'h00; mem[11'h365] = 8'h00;
+    mem[11'h366] = 8'h00; mem[11'h367] = 8'h69;
+    // TB R9, +0x0C         R9 is one, so this one does not
+    mem[11'h368] = 8'hC7; mem[11'h369] = 8'hA9; mem[11'h36A] = 8'h0C;
+    mem[11'h36B] = 8'h00;
+    // MOV.W #0x380, R10    the second subroutine
+    mem[11'h36C] = 8'h2D; mem[11'h36D] = 8'hA0; mem[11'h36E] = 8'hF4;
+    mem[11'h36F] = 8'h90; mem[11'h370] = 8'h03; mem[11'h371] = 8'h00;
+    mem[11'h372] = 8'h00; mem[11'h373] = 8'h6A;
+    // MOV.B #0x55, [R8]    between the MOV above and the JSR below, so that
+    //                      the last operand READ is not the JSR's target: a
+    //                      JSR that jumped to what it last read would pass
+    //                      otherwise, and did.
+    mem[11'h374] = 8'h09; mem[11'h375] = 8'h80; mem[11'h376] = 8'hF4;
+    mem[11'h377] = 8'h55; mem[11'h378] = 8'h68;
+    // JSR [R10]            call through the address in R10
+    mem[11'h379] = 8'hE8; mem[11'h37A] = 8'h6A;
+    // MOV.B #0x33, [R8]    where JSR returns to
+    mem[11'h37B] = 8'h09; mem[11'h37C] = 8'h80; mem[11'h37D] = 8'hF4;
+    mem[11'h37E] = 8'h33; mem[11'h37F] = 8'h68;
+    // MOV.W [R1+], [R2+]   2D E0 81 82
+    //   Two operands in autoincrement modes: two register writebacks in one
+    //   instruction, and this sequencer retires one.  It stops rather than
+    //   dropping one of them without saying so.
+    mem[11'h380] = 8'h2D; mem[11'h381] = 8'hE0; mem[11'h382] = 8'h81;
+    mem[11'h383] = 8'h82;
+    // sub2: MOV.B #0x44, [R8]
+    mem[11'h390] = 8'h09; mem[11'h391] = 8'h80; mem[11'h392] = 8'hF4;
+    mem[11'h393] = 8'h44; mem[11'h394] = 8'h68;
+    // RSR
+    mem[11'h395] = 8'hCA;
+
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
     mem[11'h612] = 8'h00; mem[11'h613] = 8'h00;
@@ -373,8 +481,7 @@ initial begin
     chk(mem[11'h600] === 8'hB6,
         "ADD.b read the destination through the pointer, added and wrote it back");
     chk(insn_cycles === 5'd4,
-        "which is two cycles for the pointer and one each way -- the address is "
-        );
+        "two cycles for the pointer and one each way: one address, two accesses");
     chk(seq_psw[PSW_S] === 1'b1,
         "0x5B + 0x5B is negative AT BYTE WIDTH, which is the width that counts");
     chk(seq_psw[PSW_CY] === 1'b0, "and does not carry out of a byte");
@@ -432,6 +539,107 @@ initial begin
     // MOVS.BW and MOVT.WB, whose widths differ per operand and which are not
     // executable yet.  tb_v60_idu checks that they DECODE with different
     // widths; nothing here checks that they execute with them.
+
+    // =======================================================================
+    // Control flow.
+    // =======================================================================
+    @(negedge clk);
+    rst = 1'b1;
+    repeat (4) @(negedge clk);
+    rst = 1'b0;
+    repeat (2) @(negedge clk);
+    redirect_pc = 32'h00000300;
+    redirect    = 1'b1;
+    @(negedge clk);
+    redirect = 1'b0;
+
+    step; step; step; step; step;   // the five setup moves
+    chk(!stopped,               "the control-flow program's setup executes");
+    chk(mem[11'h700] === 8'h00, "the record starts empty");
+    chk(seq_pc === 32'h00000325, "and the PC is at the loop");
+
+    // The loop: three passes of the ADD, and a DBcc that branches back twice
+    // and falls through when the decrement reaches zero.
+    step;
+    chk(mem[11'h700] === 8'h01, "one pass of the loop");
+    step;
+    chk(insn_cycles === 5'd0,   "a branch makes no bus cycle of its own");
+    chk(seq_pc === 32'h00000325,
+        "and the branch measured its displacement from its own first byte");
+    step; step;
+    chk(mem[11'h700] === 8'h02, "two");
+    step; step;
+    chk(mem[11'h700] === 8'h03, "three");
+    chk(seq_pc === 32'h0000032E,
+        "and the third decrement reached zero, so that branch was not taken");
+
+    // BSR into the subroutine and RSR back out of it.
+    step;
+    chk(seq_pc === 32'h00000333,  "BSR branched to the subroutine");
+    chk(rf.gpr[31] === 32'h000005FC,
+        "and pushed one word, which is what [-SP] moves the stack pointer by");
+    chk(mem_word(13'h5FC) === 32'h00000331,
+        "the word it pushed is the address of the instruction after it");
+    chk(insn_cycles === 5'd2,
+        "a word push on a sixteen bit bus is two bus cycles");
+    step;
+    chk(mem[11'h700] === 8'h13,   "the subroutine ran");
+    step;
+    chk(seq_pc === 32'h00000331,  "and RSR returned to what BSR pushed");
+    chk(insn_cycles === 5'd2,     "the pop is two more");
+    chk(rf.gpr[31] === 32'h00000600, "with the stack pointer back where it was");
+
+    // An unconditional branch over the subroutine's bytes.
+    step;
+    chk(seq_pc === 32'h0000033A, "BR skipped the subroutine");
+
+    // A jump whose operand is a register-indirect ADDRESS, not the contents of
+    // that address.
+    step;
+    chk(seq_pc === 32'h00000348, "JMP went to the address the operand names");
+    chk(insn_cycles === 5'd0,
+        "and made no operand access: it wants the address, not what is there");
+    step;
+    chk(mem[11'h700] === 8'h77,  "and the instruction there ran");
+
+    // A conditional branch that is not taken advances by its own length.  Its
+    // target is the second byte of the instruction below, so a branch wrongly
+    // taken decodes garbage rather than landing somewhere harmless.
+    step;
+    chk(seq_pc === 32'h0000034F, "an untaken branch falls through");
+    step;
+    chk(mem[11'h700] === 8'h99,  "to the instruction after it");
+
+    // TB tests the register the way DBcc does but without decrementing it:
+    // "if Rn = 0 then PC <- PC + sign_extended( disp16 )".  R9 is zero here,
+    // left that way by the loop above.
+    step;
+    chk(seq_pc === 32'h00000360, "TB branched on a register that is zero");
+    chk(mem[11'h700] === 8'h99,  "and did not run what it branched over");
+    step; step;
+    chk(seq_pc === 32'h0000036C, "and did not branch on one that is not");
+
+    // JSR: the address is computed, the return address is pushed, and control
+    // goes to the address -- not to what is at it.
+    step; step;
+    chk(mem[11'h700] === 8'h55,   "the last read before the JSR is not its target");
+    step;
+    chk(seq_pc === 32'h00000390,  "JSR called through the address in R10");
+    chk(rf.gpr[31] === 32'h000005FC, "pushing one word");
+    chk(mem_word(13'h5FC) === 32'h0000037B,
+        "which is the address of the instruction after the JSR");
+    step;
+    chk(mem[11'h700] === 8'h44,   "the second subroutine ran");
+    step;
+    chk(seq_pc === 32'h0000037B,  "and RSR returned from it");
+    step;
+    chk(mem[11'h700] === 8'h33,   "to the instruction JSR pushed");
+
+    // Two addressing-mode writebacks in one instruction, which this sequencer
+    // has one retirement slot for.
+    step;
+    chk(stopped,                  "two autoincrement operands stop the sequencer");
+    chk(stop_reason === 2'd3,     "saying which of the four reasons it was");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

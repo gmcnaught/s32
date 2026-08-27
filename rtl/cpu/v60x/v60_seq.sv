@@ -8,6 +8,12 @@
 //
 //      fetch -> operand 1 -> operand 2 -> execute -> write back -> retire
 //
+//  and a second path beside it for the control transfers, which have no ALU
+//  operation and end by redirecting the prefetch unit rather than by writing a
+//  result:
+//
+//      fetch -> condition / target -> (push or pop) -> redirect
+//
 //  What is on a page, and where:
 //
 //    * The operand order.  The Programmer's Reference's syntax lines are
@@ -20,6 +26,20 @@
 //      insn_pc, and it is what a PC-relative operand is relative to.
 //    * The next PC is this one plus the instruction's length, which v60_idu
 //      measures rather than assumes.
+//    * What a branch displacement is measured from: "the value of the PC used
+//      to compute the target address is the first byte of the branch
+//      instruction" (Bcc, S7) -- the same PC as above, not the next one.
+//    * The stack operations are addressing modes, not a separate mechanism:
+//      BSR's "[-SP] <- NextPC" and RSR's "PC <- [SP+]" are the autodecrement
+//      and autoincrement modes on R31, so they go through v60_ea like any
+//      other operand and cost what the page's operand-access counts say.
+//    * JMP and JSR take the effective ADDRESS of their operand, not its
+//      contents, and "the destination operand is treated as byte data for the
+//      purpose of computing pointer changes" (S7) -- hence one byte.
+//    * DBcc's condition is four bits split across the encoding: the low one is
+//      the opcode's bit 0 and the other three are the Format VI subop.  TB
+//      occupies the subop that would spell the never-taken condition, which is
+//      why the two share opcode C7.
 //
 //  ---------------------------------------------------------------------------
 //  Format I's `d` bit: the one thing here that is not from a document
@@ -56,10 +76,16 @@
 //    shifts and rotates, and every instruction outside the integer set.  The
 //    generated table says which by returning ALU_NONE, and this stops on it
 //    rather than doing something arbitrary.
-//  * Branches, and therefore control flow.  Nothing redirects the prefetch
-//    unit yet; the PC advances by the instruction's length and no other way.
+//  * CALL and RET, which pass the argument pointer: "tmp2 <- [SP+] ; AP <-
+//    [SP+] ; SP <- SP + tmp1" (RET, S7).  They are each other's partner and
+//    neither is here; BSR and JSR pair with RSR, which is.
+//  * RETIU and RETIS, which restore the PSW as well as the PC, and belong with
+//    v60_exc when it is wired in.
 //  * Exceptions.  v60_exc exists and is not wired in: it would want the data
 //    unit that v60_ea is holding, which is the mux the plan describes.
+//  * Two addressing-mode register writebacks in one instruction -- `mov.w
+//    [R1+], [R2+]` -- which needs two retirement slots and has one.  This
+//    stops with STOP_TWO_WB rather than dropping one of them silently.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -85,6 +111,7 @@ module v60_seq
     input               idu_d,          // Format I's direction bit
     input         [4:0] idu_reg,        // Format I's register operand
     input         [4:0] idu_subop,
+    input        [31:0] idu_disp,       // Format IV / VI displacement
     input               idu_res_op,
     input               idu_res_mode,
 
@@ -130,6 +157,7 @@ module v60_seq
     output logic  [3:0] ea_opbytes,
     output logic        ea_we,
     output logic [63:0] ea_wdata,
+    output logic        ea_addr_only,
     output logic        ea_rmw,
     output logic        ea_rmw_go,
     output logic [63:0] ea_rmw_data,
@@ -140,6 +168,13 @@ module v60_seq
     input        [31:0] ea_rn_wb_val,
     input               ea_done,
     input         [3:0] ea_bus_cycles,
+
+    // ---- control transfers ---------------------------------------------------
+    // A taken branch flushes the prefetch queue and refills it from the target
+    // -- "in the event of a control transfer ... the instruction queue contents
+    // are flushed and a demand mode instruction fetch is made" (p.3.246).
+    output logic        redirect,
+    output logic [31:0] redirect_pc,
 
     // ---- state ---------------------------------------------------------------
     output logic [31:0] pc,             // the architectural PC
@@ -158,20 +193,30 @@ module v60_seq
 localparam logic [1:0] STOP_RESERVED = 2'd0;   // reserved opcode or mode
 localparam logic [1:0] STOP_NO_ALU   = 2'd1;   // not an operation v60_alu has
 localparam logic [1:0] STOP_FORMAT   = 2'd2;   // not a format this executes
+localparam logic [1:0] STOP_TWO_WB   = 2'd3;   // two addressing-mode writebacks
 
-typedef enum logic [3:0] {
+typedef enum logic [4:0] {
     S_IDLE, S_FETCH,
     S_OP1, S_OP1R, S_OP1S, S_OP1W,     // describe, read registers, start, wait
     S_OP2, S_OP2R, S_OP2S, S_OP2W,
-    S_EXEC, S_WB, S_WBW, S_RETIRE, S_STOP
+    S_EXEC, S_WB, S_WBW, S_RETIRE, S_STOP,
+    // The control transfers: a register to test, an address to compute, a
+    // stack access to make, and then the redirect.
+    S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN
 } state_e;
 
 state_e      state;
 logic [63:0] val1, val2;
 alu_op_e     aop;
+ctrl_op_e    cop;
+logic [31:0] target;        // where a control transfer is going
+logic        taken;
+logic        cpush;         // the stack access after JSR's address
+logic [31:0] next_pc;
 logic [31:0] wb_rn_val;
 logic        wb_rn_en;
 logic  [4:0] wb_rn_sel;
+logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
 
 // ---------------------------------------------------------------------------
 // Which operand is the source and which the destination.
@@ -224,11 +269,20 @@ always_ff @(posedge clk) begin
         insn_cycles   <= 5'd0;
         stopped       <= 1'b0;
         stop_reason   <= STOP_RESERVED;
+        redirect      <= 1'b0;
+        redirect_pc   <= 32'd0;
+        cop           <= CTRL_NONE;
+        target        <= 32'd0;
+        taken         <= 1'b0;
+        cpush         <= 1'b0;
+        next_pc       <= 32'd0;
+        ea_addr_only  <= 1'b0;
         val1          <= 64'd0;
         val2          <= 64'd0;
         aop           <= ALU_NONE;
         wb_rn_en      <= 1'b0;
         wb_rn_sel     <= 5'd0;
+        ea_rn_sel     <= 5'd0;
         wb_rn_val     <= 32'd0;
     end else begin
         idu_start <= 1'b0;
@@ -236,6 +290,27 @@ always_ff @(posedge clk) begin
         ea_rmw_go <= 1'b0;
         rf_wr_en  <= 1'b0;
         retired   <= 1'b0;
+        redirect  <= 1'b0;
+
+        // An addressing mode's register writeback -- the Rn that [Rn+] or
+        // [-Rn] moved -- is a single cycle pulse, and v60_ea raises it when
+        // the access STARTS, not when it finishes.  Taking it here rather than
+        // in whichever state happens to be waiting is what makes it survive an
+        // access that reaches memory: those finish several cycles later.
+        if (ea_rn_wb) begin
+            if (wb_rn_en && (wb_rn_sel != ea_rn_sel)) begin
+                // Two operands in autoincrement or autodecrement modes, and
+                // one slot to retire them from.  Stopping is not the V60's
+                // behaviour; it is this sequencer refusing to drop one
+                // silently.  See rtl/cpu/v60x/README.md.
+                stopped     <= 1'b1;
+                stop_reason <= STOP_TWO_WB;
+                state       <= S_STOP;
+            end
+            wb_rn_en  <= 1'b1;
+            wb_rn_sel <= ea_rn_sel;
+            wb_rn_val <= ea_rn_wb_val;
+        end
 
         case (state)
         S_IDLE: if (run && !stopped) begin
@@ -246,13 +321,19 @@ always_ff @(posedge clk) begin
         end
 
         S_FETCH: if (idu_done) begin
-            pc  <= idu_pc;
-            aop <= op_alu(idu_op);
+            pc      <= idu_pc;
+            aop     <= op_alu(idu_op);
+            cop     <= op_ctrl(idu_op);
+            cpush   <= 1'b0;
+            taken   <= 1'b0;
+            next_pc <= idu_pc + {27'd0, idu_len};
 
             if (idu_res_op || idu_res_mode) begin
                 stopped     <= 1'b1;
                 stop_reason <= STOP_RESERVED;
                 state       <= S_STOP;
+            end else if (op_ctrl(idu_op) != CTRL_NONE) begin
+                state <= S_CTRL;
             end else if (op_alu(idu_op) == ALU_NONE) begin
                 // Decoded and addressed, but not one of the operations
                 // v60_alu implements.
@@ -278,6 +359,7 @@ always_ff @(posedge clk) begin
             end else begin
                 rf_ra_sel     <= op1_rn;
                 rf_rb_sel     <= op1_rx;
+                ea_rn_sel     <= op1_rn;
                 ea_mode       <= op1_mode;
                 ea_index      <= op1_index;
                 ea_disp       <= op1_disp;
@@ -314,12 +396,7 @@ always_ff @(posedge clk) begin
             if (ea_done) begin
                 val1        <= ea_rdata;
                 insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
-                if (ea_rn_wb) begin
-                    wb_rn_en  <= 1'b1;
-                    wb_rn_sel <= op1_rn;
-                    wb_rn_val <= ea_rn_wb_val;
-                end
-                state <= S_OP2;
+                state       <= S_OP2;
             end
         end
 
@@ -334,6 +411,7 @@ always_ff @(posedge clk) begin
                 state     <= S_OP2R;
             end else begin
                 rf_ra_sel     <= dst_am_is_op2 ? op2_rn    : op1_rn;
+                ea_rn_sel     <= dst_am_is_op2 ? op2_rn    : op1_rn;
                 rf_rb_sel     <= dst_am_is_op2 ? op2_rx    : op1_rx;
                 // The enum needs the branch spelled out: a ternary between
                 // two enum values is not an enum to every tool.
@@ -348,6 +426,11 @@ always_ff @(posedge clk) begin
                 // Everything except MOV reads its destination and writes the
                 // same place, so the address is computed once.
                 ea_rmw        <= (aop != ALU_MOV);
+                // Every field of the descriptor is set before an access
+                // starts: JMP leaves this one set, and the next instruction
+                // would otherwise compute its destination address and never
+                // write to it.
+                ea_addr_only  <= 1'b0;
                 ea_pc_val     <= idu_pc;
                 state         <= S_OP2R;
             end
@@ -437,6 +520,156 @@ always_ff @(posedge clk) begin
                 rf_wr_data <= wb_rn_val;
             end
             pc      <= idu_pc + {27'd0, idu_len};
+            retired <= 1'b1;
+            state   <= S_IDLE;
+        end
+
+        // ---- control transfers ------------------------------------------------
+        S_CTRL: begin
+            case (cop)
+                // "if condition then PC <- PC + sign_extended( disp )", and
+                // "the value of the PC used to compute the target address is
+                // the first byte of the branch instruction".
+                CTRL_BCC: begin
+                    taken   <= cond_true(idu_op[3:0], psw_flags(psw));
+                    target  <= idu_pc + idu_disp;
+                    state   <= S_CTRL_FIN;
+                end
+                // The register ones test a register first.
+                CTRL_DBCC, CTRL_TB: begin
+                    rf_ra_sel <= idu_reg;
+                    target    <= idu_pc + idu_disp;
+                    state     <= S_CTRL_REG;
+                end
+                // BSR pushes and branches; the push is the autodecrement
+                // addressing mode on R31, which is what "[-SP]" means.
+                CTRL_BSR: begin
+                    target       <= idu_pc + idu_disp;
+                    taken        <= 1'b1;
+                    rf_ra_sel    <= 5'd31;
+                    ea_rn_sel    <= 5'd31;
+                    ea_mode      <= AM_RN_DEC;
+                    ea_index     <= 1'b0;
+                    ea_disp      <= 32'd0;
+                    ea_disp_outer<= 32'd0;
+                    ea_opbytes   <= 4'd4;
+                    ea_we        <= 1'b1;
+                    ea_rmw       <= 1'b0;
+                    ea_addr_only <= 1'b0;
+                    ea_wdata     <= {32'd0, idu_pc + {27'd0, idu_len}};
+                    state        <= S_CTRL_EAR;
+                end
+                // RSR pops one: "PC <- [SP+]", the autoincrement mode on R31.
+                CTRL_RSR: begin
+                    taken        <= 1'b1;
+                    rf_ra_sel    <= 5'd31;
+                    ea_rn_sel    <= 5'd31;
+                    ea_mode      <= AM_RN_INC;
+                    ea_index     <= 1'b0;
+                    ea_disp      <= 32'd0;
+                    ea_disp_outer<= 32'd0;
+                    ea_opbytes   <= 4'd4;
+                    ea_we        <= 1'b0;
+                    ea_rmw       <= 1'b0;
+                    ea_addr_only <= 1'b0;
+                    state        <= S_CTRL_EAR;
+                end
+                // JMP and JSR take the operand's ADDRESS.  "The destination
+                // operand is treated as byte data for the purpose of computing
+                // pointer changes for the autoincrement, autodecrement, or
+                // scaled indexed addressing modes" -- hence one byte.
+                default: begin
+                    taken        <= 1'b1;
+                    rf_ra_sel    <= op1_rn;
+                    ea_rn_sel    <= op1_rn;
+                    rf_rb_sel    <= op1_rx;
+                    ea_mode      <= op1_mode;
+                    ea_index     <= op1_index;
+                    ea_disp      <= op1_disp;
+                    ea_disp_outer<= op1_disp_outer;
+                    ea_imm       <= op1_imm;
+                    ea_opbytes   <= 4'd1;
+                    ea_we        <= 1'b0;
+                    ea_rmw       <= 1'b0;
+                    ea_addr_only <= 1'b1;
+                    ea_pc_val    <= idu_pc;
+                    state        <= S_CTRL_EAR;
+                end
+            endcase
+        end
+
+        S_CTRL_REG: begin
+            if (cop == CTRL_TB) begin
+                // "if Rn = 0 then PC <- PC + sign_extended(disp16)"
+                taken <= (rf_ra == 32'd0);
+            end else begin
+                // "Rn <- Rn - 1 ; if ( condition and Rn != 0 ) then ..."  The
+                // condition's low bit is in the opcode and the other three are
+                // the Format VI subop.
+                taken      <= cond_true({idu_subop[2:0], idu_op[0]},
+                                        psw_flags(psw)) &&
+                              ((rf_ra - 32'd1) != 32'd0);
+                wb_rn_en   <= 1'b1;
+                wb_rn_sel  <= idu_reg;
+                wb_rn_val  <= rf_ra - 32'd1;
+            end
+            state <= S_CTRL_FIN;
+        end
+
+        S_CTRL_EAR: begin
+            ea_rn_val <= rf_ra;
+            ea_rx_val <= rf_rb;
+            state     <= S_CTRL_EAS;
+        end
+
+        S_CTRL_EAS: begin
+            ea_start <= 1'b1;
+            state    <= S_CTRL_EAW;
+        end
+
+        S_CTRL_EAW: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (cop == CTRL_RSR) begin
+                target <= ea_rdata[31:0];
+                state  <= S_CTRL_FIN;
+            end else if ((cop == CTRL_JSR) && !cpush) begin
+                // "temp <- target ; [-SP] <- NextPC ; PC <- temp": the address
+                // is computed BEFORE the push, which matters when the operand
+                // itself touches the stack.
+                target       <= ea_ea;
+                cpush        <= 1'b1;
+                rf_ra_sel    <= 5'd31;
+                ea_rn_sel    <= 5'd31;
+                ea_mode      <= AM_RN_DEC;
+                ea_index     <= 1'b0;
+                ea_disp      <= 32'd0;
+                ea_disp_outer<= 32'd0;
+                ea_opbytes   <= 4'd4;
+                ea_we        <= 1'b1;
+                ea_addr_only <= 1'b0;
+                ea_wdata     <= {32'd0, next_pc};
+                state        <= S_CTRL_EAR;
+            end else if (cop == CTRL_JMP) begin
+                target <= ea_ea;
+                state  <= S_CTRL_FIN;
+            end else begin
+                state <= S_CTRL_FIN;
+            end
+        end
+
+        S_CTRL_FIN: begin
+            if (taken) begin
+                pc          <= target;
+                redirect    <= 1'b1;
+                redirect_pc <= target;
+            end else begin
+                pc <= next_pc;
+            end
+            if (wb_rn_en) begin
+                rf_wr_en   <= 1'b1;
+                rf_wr_sel  <= wb_rn_sel;
+                rf_wr_data <= wb_rn_val;
+            end
             retired <= 1'b1;
             state   <= S_IDLE;
         end

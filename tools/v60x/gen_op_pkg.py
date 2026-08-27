@@ -13,7 +13,7 @@ Usage:  python3 tools/v60x/gen_op_pkg.py [outfile]
 
 import sys
 
-from insn_table import TABLE, DATA_TYPE, EXEC_OP, expand, check_table
+from insn_table import TABLE, DATA_TYPE, EXEC_OP, CTRL_OP, expand, check_table
 
 HEADER = '''//============================================================================
 //  v60_op_pkg -- which instruction format an opcode is.
@@ -50,6 +50,19 @@ package v60_op_pkg;
 
 import v60_fmt_pkg::*;
 import v60_alu_pkg::*;
+
+// The control transfers, which do not go through the ALU.  Their operations
+// are quoted in tools/v60x/insn_table.py beside the table that names them.
+typedef enum logic [3:0] {
+    CTRL_NONE = 4'd0,
+    CTRL_BCC  = 4'd1,   // conditional, PC relative
+    CTRL_BSR  = 4'd2,   // PC relative, pushes the return address
+    CTRL_JMP  = 4'd3,   // to an effective address
+    CTRL_JSR  = 4'd4,   // to an effective address, pushes the return address
+    CTRL_RSR  = 4'd5,   // pops it
+    CTRL_DBCC = 4'd6,   // decrement, and branch while not zero
+    CTRL_TB   = 4'd7    // branch when the register is zero
+} ctrl_op_e;
 '''
 
 FOOTER = '''
@@ -97,6 +110,7 @@ def build():
     width = {}        # opcode byte      -> (w1, w2)
     width_esc = {}    # (opcode, subop)  -> (w1, w2)
     execop = {}       # opcode byte      -> the ALU operation, or None
+    ctrlop = {}       # opcode byte      -> the control transfer, or None
 
     def put(store, key, value, mnemonic, other):
         # Two instructions on one key must agree about the operand widths.
@@ -120,6 +134,7 @@ def build():
                 first[b] = SV_FMT[fmt]
                 who[b] = mnemonic
                 execop[b] = EXEC_OP.get(mnemonic)
+                ctrlop[b] = CTRL_OP.get(mnemonic)
                 put(width, b, widths, mnemonic, who)
             else:
                 first[b] = 'FMT_ESCAPE'
@@ -129,7 +144,7 @@ def build():
                                     'the base word gives it' % (mnemonic, s))
                     escape[(b, s)] = (SV_FMT[fmt], mnemonic)
                     put(width_esc, (b, s), widths, mnemonic, who_esc)
-    return first, escape, who, width, width_esc, who_esc, execop
+    return first, escape, who, width, width_esc, who_esc, execop, ctrlop
 
 
 def emit(out):
@@ -137,7 +152,7 @@ def emit(out):
     if errors or collisions:
         raise SystemExit('table does not validate; run insn_table.py')
 
-    first, escape, who, width, width_esc, who_esc, execop = build()
+    first, escape, who, width, width_esc, who_esc, execop, ctrlop = build()
     w = out.write
     w(HEADER)
 
@@ -258,6 +273,22 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     end
 endfunction
 
+// Which control transfer an opcode is, if any.
+function automatic ctrl_op_e op_ctrl(input logic [7:0] op);
+    ctrl_op_e r;
+    begin
+        case (op)
+''')
+    for b in range(256):
+        if ctrlop.get(b):
+            w('            8\'h%02X: r = CTRL_%-5s // %s\n'
+              % (b, ctrlop[b] + ';', who[b]))
+    w('''            default: r = CTRL_NONE;
+        endcase
+        op_ctrl = r;
+    end
+endfunction
+
 // Format IV's displacement width, which is in the opcode and in two
 // documents.  The databook prints Bcc as `011 b cccc` with the branch
 // displacement table on p.3.295 giving "b = 0 byte / b = 1 halfword"; the
@@ -300,11 +331,12 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else 'rtl/cpu/v60x/v60_op_pkg.sv'
     with open(path, 'w') as out:
         emit(out)
-    first, escape, _, width, width_esc, _w, execop = build()
+    first, escape, _, width, width_esc, _w, execop, ctrlop = build()
     print('%s: %d opcode bytes, %d escape encodings, %d widths (%d by subop), '
-          '%d executable'
+          '%d executable, %d control'
           % (path, len(first), len(escape), len(width), len(width_esc),
-             len([v for v in execop.values() if v])))
+             len([v for v in execop.values() if v]),
+             len([v for v in ctrlop.values() if v])))
 
 
 if __name__ == '__main__':

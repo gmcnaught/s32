@@ -72,6 +72,13 @@ module v60_ea
     input               rmw_go,
     input        [63:0] rmw_data,
 
+    // The ADDRESS, and not what is at it.  JMP and JSR take one -- "the
+    // effective address of the destination is computed and program control is
+    // transferred" (Programmer's Reference S7) -- and so does MOVEA.  The
+    // pointer read an indirect mode needs still happens; the operand's own
+    // access does not.
+    input               addr_only,
+
     // ---- results -----------------------------------------------------------
     output logic [31:0] ea,          // the effective address (32 bits)
     output logic [63:0] rdata,       // the operand, however it was obtained
@@ -108,7 +115,7 @@ am_mode_e    mode_r;
 logic [31:0] scaled_r;    // the index contribution, added last
 logic [31:0] outer_r;
 logic  [3:0] size_r;
-logic        we_r, rmw_r;
+logic        we_r, rmw_r, addr_r;
 logic [63:0] wdata_r;
 
 assign busy = (state != S_IDLE);
@@ -149,6 +156,7 @@ always_ff @(posedge clk) begin
         illegal     <= 1'b0;
         rmw_pending <= 1'b0;
         rmw_r       <= 1'b0;
+        addr_r      <= 1'b0;
         bus_cycles  <= 4'd0;
         mode_r      <= AM_RESERVED;
         scaled_r   <= 32'd0;
@@ -168,6 +176,7 @@ always_ff @(posedge clk) begin
             size_r     <= opbytes;
             we_r        <= we;
             rmw_r       <= rmw;
+            addr_r      <= addr_only;
             wdata_r     <= wdata;
             illegal     <= 1'b0;
             rmw_pending <= 1'b0;
@@ -208,13 +217,18 @@ always_ff @(posedge clk) begin
                     dx_req    <= 1'b1;
                     state     <= S_PTR;
                 end else begin
-                    ea        <= addr1 + scaled;
-                    dx_addr   <= addr1[23:0] + scaled[23:0];
-                    dx_nbytes <= opbytes;
-                    dx_we     <= we;
-                    dx_wdata  <= wdata;
-                    dx_req    <= 1'b1;
-                    state     <= S_ACC;
+                    ea <= addr1 + scaled;
+                    if (addr_only) begin
+                        // The address is the answer; nothing is read.
+                        done <= 1'b1;
+                    end else begin
+                        dx_addr   <= addr1[23:0] + scaled[23:0];
+                        dx_nbytes <= opbytes;
+                        dx_we     <= we;
+                        dx_wdata  <= wdata;
+                        dx_req    <= 1'b1;
+                        state     <= S_ACC;
+                    end
                 end
             end
         end
@@ -230,7 +244,12 @@ always_ff @(posedge clk) begin
             dx_wdata   <= wdata_r;
             dx_req     <= 1'b0;
             bus_cycles <= bus_cycles + dx_cycles;
-            state      <= S_ISSUE;
+            if (addr_r) begin
+                done  <= 1'b1;
+                state <= S_IDLE;
+            end else begin
+                state <= S_ISSUE;
+            end
         end
 
         S_ISSUE: begin

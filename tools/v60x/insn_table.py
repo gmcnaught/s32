@@ -390,6 +390,31 @@ EXEC_OP = {
 }
 
 
+# ---------------------------------------------------------------------------
+# The control transfers.
+# ---------------------------------------------------------------------------
+# Kept apart from EXEC_OP because these do not go through the ALU: they change
+# the PC, and some of them touch the stack.  Their operations, from the
+# Programmer's Reference S7:
+#
+#   Bcc   if condition then PC <- PC + sign_extended(disp) else PC <- NextPC
+#   BSR   [-SP] <- NextPC ; PC <- PC + sign_extended(disp16)
+#   JMP   PC <- target                     (the operand's effective ADDRESS)
+#   JSR   temp <- target ; [-SP] <- NextPC ; PC <- temp
+#   RSR   PC <- [SP+]                      "used to terminate subroutines
+#                                           entered using the JSR and BSR"
+#   DBcc  Rn <- Rn - 1 ; if (condition and Rn != 0) then PC <- PC + disp16
+#   TB    if Rn = 0 then PC <- PC + sign_extended(disp16)
+#
+# In every one of them "the value of the PC used to compute the target address
+# is the first byte of the branch instruction", which is v60_idu's insn_pc.
+CTRL_OP = {
+    'Bcc': 'BCC', 'BSR': 'BSR',
+    'JMP': 'JMP', 'JSR': 'JSR', 'RSR': 'RSR',
+    'DBcc': 'DBCC', 'TB': 'TB',
+}
+
+
 def _split(pattern):
     """['0','1','{siz}',...] -- one entry per printed position."""
     out, i = [], 0

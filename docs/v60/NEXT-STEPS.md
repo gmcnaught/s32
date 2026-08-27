@@ -12,35 +12,35 @@ from a page is marked at the point of decision.
 
 ---
 
-## 1. Control flow
+## 1. Control flow — **done**, except two pairs
 
-**The largest functional gap, and the one that turns "executes instructions"
-into "runs a program".** Nothing drives `v60_pfu.redirect` today: the PC
-advances by the instruction's length and no other way, so a program is a
-straight line.
+Landed. `Bcc`, `BSR`, `JMP`, `JSR`, `RSR`, `DBcc` and `TB` execute in
+`v60_seq` and drive `v60_pfu.redirect`; `tb_v60_seq`'s third program is a
+counted loop, two subroutine calls and returns, a jump through a register, a TB
+taken and not taken, and a conditional branch that is not taken. Nineteen
+mutations of that path are caught. The pages it rests on, and the two decisions
+it forced, are `docs/v60/CONTROL-FLOW.md`.
 
-What it needs:
+Still open in the group, and neither is a branch:
 
-- **Formats III, IV, V and VI executed** in `v60_seq`, which currently stops on
-  all four. The decode side is already done — `v60_fmt_decode` extracts their
-  fields and `tb_v60_fmt_decode` checks them — so this is sequencing, not
-  decoding.
-- **The condition**, which exists: `v60_psw_pkg.cond_true(cc, flags)`, checked
-  over all 16 conditions × 16 flag combinations against a second statement of
-  them, and indexed the way a `Bcc` opcode's low nibble is.
-- **The displacement**, which exists: `v60_idu.br_disp`, sign-extended, with
-  Format IV's width already settled by `op_iv_disp_bytes()` (Bcc is `6x`/`7x`,
-  BSR is `disp16`).
-- **`v60_pfu.redirect` / `redirect_pc`**, which exist and are benched: a
-  control transfer flushes the queue and the next fetch is a DEMAND fetch.
+- **`CALL` and `RET`**, which pass the argument pointer: `tmp1 <- num ; tmp2 <-
+  [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ; PC <- tmp2` (RET, §7). They are each
+  other's partner, so they land together.
+- **`RETIU` and `RETIS`**, which restore the PSW as well as the PC. They pair
+  with item 2 below.
 
-Instructions: `Bcc`, `BSR`, `JMP`, `JSR`, `RET`, `RETIU`, `DBcc`, `TB`. The
-subroutine ones push and pop through the stack the way `v60_exc` already does,
-so that frame code is a model for them.
+Two defects in the already-benched code came out of doing this, both now fixed
+and both mutation-checked:
 
-What to watch for: `JMP`/`JSR` are Format III, whose `m` rides in the opcode
-byte; `DBcc` and `TB` share opcode `C7` and are told apart by the Format VI
-subop, which `v60_op_pkg` already handles.
+- An addressing mode's register writeback (`[Rn+]`, `[-Rn]`) was read only in
+  the cycle the access *finished*, and `v60_ea` raises it when the access
+  *starts*. Every mode that reached memory therefore lost its writeback; only
+  register-direct operands, where the two coincide, worked. It is now taken
+  wherever it appears, and an instruction carrying two of them stops with
+  `STOP_TWO_WB` rather than dropping one.
+- `ea_addr_only` was set by `JMP` and never cleared, so the *next* instruction
+  computed its destination address and never wrote to it. Every field of the
+  address descriptor is now set before an access starts.
 
 ## 2. Wire `v60_exc` in
 

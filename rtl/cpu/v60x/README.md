@@ -145,6 +145,13 @@ register file, the address unit and the ALU, and retires it.
 | a program: immediate, add, compare, store, read-modify-write | all of the above | `tb_v60_seq` |
 | an indirect destination costing one pointer read, not two | p. 3.294 | `tb_v60_seq` |
 | Format I in both directions of its `d` bit | MAME, via `s32_v60.sv` | `tb_v60_seq` |
+| a branch measured from its own first byte, taken and not taken | PgmRef §7 Bcc | `tb_v60_seq` |
+| a counted loop: DBcc decrements, then tests, with its split condition | PgmRef §7 DBcc, p. 3.293 | `tb_v60_seq` |
+| TB testing the same register without decrementing it | PgmRef §7 TB | `tb_v60_seq` |
+| BSR / JSR pushing NextPC through `[-SP]`, RSR popping through `[SP+]` | PgmRef §7 | `tb_v60_seq` |
+| JMP and JSR transferring to the effective ADDRESS, not to what is at it | PgmRef §7 | `tb_v60_seq` |
+| a taken branch flushing the queue, so the fall-through is not executed | p. 3.246 | `tb_v60_seq` |
+| a stack push costing two bus cycles and a branch costing none | p. 3.236 | `tb_v60_seq` |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
@@ -166,16 +173,12 @@ the bench fails when the RTL is broken in the corresponding way.
 
 ## Not built yet
 
-No sequencer, no opcode decode, no effective-address unit, no MMU, no FPU, no
-exception model. What exists is the bus and the operand vocabulary that sits
-directly on top of it; nothing yet issues a bus cycle on an instruction's
-behalf.
-
-No MMU, no FPU, no control flow, no task or context switching, no address
-traps, no emulation mode. What exists is a bus, the operand vocabulary above
-it, the machinery that turns one operand reference into bus cycles, an
-instruction stream, a decoder, and enough architectural state and datapath to
-execute the integer two-operand instructions of Format II and retire them.
+No MMU, no FPU, no task or context switching, no address traps, no emulation
+mode. What exists is a bus, the operand vocabulary above it, the machinery that
+turns one operand reference into bus cycles, an instruction stream, a decoder,
+enough architectural state and datapath to execute the integer two-operand
+instructions of Formats I and II, and the control transfers that make a
+sequence of them a program.
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
 piece would take. `docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are
@@ -184,9 +187,12 @@ data type, the PSW package, the register file, the ALU, the exception unit and
 the sequencer. What that plan did not scope, and what a machine that could run
 System 32 still needs:
 
-- **Control flow.** Nothing redirects the prefetch unit. `v60_pfu.redirect`
-  exists and no branch drives it, so the PC advances by the instruction's
-  length and no other way.
+- ~~Control flow~~ — **done** for `Bcc`, `BSR`, `JMP`, `JSR`, `RSR`, `DBcc`
+  and `TB`, which drive `v60_pfu.redirect` and are benched as a running
+  program: a counted loop, two subroutine calls and returns, a jump through a
+  register and a branch that is not taken. Still open in that group are `CALL`
+  and `RET`, which pass the argument pointer and are each other's partner, and
+  `RETIU` / `RETIS`, which restore the PSW and belong with `v60_exc`.
 - ~~Format I~~ — **done**, and it is the one piece of this tree taken from
   MAME rather than a page. `d`'s polarity is stated nowhere in the documents
   held (p. 3.293's legend gives only "d : direction field", and the
@@ -201,6 +207,11 @@ System 32 still needs:
 - **The externally raised exceptions.** `v60_biu` has `ready_n`, `bmode` and
   `hldrq_n` and no `berr`, `int` or `nmi`: the bus error, NMI and maskable
   interrupt families cannot be driven end to end whatever the units above do.
+
+- **Two addressing-mode register writebacks in one instruction.** `mov.w
+  [R1+], [R2+]` moves two registers and `v60_seq` retires one. It stops with
+  `STOP_TWO_WB` rather than dropping one silently, and the bench executes that
+  instruction to prove it does.
 
 Two smaller things are open and neither blocks that:
 

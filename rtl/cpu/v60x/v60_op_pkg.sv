@@ -34,6 +34,19 @@ package v60_op_pkg;
 import v60_fmt_pkg::*;
 import v60_alu_pkg::*;
 
+// The control transfers, which do not go through the ALU.  Their operations
+// are quoted in tools/v60x/insn_table.py beside the table that names them.
+typedef enum logic [3:0] {
+    CTRL_NONE = 4'd0,
+    CTRL_BCC  = 4'd1,   // conditional, PC relative
+    CTRL_BSR  = 4'd2,   // PC relative, pushes the return address
+    CTRL_JMP  = 4'd3,   // to an effective address
+    CTRL_JSR  = 4'd4,   // to an effective address, pushes the return address
+    CTRL_RSR  = 4'd5,   // pops it
+    CTRL_DBCC = 4'd6,   // decrement, and branch while not zero
+    CTRL_TB   = 4'd7    // branch when the register is zero
+} ctrl_op_e;
+
 // The opcode byte alone.  Anything the table does not list is a reserved
 // opcode -- "Reserved opcode exceptions occur when an attempt is made to
 // execute an opcode which is not assigned a valid instruction"
@@ -1021,6 +1034,57 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             default: r = ALU_NONE;
         endcase
         op_alu = r;
+    end
+endfunction
+
+// Which control transfer an opcode is, if any.
+function automatic ctrl_op_e op_ctrl(input logic [7:0] op);
+    ctrl_op_e r;
+    begin
+        case (op)
+            8'h48: r = CTRL_BSR;  // BSR
+            8'h60: r = CTRL_BCC;  // Bcc
+            8'h61: r = CTRL_BCC;  // Bcc
+            8'h62: r = CTRL_BCC;  // Bcc
+            8'h63: r = CTRL_BCC;  // Bcc
+            8'h64: r = CTRL_BCC;  // Bcc
+            8'h65: r = CTRL_BCC;  // Bcc
+            8'h66: r = CTRL_BCC;  // Bcc
+            8'h67: r = CTRL_BCC;  // Bcc
+            8'h68: r = CTRL_BCC;  // Bcc
+            8'h69: r = CTRL_BCC;  // Bcc
+            8'h6A: r = CTRL_BCC;  // Bcc
+            8'h6B: r = CTRL_BCC;  // Bcc
+            8'h6C: r = CTRL_BCC;  // Bcc
+            8'h6D: r = CTRL_BCC;  // Bcc
+            8'h6E: r = CTRL_BCC;  // Bcc
+            8'h6F: r = CTRL_BCC;  // Bcc
+            8'h70: r = CTRL_BCC;  // Bcc
+            8'h71: r = CTRL_BCC;  // Bcc
+            8'h72: r = CTRL_BCC;  // Bcc
+            8'h73: r = CTRL_BCC;  // Bcc
+            8'h74: r = CTRL_BCC;  // Bcc
+            8'h75: r = CTRL_BCC;  // Bcc
+            8'h76: r = CTRL_BCC;  // Bcc
+            8'h77: r = CTRL_BCC;  // Bcc
+            8'h78: r = CTRL_BCC;  // Bcc
+            8'h79: r = CTRL_BCC;  // Bcc
+            8'h7A: r = CTRL_BCC;  // Bcc
+            8'h7B: r = CTRL_BCC;  // Bcc
+            8'h7C: r = CTRL_BCC;  // Bcc
+            8'h7D: r = CTRL_BCC;  // Bcc
+            8'h7E: r = CTRL_BCC;  // Bcc
+            8'h7F: r = CTRL_BCC;  // Bcc
+            8'hC6: r = CTRL_DBCC; // DBcc
+            8'hC7: r = CTRL_TB;   // TB
+            8'hCA: r = CTRL_RSR;  // RSR
+            8'hD6: r = CTRL_JMP;  // JMP
+            8'hD7: r = CTRL_JMP;  // JMP
+            8'hE8: r = CTRL_JSR;  // JSR
+            8'hE9: r = CTRL_JSR;  // JSR
+            default: r = CTRL_NONE;
+        endcase
+        op_ctrl = r;
     end
 endfunction
 
