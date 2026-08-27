@@ -177,7 +177,9 @@ it, the machinery that turns one operand reference into bus cycles, an
 instruction stream, a decoder, and enough architectural state and datapath to
 execute the integer two-operand instructions of Format II and retire them.
 
-`docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are **done**: the operand
+`docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
+piece would take. `docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are
+**done**: the operand
 data type, the PSW package, the register file, the ALU, the exception unit and
 the sequencer. What that plan did not scope, and what a machine that could run
 System 32 still needs:
