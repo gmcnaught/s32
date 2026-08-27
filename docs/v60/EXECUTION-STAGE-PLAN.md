@@ -15,6 +15,16 @@ wrong is worth keeping next to what it got right:
 - The vector numbering here was off by one for the reserved opcode: Figure 8-2
   puts it at offset +64, so vector 16.
 
+Since then, Format I has been wired in as well. Its `d` bit is the only thing
+in this tree whose source is MAME rather than a document: no page held here
+gives the polarity, and MAME's V60 core (via the System 32 core's
+`s32_v60.sv:1864` and `:1948`) gives `d = 1` the mod field as source and
+`d = 0` the register. Both polarities are exercised by shipping games — that
+file carries a bug note for the `d = 0` path mishandling `XCH`, traced to
+`xch.w R19,R20` at `0x063BEB` in Golden Axe 2. Note the naming trap: MAME calls
+the two-mod-field form F1 and this one F2, the opposite way round from the
+databook.
+
 Drafted by a scoping pass over the two documents and reviewed against them.
 Claims marked **verified** were re-read on the page while reviewing; the rest
 are the scoping pass's reading and are to be re-read when their increment is

@@ -145,7 +145,10 @@ assign flags_out = (op == ALU_MOV) ? flags_in : {f_cy, f_ov, f_s, f_z};
 
 // synthesis translate_off
 always_comb begin
-    if (!((opbytes == 4'd1) || (opbytes == 4'd2) || (opbytes == 4'd4)))
+    // Only when the width is a real value: before the first instruction is
+    // decoded it is still unknown, and an unknown is not a complaint.
+    if ((^opbytes !== 1'bx) &&
+        !((opbytes == 4'd1) || (opbytes == 4'd2) || (opbytes == 4'd4)))
         $display("WARN v60_alu: %0d byte operand -- the integer data types are byte, halfword and word (p.3.295)",
                  opbytes);
 end

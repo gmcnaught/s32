@@ -144,6 +144,7 @@ register file, the address unit and the ALU, and retires it.
 | execution level 0 and the interrupt-enable rules for a handler | PgmRef §8 | `tb_v60_exc` |
 | a program: immediate, add, compare, store, read-modify-write | all of the above | `tb_v60_seq` |
 | an indirect destination costing one pointer read, not two | p. 3.294 | `tb_v60_seq` |
+| Format I in both directions of its `d` bit | MAME, via `s32_v60.sv` | `tb_v60_seq` |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
@@ -184,10 +185,13 @@ System 32 still needs:
 - **Control flow.** Nothing redirects the prefetch unit. `v60_pfu.redirect`
   exists and no branch drives it, so the PC advances by the instruction's
   length and no other way.
-- **Format I**, whose `d` bit decides which of its two operands is the
-  destination. p. 3.293's legend says "d : direction field" and no page held
-  here says more. `v60_seq` decodes and addresses a Format I instruction and
-  refuses to execute it, saying which of its three reasons that was.
+- ~~Format I~~ — **done**, and it is the one piece of this tree taken from
+  MAME rather than a page. `d`'s polarity is stated nowhere in the documents
+  held (p. 3.293's legend gives only "d : direction field", and the
+  Programmer's Reference's Appendix B reprints the same figure); it comes from
+  MAME's V60 core by way of the Sega System 32 core's `s32_v60.sv`, which the
+  README already admits as an architectural oracle for execution semantics.
+  Marked at the point of decision in `v60_seq.sv`.
 - **The multiplies, divides, shifts and rotates**, and everything outside the
   integer set. The generated table returns `ALU_NONE` for them.
 - **Wiring `v60_exc` in.** It works and is benched, and connecting it needs the

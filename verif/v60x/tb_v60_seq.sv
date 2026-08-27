@@ -59,6 +59,8 @@ v60_pfu pfu (
 wire         idu_start, idu_done, res_op, res_mode;
 insn_fmt_e   idu_fmt;
 wire   [7:0] idu_op;
+wire         idu_d;
+wire   [4:0] idu_reg, idu_subop;
 wire  [31:0] idu_pc;
 wire   [4:0] idu_len;
 wire         o1_valid, o1_index, o2_valid, o2_index;
@@ -73,7 +75,8 @@ v60_idu idu (
     .byte_in(byte_out), .byte_valid(byte_valid), .byte_pc(byte_pc),
     .byte_take(byte_take),
     .start(idu_start), .busy(), .done(idu_done),
-    .fmt(idu_fmt), .op(idu_op), .m(), .m2(), .d(), .reg_field(), .subop(),
+    .fmt(idu_fmt), .op(idu_op), .m(), .m2(), .d(idu_d),
+    .reg_field(idu_reg), .subop(idu_subop),
     .br_disp(), .insn_pc(idu_pc), .insn_len(idu_len),
     .reserved_op(res_op), .reserved_mode(res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
@@ -155,6 +158,7 @@ v60_seq seq (
     .clk(clk), .rst(rst), .run(run),
     .idu_start(idu_start), .idu_done(idu_done), .idu_fmt(idu_fmt),
     .idu_op(idu_op), .idu_pc(idu_pc), .idu_len(idu_len),
+    .idu_d(idu_d), .idu_reg(idu_reg), .idu_subop(idu_subop),
     .idu_res_op(res_op), .idu_res_mode(res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
@@ -291,8 +295,29 @@ initial begin
     mem[11'h128] = 8'hA9; mem[11'h129] = 8'hA0; mem[11'h12A] = 8'hF4;
     mem[11'h12B] = 8'h01; mem[11'h12C] = 8'h68;
 
-    // A second program: MOV.B Format I -- 09 45 67, bit 15 clear.
-    mem[11'h200] = 8'h09; mem[11'h201] = 8'h45; mem[11'h202] = 8'h67;
+    // A second program, in Format I -- one mod field and one register, with
+    // `d` saying which way round.  R8 is set up as a pointer, R9 and R10 hold
+    // data, and the results are read back out of memory.
+    // MOV.W #0x600, R8       2D A0 F4 00 06 00 00 68   (Format II)
+    mem[11'h200] = 8'h2D; mem[11'h201] = 8'hA0; mem[11'h202] = 8'hF4;
+    mem[11'h203] = 8'h00; mem[11'h204] = 8'h06; mem[11'h205] = 8'h00;
+    mem[11'h206] = 8'h00; mem[11'h207] = 8'h68;
+    // MOV.B #0x77, R9        09 A0 F4 77 69            (Format II)
+    mem[11'h208] = 8'h09; mem[11'h209] = 8'hA0; mem[11'h20A] = 8'hF4;
+    mem[11'h20B] = 8'h77; mem[11'h20C] = 8'h69;
+    // MOV.B #0x40, R10       09 A0 F4 40 6A            (Format II)
+    //   Deliberately NOT the same value as R9: with both registers holding
+    //   0x77, an implementation that read the wrong one would pass.
+    mem[11'h20D] = 8'h09; mem[11'h20E] = 8'hA0; mem[11'h20F] = 8'hF4;
+    mem[11'h210] = 8'h40; mem[11'h211] = 8'h6A;
+    // MOV.B R9, [R8]         09 09 68   Format I, d = 0: the REGISTER is the
+    //                                   source and the mod field the dest
+    mem[11'h212] = 8'h09; mem[11'h213] = 8'h09; mem[11'h214] = 8'h68;
+    // ADD.b [R8], R10        80 2A 68   Format I, d = 1: the MOD FIELD is the
+    //                                   source and the register the dest
+    mem[11'h215] = 8'h80; mem[11'h216] = 8'h2A; mem[11'h217] = 8'h68;
+    // MOV.B R10, [R8]        09 0A 68   d = 0 again, to read R10 back out
+    mem[11'h218] = 8'h09; mem[11'h219] = 8'h0A; mem[11'h21A] = 8'h68;
 
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
@@ -375,9 +400,38 @@ initial begin
     redirect    = 1'b1;
     @(negedge clk);
     redirect = 1'b0;
+    // Format II, to set the three registers up.
+    step; chk(!stopped, "the Format II setup executes");
+    step; chk(!stopped, "and so does the second");
+    step; chk(!stopped, "and the third");
+
+    // Format I, d = 0: register source, mod-field destination.
     step;
-    chk(stopped === 1'b1,      "a Format I instruction is not executed");
-    chk(stop_reason === 2'd2,  "and it says which of the three reasons it was");
+    chk(!stopped,               "a Format I instruction executes");
+    chk(mem[11'h600] === 8'h77,
+        "d = 0 puts the REGISTER on the source side: R9 went to [R8]");
+
+    // Format I, d = 1: mod-field source, register destination.  0x77 + 0x77.
+    step;
+    chk(!stopped,               "and so does the other direction");
+    chk(seq_psw[PSW_S] === 1'b1,
+        "d = 1 read [R8] as the source and added it into R10: 0xB7 is negative");
+    chk(seq_psw[PSW_OV] === 1'b1,
+        "and 0x40 + 0x77 overflows a signed byte");
+    chk(seq_psw[PSW_CY] === 1'b0, "without carrying out of one");
+
+    // Read R10 back out through a d = 0 store.
+    step;
+    chk(mem[11'h600] === 8'hB7,
+        "and the register the d = 1 instruction wrote holds the sum");
+
+    // What this bench does NOT distinguish: the source width from the
+    // destination width.  Every operation v60_alu implements has them equal --
+    // MOV.B is (1,1), ADD is (siz,siz) -- so swapping them changes nothing
+    // observable.  The instructions that would show it are the conversions,
+    // MOVS.BW and MOVT.WB, whose widths differ per operand and which are not
+    // executable yet.  tb_v60_idu checks that they DECODE with different
+    // widths; nothing here checks that they execute with them.
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

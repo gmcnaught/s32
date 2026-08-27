@@ -22,13 +22,36 @@
 //      measures rather than assumes.
 //
 //  ---------------------------------------------------------------------------
+//  Format I's `d` bit: the one thing here that is not from a document
+//  ---------------------------------------------------------------------------
+//  Format I has one mod field and one `reg` field, and `d` says which of them
+//  is the source.  No page held by this project states its polarity: p.3.293's
+//  legend gives only "d : direction field", and the Programmer's Reference's
+//  Appendix B reprints the same figure with no legend at all.
+//
+//  It is taken from MAME's V60 core, which this project's README already
+//  admits as an architectural oracle for execution semantics, by way of the
+//  Sega System 32 core's s32_v60.sv (whose header cites optable.hxx and
+//  am1-3.hxx).  There, at s32_v60.sv:1864 and :1948:
+//
+//      d = 1  ->  "op2 = reg, op1 = AM"       the mod field is the source
+//      d = 0  ->  "op1 = reg value, op2 = AM" the register is the source
+//
+//  Three things make it believable.  It is the only thing a one-bit direction
+//  field can do in a format with exactly one register and one mod field -- an
+//  assembler must be able to write both `add.b R1,[R2]` and `add.b [R2],R1`,
+//  and nothing else in the encoding separates them.  The field extraction
+//  around it in that core matches p.3.293 bit for bit, so the transcription it
+//  sits in is faithful.  And both polarities are exercised by shipping code:
+//  that file carries a bug note for the d=0 path mishandling XCH, traced to
+//  `xch.w R19,R20` at 0x063BEB in Golden Axe 2.
+//
+//  Beware the naming: MAME calls the two-mod-field form F1 and this one F2,
+//  which is the opposite way round from the databook's Format I and II.
+//
+//  ---------------------------------------------------------------------------
 //  What this does not do
 //  ---------------------------------------------------------------------------
-//  * Format I.  Its second operand is the `reg` field and which of the two is
-//    the destination is the `d` bit, whose meaning is printed nowhere in the
-//    documents held -- p.3.293's legend says only "d : direction field".  A
-//    Format I instruction decodes and addresses correctly here and is not
-//    executed.
 //  * Anything v60_alu does not implement: the multiplies and divides, the
 //    shifts and rotates, and every instruction outside the integer set.  The
 //    generated table says which by returning ALU_NONE, and this stops on it
@@ -59,6 +82,9 @@ module v60_seq
     input         [7:0] idu_op,
     input        [31:0] idu_pc,
     input         [4:0] idu_len,
+    input               idu_d,          // Format I's direction bit
+    input         [4:0] idu_reg,        // Format I's register operand
+    input         [4:0] idu_subop,
     input               idu_res_op,
     input               idu_res_mode,
 
@@ -147,13 +173,36 @@ logic [31:0] wb_rn_val;
 logic        wb_rn_en;
 logic  [4:0] wb_rn_sel;
 
+// ---------------------------------------------------------------------------
+// Which operand is the source and which the destination.
+// ---------------------------------------------------------------------------
+// Format II has two mod fields and the syntax order settles it: operand 1 is
+// the source, operand 2 the destination.  Format I has one mod field and one
+// register, and `d` says which way round they go -- see the header.
+wire fmt_i  = (idu_fmt == FMT_I);
+wire fmt_ii = (idu_fmt == FMT_II);
+
+wire        src_is_reg  = fmt_i && !idu_d;   // d = 0: the register is the source
+wire        dst_is_reg  = (fmt_i &&  idu_d) ||          // d = 1: it is the dest
+                          (fmt_ii && (op2_mode == AM_RN));
+wire  [4:0] reg_operand = fmt_i ? idu_reg : op2_rn;
+
+// The mod field that is NOT the register operand.  Format I has only one, and
+// it is whichever side `d` did not take.
+wire        dst_am_is_op2 = fmt_ii;
+
+// The operand widths are the instruction's, not the addressing mode's, so they
+// come straight from the table rather than from whichever mod field decoded.
+wire [3:0] w_src = op_data_bytes(idu_op, idu_subop, 1'b0);
+wire [3:0] w_dst = op_data_bytes(idu_op, idu_subop, 1'b1);
+
 // The ALU is combinational; its inputs are the two operand values.
 wire  [3:0] alu_flags;
 wire [31:0] alu_result;
 wire        alu_writes;
 
-wire [3:0] alu_bytes = ((op2_bytes == 4'd1) || (op2_bytes == 4'd2) ||
-                        (op2_bytes == 4'd4)) ? op2_bytes : 4'd4;
+wire [3:0] alu_bytes = ((w_dst == 4'd1) || (w_dst == 4'd2) ||
+                        (w_dst == 4'd4)) ? w_dst : 4'd4;
 
 v60_alu alu (
     .op(aop), .opbytes(alu_bytes),
@@ -161,9 +210,6 @@ v60_alu alu (
     .result(alu_result), .flags_out(alu_flags), .writes(alu_writes)
 );
 
-// A destination that is a register needs no bus cycle: v60_ea says so by
-// reporting the mode, and the write goes straight to the file.
-wire op2_is_reg = (op2_mode == AM_RN);
 
 always_ff @(posedge clk) begin
     if (rst) begin
@@ -213,8 +259,8 @@ always_ff @(posedge clk) begin
                 stopped     <= 1'b1;
                 stop_reason <= STOP_NO_ALU;
                 state       <= S_STOP;
-            end else if (idu_fmt != FMT_II) begin
-                // Format I's direction bit is not documented; see the header.
+            end else if ((idu_fmt != FMT_II) && (idu_fmt != FMT_I)) begin
+                // Formats III to VII: not sequenced here.
                 stopped     <= 1'b1;
                 stop_reason <= STOP_FORMAT;
                 state       <= S_STOP;
@@ -223,20 +269,26 @@ always_ff @(posedge clk) begin
             end
         end
 
-        // ---- operand 1: the source ------------------------------------------
+        // ---- the source ------------------------------------------------------
         S_OP1: begin
-            rf_ra_sel     <= op1_rn;
-            rf_rb_sel     <= op1_rx;
-            ea_mode       <= op1_mode;
-            ea_index      <= op1_index;
-            ea_disp       <= op1_disp;
-            ea_disp_outer <= op1_disp_outer;
-            ea_imm        <= op1_imm;
-            ea_opbytes    <= op1_bytes;
-            ea_we         <= 1'b0;
-            ea_rmw        <= 1'b0;
-            ea_pc_val     <= idu_pc;
-            state         <= S_OP1R;
+            if (src_is_reg) begin
+                // Format I with d = 0: the source is the register field.
+                rf_ra_sel <= reg_operand;
+                state     <= S_OP1R;
+            end else begin
+                rf_ra_sel     <= op1_rn;
+                rf_rb_sel     <= op1_rx;
+                ea_mode       <= op1_mode;
+                ea_index      <= op1_index;
+                ea_disp       <= op1_disp;
+                ea_disp_outer <= op1_disp_outer;
+                ea_imm        <= op1_imm;
+                ea_opbytes    <= w_src;
+                ea_we         <= 1'b0;
+                ea_rmw        <= 1'b0;
+                ea_pc_val     <= idu_pc;
+                state         <= S_OP1R;
+            end
         end
 
         // The register file's outputs are valid the cycle after its selects,
@@ -245,7 +297,12 @@ always_ff @(posedge clk) begin
         S_OP1R: begin
             ea_rn_val <= rf_ra;
             ea_rx_val <= rf_rb;
-            state     <= S_OP1S;
+            if (src_is_reg) begin
+                val1  <= {32'd0, rf_ra};
+                state <= S_OP2;
+            end else begin
+                state <= S_OP1S;
+            end
         end
 
         S_OP1S: begin
@@ -266,34 +323,50 @@ always_ff @(posedge clk) begin
             end
         end
 
-        // ---- operand 2: the destination, read as well when the operation
-        // ---- needs its old value.
+        // ---- the destination, read as well when the operation needs its old
+        // ---- value.
         S_OP2: begin
-            rf_ra_sel     <= op2_rn;
-            rf_rb_sel     <= op2_rx;
-            ea_mode       <= op2_mode;
-            ea_index      <= op2_index;
-            ea_disp       <= op2_disp;
-            ea_disp_outer <= op2_disp_outer;
-            ea_imm        <= op2_imm;
-            ea_opbytes    <= op2_bytes;
-            ea_we         <= 1'b0;
-            // Everything except MOV reads its destination and writes the same
-            // place, so the address is computed once.
-            ea_rmw        <= (aop != ALU_MOV) && !op2_is_reg;
-            ea_pc_val     <= idu_pc;
-            state         <= S_OP2R;
+            if (dst_is_reg) begin
+                // A register destination needs no address and no bus cycle:
+                // its old value is read here and the result is written to the
+                // file at retirement.
+                rf_ra_sel <= reg_operand;
+                state     <= S_OP2R;
+            end else begin
+                rf_ra_sel     <= dst_am_is_op2 ? op2_rn    : op1_rn;
+                rf_rb_sel     <= dst_am_is_op2 ? op2_rx    : op1_rx;
+                // The enum needs the branch spelled out: a ternary between
+                // two enum values is not an enum to every tool.
+                if (dst_am_is_op2) ea_mode <= op2_mode;
+                else               ea_mode <= op1_mode;
+                ea_index      <= dst_am_is_op2 ? op2_index : op1_index;
+                ea_disp       <= dst_am_is_op2 ? op2_disp  : op1_disp;
+                ea_disp_outer <= dst_am_is_op2 ? op2_disp_outer : op1_disp_outer;
+                ea_imm        <= dst_am_is_op2 ? op2_imm   : op1_imm;
+                ea_opbytes    <= w_dst;
+                ea_we         <= 1'b0;
+                // Everything except MOV reads its destination and writes the
+                // same place, so the address is computed once.
+                ea_rmw        <= (aop != ALU_MOV);
+                ea_pc_val     <= idu_pc;
+                state         <= S_OP2R;
+            end
         end
 
         S_OP2R: begin
             ea_rn_val <= rf_ra;
             ea_rx_val <= rf_rb;
-            // MOV's destination is written and not read -- its syntax line is
-            // "dst.w" where ADD's is "dst.rw" -- so the read is skipped and
-            // only the write happens, one bus cycle rather than two.  The
-            // descriptor is already set for it.
-            if (aop == ALU_MOV) state <= S_EXEC;
-            else                state <= S_OP2S;
+            if (dst_is_reg) begin
+                val2  <= {32'd0, rf_ra};
+                state <= S_EXEC;
+            end else if (aop == ALU_MOV) begin
+                // MOV's destination is written and not read -- its syntax line
+                // is "dst.w" where ADD's is "dst.rw" -- so the read is skipped
+                // and only the write happens.  The descriptor is already set.
+                state <= S_EXEC;
+            end else begin
+                state <= S_OP2S;
+            end
         end
 
         S_OP2S: begin
@@ -331,9 +404,9 @@ always_ff @(posedge clk) begin
                 end else begin
                     state <= S_RETIRE;
                 end
-            end else if (op2_is_reg) begin
+            end else if (dst_is_reg) begin
                 rf_wr_en   <= 1'b1;
-                rf_wr_sel  <= op2_rn;
+                rf_wr_sel  <= reg_operand;
                 rf_wr_data <= alu_result;
                 state      <= S_RETIRE;
             end else if (ea_rmw_pending) begin
