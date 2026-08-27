@@ -49,9 +49,10 @@
 //    both sentences true, and marks it -- it is the fifth thing in this tree
 //    that is not from a page.  Note 4 ("if the previous stack was the interrupt
 //    stack then the IS is continued to be used") is consistent with it.
-//  * TE, TP, AE, EM and ASA.  Table 8-1 has columns for them; those columns
-//    have not been read off the scan, and this does not guess.  They are left
-//    as they were, and docs/v60/EXECUTION-STAGE-PLAN.md records it.
+//  * Nothing in the recognition sequence: EL, IE, TE, TP, AE, EM and ASA are
+//    all set, and the stack is selected.  The three digits the Programmer's
+//    Reference's printing of that sequence lost to the scan are legible in
+//    the databook's, pp.3.269-3.270 -- see docs/v60/EXCEPTIONS.md.
 //  * The externally raised exceptions -- bus error, NMI, maskable interrupt --
 //    cannot be driven end to end, because v60_biu has no pin for any of them.
 //    `is_interrupt` and `disable_ie` are inputs so the behaviour can be built
@@ -138,9 +139,28 @@ function automatic logic [31:0] psw_upd(input logic [31:0] p,
                                         input logic        dis);
     logic [31:0] r;
     begin
+        // The eight step recognition sequence, which the DATABOOK prints with
+        // every digit legible where the Programmer's Reference's copy of it
+        // lost three of them to the scan (pp.3.269-3.270 against S8):
+        //
+        //   (i)   PSW.EL <- 00
+        //   (ii)  interrupt: PSW.IE <- 0;  exception: unchanged
+        //   (iii) PSW.TE <- 0 ; PSW.TP <- 0 ; PSW.AE <- 0
+        //   (iv)  PSW.EM <- 0 (native mode)
+        //   (v)   PSW.ASA <- 1
+        //
+        // A handler starts with tracing off, no trace pending, address traps
+        // off, in native mode, and with asynchronous system traps held off --
+        // "an asynchronous system trap will be disregarded while the PSW.ASA
+        // field indicates an earlier AST is being serviced".
         r                        = p;
         r[PSW_EL_HI:PSW_EL_LO]   = 2'b00;              // execution level 0
         if (is_int || dis) r[PSW_IE] = 1'b0;           // and Note 2
+        r[PSW_TE]                = 1'b0;
+        r[PSW_TP]                = 1'b0;
+        r[PSW_AE]                = 1'b0;
+        r[PSW_EM]                = 1'b0;
+        r[PSW_ASA]               = 1'b1;
         // DECISION, marked in the header: an interrupt is "saved on the
         // interrupt stack", and PSW.IS is what selects it.
         if (is_int)        r[PSW_IS] = 1'b1;

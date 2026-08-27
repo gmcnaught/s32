@@ -258,6 +258,29 @@ initial begin
     chk(e_psw_out[PSW_IS] === 1'b0,
         "but does not move to the interrupt stack");
 
+    // =======================================================================
+    // The rest of the recognition sequence.  The databook prints it with every
+    // digit legible (pp.3.269-3.270) where the Programmer's Reference's copy
+    // lost three: TE <- 0, TP <- 0, AE <- 0, EM <- 0 and ASA <- 1.  Start
+    // with each of them the other way round, so every one of the five has to
+    // move.
+    // =======================================================================
+    e_int = 1'b0; e_dis = 1'b0;
+    e_vec = 8'd16;
+    e_sp  = 32'h0000_0400;
+    e_np  = 2'd0;
+    e_psw = (32'h1 << PSW_TE) | (32'h1 << PSW_TP) | (32'h1 << PSW_AE) |
+            (32'h1 << PSW_EM) | (32'h1 << PSW_IE);
+    take;
+    chk(e_psw_out[PSW_TE]  === 1'b0, "a handler starts with tracing off");
+    chk(e_psw_out[PSW_TP]  === 1'b0, "and no trace pending");
+    chk(e_psw_out[PSW_AE]  === 1'b0, "and address traps off");
+    chk(e_psw_out[PSW_EM]  === 1'b0, "in native mode, not emulation mode");
+    chk(e_psw_out[PSW_ASA] === 1'b1,
+        "with asynchronous system traps held off while it runs");
+    chk(word_at(13'h3FC) === e_psw,
+        "and the PSW it pushed is the one it found, not the one it built");
+
     if (errors == 0) $display("V60 EXC PASS");
     else             $display("V60 EXC FAIL (%0d errors)", errors);
     $finish;

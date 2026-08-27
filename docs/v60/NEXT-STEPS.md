@@ -85,10 +85,15 @@ What is still not raised anywhere: every exception that needs a pin (`berr`,
   did not survive the scan, so "OV cleared when nothing was truncated away" is
   read from every other block in §7 rather than from MOVT's own.
 
-- **Table 8-1's TE / TP / AE / EM / ASA columns.** `v60_exc` sets the execution
-  level and the interrupt enable and leaves those five alone, because the
-  columns have not been read off the scan. Guessing them was the easy half of
-  the work and was not done.
+- ~~Table 8-1's TE / TP / AE / EM / ASA columns~~ — **done, and they were
+  never unreadable.** The Programmer's Reference's printing of the recognition
+  sequence loses three digits to the scan; the databook prints the same
+  sequence at pp. 3.269–3.270 with all of them. `PSW.TE <- 0`, `PSW.TP <- 0`,
+  `PSW.AE <- 0`, `PSW.EM <- 0` and `PSW.ASA <- 1`. `v60_exc` sets all five and
+  `tb_v60_exc` starts each one the other way round. The same page settles
+  which stack an exception's frame goes on — `L0SP`, or the interrupt stack if
+  that was already in use — which `v60_seq` was already doing and can now
+  cite.
 
 Also still unresolved from the transcription: three bit-string subops
 (`ORNBS`, `XORNBS`, `SCH1BS`), recorded in `tools/v60x/insn_table.py`'s

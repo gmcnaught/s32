@@ -161,6 +161,7 @@ register file, the address unit and the ALU, and retires it.
 | MOVT keeping the low bits and overflowing when the dropped ones disagree | PgmRef §7 MOVT | `tb_v60_alu`, `tb_v60_seq` |
 | the SBT read at `SBR + 4 × vector`, and the frame BRKV prints | PgmRef §8 | `tb_v60_exc` |
 | execution level 0 and the interrupt-enable rules for a handler | PgmRef §8 | `tb_v60_exc` |
+| the rest of the recognition sequence: TE, TP, AE, EM cleared and ASA set | pp. 3.269-3.270 | `tb_v60_exc` |
 | a program: immediate, add, compare, store, read-modify-write | all of the above | `tb_v60_seq` |
 | an indirect destination costing one pointer read, not two | p. 3.294 | `tb_v60_seq` |
 | Format I in both directions of its `d` bit | MAME, via `s32_v60.sv` | `tb_v60_seq` |
@@ -255,10 +256,10 @@ Two smaller things are open and neither blocks that:
 - **Three subops in the bit-string group** could not be read off the scan
   (`ORNBS`, `XORNBS`, `SCH1BS`). Their format is not in doubt; see
   `docs/v60/INSTRUCTION-DECODE.md`.
-One thing the plan called for is deliberately not done: `v60_exc` sets EL and
-the interrupt enable and leaves TE, TP, AE, EM and ASA alone, because Table
-8-1's columns for them have not been read off the scan. Guessing them would
-have been the easy half of the work.
+The one thing the plan recorded as unreadable turned out to be readable in the
+*other* book: the Programmer's Reference's printing of the recognition
+sequence loses three digits to the scan, and the databook's second printing at
+pp. 3.269–3.270 has all of them. `v60_exc` performs the whole sequence.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus

@@ -69,13 +69,48 @@ Three things follow from that diagram and none of them is inferred:
   Exception Code ; [-SP] ← PSW ; [-SP] ← NextPC`. `v60_exc` pushes parameters
   first, then the PSW, then the return PC.
 
+## The recognition sequence, and a scan defect worth knowing about
+
+Both books print the eight steps an exception performs. The Programmer's
+Reference's copy loses three digits to the scan — `PSW.TP <- `, `PSW.AE <- `
+and `PSW.EM <- (native mode)` with nothing between the arrow and the
+parenthesis — and the databook's second printing of the same sequence
+(pp. 3.269–3.270) has all of them:
+
+```
+  (i)    PSW.EL <- 00        (CHLVL or an ATT sets the specified level instead)
+  (ii)   interrupt: PSW.IE <- 0 ;  exception: unchanged
+         (bus error and stack invalid exceptions disable interrupts)
+  (iii)  PSW.TE <- 0 ; PSW.TP <- 0 ; PSW.AE <- 0
+  (iv)   PSW.EM <- 0 (native mode)
+  (v)    PSW.ASA <- 1        (if an ATT occurs then AST are enabled)
+  (vi)   temp <- SBT[ vector ]
+  (vii)  interrupt: IS (interrupt stack)
+         exception: L0SP (IS if the previous stack was the interrupt stack,
+                    or LnSP if a change execution level or ATT exception)
+  (viii) PC <- temp
+```
+
+So a handler starts with tracing off, no trace pending, address traps off, in
+native mode, and with asynchronous system traps held off — "an asynchronous
+system trap will be disregarded while the PSW.ASA field indicates an earlier
+AST is being serviced", so setting ASA is what stops one nesting inside the
+handler. `v60_exc` sets all five, and `tb_v60_exc` starts each of them the
+other way round so every one has to move.
+
+The lesson is not about these five bits: when a page in one book is illegible,
+**look for the same material in the other one before deciding it cannot be
+read**. Three of these were recorded as unread for exactly as long as it took
+to check the second printing.
+
 ## Which stack
 
-"Following the acknowledgement of an interrupt, the PC and PSW are saved on
-the interrupt stack and program control is transferred to the predesignated or
-supplied vector at execution level 0." The frame goes on the stack the handler
-will run with, so `v60_seq` asks the register file to switch R31 *before*
-`v60_exc` pushes anything. `v60_regfile` already implements that switch —
+Step (vii) above says it exactly: an interrupt's frame goes on the interrupt
+stack, and an exception's on `L0SP` — "IS if the previous stack was the
+interrupt stack". The frame goes on the stack the handler will run with, so
+`v60_seq` asks the register file to switch R31 *before* `v60_exc` pushes
+anything, with the new level 0 and the interrupt-stack flag carried over,
+which is what selects `L0SP` or `IS` respectively. `v60_regfile` already implements that switch —
 save into the entry the old `{IS, EL}` names, load from the entry the new one
 does — and a switch to the same entry is a no-op there, which is the ordinary
 case in this tree: it runs at execution level 0 and these exceptions handle at
