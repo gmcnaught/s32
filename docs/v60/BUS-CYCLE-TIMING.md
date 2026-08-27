@@ -75,3 +75,72 @@ exercise it from a game.
 
 `BFREZ` causes bus activity to cease **after the falling edge of T4**, with TI
 states inserted.
+
+## The seven states and the two cycle modes (p. 3.280)
+
+> "Each bus cycle consists of a combination of the seven bus states, each state
+> being defined as the interval from the rising edge of one clock to the rising
+> edge of the next clock."
+
+| state | role |
+|---|---|
+| TI | bus idle |
+| T1 | bus cycle start |
+| T2 | bus cycle state 2 |
+| T3 | bus cycle state 3 |
+| T4 | bus cycle ending |
+| TW | wait |
+| TH | bus hold |
+
+Two modes, and the distinction matters for the wait-state logic:
+
+- **Standard, four clocks** — T1 T2 T3 T4. External hardware can force TW states
+  **between T3 and T4** by negating `READY*`.
+- **High speed, three clocks** — "eliminates the T3 bus state by passing from
+  bus state T2 directly to T4 **without the opportunity of inserting wait
+  states**."
+
+That last clause is the specification for why `READY*` is ignored in short mode:
+it is not that the CPU chooses not to look, it is that there is no state in
+which a wait could be inserted.
+
+## RESET (pp. 3.281–3.282)
+
+`RESET` is **active high**. It "must be held asserted for a minimum of **20
+clock cycles** before returning to a low level."
+
+> "Following the release from the reset state, the µPD70616 will exit the idle
+> state and begin execution by performing a memory read (instruction fetch) bus
+> cycle from address **0FFFFF0H**."
+
+**This confirms the shipping core's reset vector from primary source.**
+`rtl/s32_core.sv:400` instantiates the V60 with `START_PC = 32'hFFFFFFF0`,
+attributed in a comment to MAME. It is NEC's, and the physical bus address of
+that first fetch is the 24-bit `0FFFFF0H`.
+
+Reset register values, for whenever the sequencer is built:
+
+| register | reset value |
+|---|---|
+| PSW | `10000000H` |
+| PC | `FFFFFFF0H` |
+| SBR | `00000000H` |
+| SYCW | `00000070H` |
+| TKCW | `0000E000H` |
+| PSW2 | `0000F002H` |
+| ATBR | invalid |
+| TLB | cleared |
+| others | undefined |
+
+Output pin states while reset is asserted (p. 3.282) — "the bus interface unit
+is idle":
+
+| state | outputs |
+|---|---|
+| High | `R/W*`, `DS*`, `BCY*`, `HLDAK*`, `BLOCK*` (MSMAT) |
+| High-Z | `D15-D0` |
+| Undefined | `A23-A0`, `DL1-DL0`, `FAS*`, `MRQ*`, `UBE*`, `ST2-ST0` |
+
+`v60_biu` drives the "undefined" group to zero rather than X. Undefined permits
+it, and a defined value keeps simulation free of X-propagation noise that would
+obscure real faults.

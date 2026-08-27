@@ -37,6 +37,7 @@ run() {
 }
 
 run tb_v60_biu_tstates "V60 BIU T-STATE PASS"
+run tb_v60_biu_pins    "V60 BIU PINS PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"

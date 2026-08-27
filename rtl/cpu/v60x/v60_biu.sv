@@ -243,4 +243,36 @@ always_ff @(posedge clk) begin
     end
 end
 
+// ---------------------------------------------------------------------------
+// The premise the board owes this module.
+// ---------------------------------------------------------------------------
+// "RESET must be held asserted for a minimum of 20 clock cycles before
+// returning to a low level." -- p.3.281.  That is a requirement on whatever
+// drives rst, not something this module can enforce, so it is asserted rather
+// than implemented: a board that releases reset early gets told, in
+// simulation, instead of behaving unpredictably on silicon.
+//
+// Counted in V60 clocks (ce_rise), which is what the page means by "clock".
+`ifndef SYNTHESIS
+integer v60_biu_inv_fails = 0;
+integer rst_clocks = 0;
+
+always @(posedge clk) begin
+    if (rst) begin
+        if (ce_rise) rst_clocks <= rst_clocks + 1;
+    end
+    else if (rst_clocks != 0) begin
+        if (rst_clocks < 20) begin
+            v60_biu_inv_fails = v60_biu_inv_fails + 1;
+            $display("V60-BIU FAIL: RESET released after %0d V60 clocks, minimum is 20 (databook p.3.281) t=%0t",
+                     rst_clocks, $time);
+`ifndef V60_BIU_NONFATAL
+            $fatal(1, "RESET held for less than the databook minimum");
+`endif
+        end
+        rst_clocks <= 0;
+    end
+end
+`endif
+
 endmodule
