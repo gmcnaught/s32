@@ -32,6 +32,11 @@ typedef enum logic [4:0] {
     ALU_SHA  = 5'd13,   // arithmetic: the sign follows a right shift
     ALU_ROT  = 5'd14,   // rotate
     ALU_ROTC = 5'd15,   // rotate the destination and CY together
+    // The extending moves, whose two operands are at different widths.  They
+    // are the only operations here that need the SOURCE's width as well.
+    ALU_MOVS = 5'd16,   // sign extended to the destination's length
+    ALU_MOVZ = 5'd17,   // zero extended
+    ALU_MOVT = 5'd18,   // truncated, and OV if the bits dropped disagree
     // Not one of the operations implemented here.
     ALU_NONE = 5'd31
 } alu_op_e;

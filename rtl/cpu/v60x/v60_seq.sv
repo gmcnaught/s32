@@ -333,9 +333,12 @@ wire        alu_writes;
 
 wire [3:0] alu_bytes = ((w_dst == 4'd1) || (w_dst == 4'd2) ||
                         (w_dst == 4'd4)) ? w_dst : 4'd4;
+// The source's width, which only the extending moves read.
+wire [3:0] alu_xbytes = ((w_src == 4'd1) || (w_src == 4'd2) ||
+                         (w_src == 4'd4)) ? w_src : 4'd4;
 
 v60_alu alu (
-    .op(aop), .opbytes(alu_bytes),
+    .op(aop), .opbytes(alu_bytes), .xbytes(alu_xbytes),
     .x(val1[31:0]), .y(val2[31:0]), .flags_in(psw_flags(psw)),
     .result(alu_result), .flags_out(alu_flags), .writes(alu_writes)
 );

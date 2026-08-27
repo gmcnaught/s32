@@ -394,6 +394,12 @@ EXEC_OP = {
     # destination is what moves, which is the pairing v60_alu's x and y
     # already are.  See docs/v60/SHIFTS.md.
     'SHL': 'SHL', 'SHA': 'SHA', 'ROT': 'ROT', 'ROTC': 'ROTC',
+    # The extending moves.  "The source and destination operand lengths differ
+    # in this instruction" -- which is why DATA_TYPE gives each of them a pair
+    # of fixed widths rather than the siz field.
+    'MOVS.BH': 'MOVS', 'MOVS.BW': 'MOVS', 'MOVS.HW': 'MOVS',
+    'MOVZ.BH': 'MOVZ', 'MOVZ.BW': 'MOVZ', 'MOVZ.HW': 'MOVZ',
+    'MOVT.HB': 'MOVT', 'MOVT.WB': 'MOVT', 'MOVT.WH': 'MOVT',
 }
 
 

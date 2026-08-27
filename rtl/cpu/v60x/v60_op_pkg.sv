@@ -992,7 +992,16 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     begin
         case (op)
             8'h09: r = ALU_MOV;  // MOV.B
+            8'h0A: r = ALU_MOVS; // MOVS.BH
+            8'h0B: r = ALU_MOVZ; // MOVZ.BH
+            8'h0C: r = ALU_MOVS; // MOVS.BW
+            8'h0D: r = ALU_MOVZ; // MOVZ.BW
+            8'h19: r = ALU_MOVT; // MOVT.HB
             8'h1B: r = ALU_MOV;  // MOV.H
+            8'h1C: r = ALU_MOVS; // MOVS.HW
+            8'h1D: r = ALU_MOVZ; // MOVZ.HW
+            8'h29: r = ALU_MOVT; // MOVT.WB
+            8'h2B: r = ALU_MOVT; // MOVT.WH
             8'h2D: r = ALU_MOV;  // MOV.W
             8'h38: r = ALU_NOT;  // NOT
             8'h39: r = ALU_NEG;  // NEG

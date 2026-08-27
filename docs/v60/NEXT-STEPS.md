@@ -75,12 +75,16 @@ What is still not raised anywhere: every exception that needs a pin (`berr`,
   were the wrong way round, the count taking the size field where the syntax
   lines give it `.b` in all three variants — which nothing could notice while
   nothing executed them.
-- **The extending moves.** `MOVS.*` and `MOVZ.*` sign- and zero-extend, and
-  `MOVT.*` truncates — distinct operations `v60_alu` does not have. Adding them
-  would also make one thing observable that is not today: `tb_v60_seq` records
-  that swapping the source and destination widths changes nothing, because
-  every operation currently implemented has them equal. These are the
-  instructions whose widths differ.
+- ~~The extending moves~~ — **done.** `MOVS`, `MOVZ` and `MOVT` are in
+  `v60_alu`, which now takes the source's width as well as the destination's,
+  because "the source and destination operand lengths differ in this
+  instruction" is their whole point. That also closes what `tb_v60_seq`
+  recorded as unobservable: it executes `movs.bw`, `movz.bw` and two
+  `movt.wb`s, whose one-byte immediates would be four if the widths were taken
+  the other way round. One decision is marked: MOVT's Condition Codes block
+  did not survive the scan, so "OV cleared when nothing was truncated away" is
+  read from every other block in §7 rather than from MOVT's own.
+
 - **Table 8-1's TE / TP / AE / EM / ASA columns.** `v60_exc` sets the execution
   level and the interrupt enable and leaves those five alone, because the
   columns have not been read off the scan. Guessing them was the easy half of

@@ -59,7 +59,12 @@ module v60_alu
     // second operand is the destination, so SUB computes y - x, which is
     // CMP's "src2 - src1" with src1 = x.
     input  v60_alu_pkg::alu_op_e op,
-    input                 [3:0] opbytes,     // 1, 2 or 4
+    input                 [3:0] opbytes,     // the DESTINATION's: 1, 2 or 4
+    // The source's width, which differs from the destination's only in the
+    // extending moves -- "the source and destination operand lengths differ in
+    // this instruction" (MOVS, MOVZ, MOVT) -- and is ignored by everything
+    // else, whose two operands are the same size.
+    input                 [3:0] xbytes,
     input                [31:0] x,         // src1 / the source
     input                [31:0] y,         // src2 / the destination
     input                 [3:0] flags_in,  // {CY, OV, S, Z} as the PSW holds them
@@ -77,6 +82,28 @@ wire [31:0] mask  = (opbytes == 4'd1) ? 32'h0000_00FF :
                     (opbytes == 4'd2) ? 32'h0000_FFFF : 32'hFFFF_FFFF;
 wire [31:0] msb   = (opbytes == 4'd1) ? 32'h0000_0080 :
                     (opbytes == 4'd2) ? 32'h0000_8000 : 32'h8000_0000;
+
+// The source's own width, for the extending moves.
+wire [31:0] xmask = (xbytes == 4'd1) ? 32'h0000_00FF :
+                    (xbytes == 4'd2) ? 32'h0000_FFFF : 32'hFFFF_FFFF;
+wire [31:0] xmsb  = (xbytes == 4'd1) ? 32'h0000_0080 :
+                    (xbytes == 4'd2) ? 32'h0000_8000 : 32'h8000_0000;
+wire        x_sign = |(x & xmsb);
+
+// "The contents of the source operand are sign extended to the destination
+// length" / "are zero extended" / "are truncated to the destination operand
+// length".  All three are the source read at ITS width and then presented at
+// the destination's.
+wire [31:0] mov_zx = x & xmask;
+wire [31:0] mov_sx = x_sign ? (mov_zx | ~xmask) : mov_zx;
+
+// "If any of the truncated bits do not match the sign of the result, an
+// integer overflow has occurred and the OV flag is set."  The bits dropped
+// are the source's above the destination's width, and the sign of the result
+// is the destination's top bit.
+wire [31:0] mov_drop = mov_zx & ~mask;
+wire        movt_ov  = sign_of(mov_zx, msb) ? (mov_drop != (xmask & ~mask))
+                                            : (mov_drop != 32'd0);
 
 wire [31:0] xm = x & mask;
 wire [31:0] ym = y & mask;
@@ -245,7 +272,13 @@ always_comb begin
         ALU_OR:  raw = ym | xm;
         ALU_XOR: raw = ym ^ xm;
         ALU_NOT: raw = ~xm;
-        ALU_MOV: raw = xm;
+        ALU_MOV:  raw = xm;
+        ALU_MOVS: raw = mov_sx;
+        ALU_MOVZ: raw = mov_zx;
+        ALU_MOVT: begin
+            raw  = mov_zx;                          // masked to the width below
+            f_ov = movt_ov;
+        end
         ALU_SHL: begin
             raw  = shl_res;
             f_cy = shl_cy;
@@ -271,12 +304,33 @@ always_comb begin
 end
 
 // S and Z are read at the operand's width, which is the decision above.
-// MOV is the exception: its flags column on p.3.296 is blank, so it leaves all
-// four as it found them.
+//
+// The moves are the exceptions.  MOV's flags column on p.3.296 is blank and
+// MOVS and MOVZ print "CY Unchanged / OV Unchanged / S Unchanged / Z
+// Unchanged" outright, so all three leave the four as they found them.  MOVT
+// is the odd one: the databook marks one flag for it and the Description says
+// which -- "an integer overflow has occurred and the OV flag is set" -- so OV
+// moves and the other three do not.
+//
+// DECISION, not from a page: MOVT CLEARS OV when nothing was truncated away.
+// Its Condition Codes block's legend lines did not survive the scan (the
+// block OCRs as the two column headings and nothing else), and the sentence
+// in the Description says only when OV is set.  Every other block in S7 that
+// touches OV says "otherwise cleared", and a flag that could only ever be set
+// would be unlike anything else in this instruction set.
+wire keep_all = (op == ALU_MOV) || (op == ALU_MOVS) || (op == ALU_MOVZ);
+wire keep_but_ov = (op == ALU_MOVT);
+
 assign result    = raw & mask;
 assign f_s       = sign_of(raw, msb);
 assign f_z       = ((raw & mask) == 32'd0);
-assign flags_out = (op == ALU_MOV) ? flags_in : {f_cy, f_ov, f_s, f_z};
+always_comb begin
+    if (keep_all)          flags_out = flags_in;
+    else if (keep_but_ov)  begin
+        flags_out           = flags_in;
+        flags_out[PSW_OV]   = f_ov;
+    end else               flags_out = {f_cy, f_ov, f_s, f_z};
+end
 
 // synthesis translate_off
 always_comb begin

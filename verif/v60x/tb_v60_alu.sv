@@ -28,14 +28,15 @@ module tb_v60_alu;
     import v60_alu_pkg::*;
 
 alu_op_e     op;
-reg   [3:0]  opbytes;
+reg   [3:0]  opbytes, xbytes;
 reg  [31:0]  x, y;
 reg   [3:0]  flags_in;
 wire [31:0]  result;
 wire  [3:0]  flags_out;
 wire         writes;
 
-v60_alu dut (.op(op), .opbytes(opbytes), .x(x), .y(y), .flags_in(flags_in),
+v60_alu dut (.op(op), .opbytes(opbytes), .xbytes(xbytes), .x(x), .y(y),
+             .flags_in(flags_in),
              .result(result), .flags_out(flags_out), .writes(writes));
 
 // ---------------------------------------------------------------------------
@@ -227,6 +228,10 @@ endtask
 integer i, j;
 
 initial begin
+    // Everything but the extending moves has its two operands at one width,
+    // so the source's width follows the destination's unless a case says
+    // otherwise.
+    xbytes = 4'd4;
     flags_in = 4'b0000;
 
     // =======================================================================
@@ -414,6 +419,58 @@ initial begin
     op = ALU_ROTC; y = 32'h81; x = 32'd1; flags_in = 4'b0000; #1;
     chk(result === 32'h02,     "and a rotate through carry brings CY instead");
     chk(flags_out[PSW_CY] === 1'b1, "leaving the MSB in the carry");
+
+    // =======================================================================
+    // The extending moves.  "The contents of the source operand are sign
+    // extended to the destination length and copied" (MOVS), "are zero
+    // extended" (MOVZ), "are truncated to the destination operand length"
+    // (MOVT).  All three print, or the databook marks, a flags column that
+    // leaves the condition codes alone -- except MOVT's OV.
+    // =======================================================================
+    flags_in = 4'b1111;                    // all four set, to see them survive
+    op = ALU_MOVS; xbytes = 4'd1; opbytes = 4'd2; x = 32'h0000_0080; #1;
+    chk(result === 32'h0000_FF80,   "MOVS.BH sign extends a negative byte");
+    chk(flags_out === 4'b1111,      "and leaves all four flags alone");
+    x = 32'h0000_007F; #1;
+    chk(result === 32'h0000_007F,   "and leaves a positive one alone");
+    xbytes = 4'd1; opbytes = 4'd4; x = 32'h0000_00FF; #1;
+    chk(result === 32'hFFFF_FFFF,   "MOVS.BW reaches the whole word");
+    xbytes = 4'd2; opbytes = 4'd4; x = 32'h0000_8001; #1;
+    chk(result === 32'hFFFF_8001,   "MOVS.HW from the halfword's own sign bit");
+
+    op = ALU_MOVZ; xbytes = 4'd1; opbytes = 4'd4; x = 32'h0000_0080; #1;
+    chk(result === 32'h0000_0080,   "MOVZ does not sign extend");
+    chk(flags_out === 4'b1111,      "and leaves the flags alone too");
+    x = 32'hFFFF_FFFF; #1;
+    chk(result === 32'h0000_00FF,
+        "and reads its source at the SOURCE's width, not the destination's");
+
+    // MOVT: "If any of the truncated bits do not match the sign of the result,
+    // an integer overflow has occurred and the OV flag is set.  In the event
+    // of an overflow, the destination operand is replaced with the low order
+    // bits of the true result."
+    flags_in = 4'b1010;                    // CY and S set, OV and Z clear
+    op = ALU_MOVT; xbytes = 4'd4; opbytes = 4'd1; x = 32'h0000_007F; #1;
+    chk(result === 32'h0000_007F,       "MOVT.WB keeps a value that fits");
+    chk(flags_out[PSW_OV] === 1'b0,     "with no overflow");
+    chk(flags_out[PSW_CY] === 1'b1 && flags_out[PSW_S] === 1'b1 &&
+        flags_out[PSW_Z] === 1'b0,      "and the other three untouched");
+    x = 32'hFFFF_FFFF; #1;
+    chk(result === 32'h0000_00FF,       "-1 truncates to -1");
+    chk(flags_out[PSW_OV] === 1'b0,
+        "and the bits dropped all matched the sign, so no overflow");
+    x = 32'h0000_0080; #1;
+    chk(result === 32'h0000_0080,
+        "the low order bits are kept even when the value does not fit");
+    chk(flags_out[PSW_OV] === 1'b1,
+        "and dropping zeros off a result whose sign is set is an overflow");
+    x = 32'h0000_0100; #1;
+    chk(flags_out[PSW_OV] === 1'b1,      "as is dropping a set bit");
+    xbytes = 4'd4; opbytes = 4'd2; x = 32'hFFFF_8000; #1;
+    chk(result === 32'h0000_8000,        "MOVT.WH keeps the low halfword");
+    chk(flags_out[PSW_OV] === 1'b0,      "whose sign the dropped bits match");
+    x = 32'h0001_8000; #1;
+    chk(flags_out[PSW_OV] === 1'b1,      "and here they do not");
 
     $display("V60 ALU: %0d checks", checked);
     if (errors == 0) $display("V60 ALU PASS");

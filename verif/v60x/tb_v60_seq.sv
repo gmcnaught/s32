@@ -429,6 +429,22 @@ initial begin
     mem[11'h215] = 8'h80; mem[11'h216] = 8'h2A; mem[11'h217] = 8'h68;
     // MOV.B R10, [R8]        09 0A 68   d = 0 again, to read R10 back out
     mem[11'h218] = 8'h09; mem[11'h219] = 8'h0A; mem[11'h21A] = 8'h68;
+    // The conversions, whose two operands are at different widths by
+    // definition: "the source and destination operand lengths differ in this
+    // instruction".
+    // MOVS.BW #0x80, R9     0C A0 F4 80 69   a byte immediate into a word
+    mem[11'h21B] = 8'h0C; mem[11'h21C] = 8'hA0; mem[11'h21D] = 8'hF4;
+    mem[11'h21E] = 8'h80; mem[11'h21F] = 8'h69;
+    // MOVZ.BW #0x80, R10    0D A0 F4 80 6A   the same bits, not extended
+    mem[11'h220] = 8'h0D; mem[11'h221] = 8'hA0; mem[11'h222] = 8'hF4;
+    mem[11'h223] = 8'h80; mem[11'h224] = 8'h6A;
+    // MOVT.WB R9, [R8]      29 C0 69 68      a word truncated to a byte
+    mem[11'h225] = 8'h29; mem[11'h226] = 8'hC0; mem[11'h227] = 8'h69;
+    mem[11'h228] = 8'h68;
+    // MOVT.WB R10, [R8]     29 C0 6A 68      the same byte, from a value whose
+    //                                        dropped bits do not match its sign
+    mem[11'h229] = 8'h29; mem[11'h22A] = 8'hC0; mem[11'h22B] = 8'h6A;
+    mem[11'h22C] = 8'h68;
 
     // ---- a third program, at 0x300: control flow -----------------------------
     // A counted loop, a subroutine call and return, an unconditional branch
@@ -678,13 +694,24 @@ initial begin
     chk(mem[11'h600] === 8'hB7,
         "and the register the d = 1 instruction wrote holds the sum");
 
-    // What this bench does NOT distinguish: the source width from the
-    // destination width.  Every operation v60_alu implements has them equal --
-    // MOV.B is (1,1), ADD is (siz,siz) -- so swapping them changes nothing
-    // observable.  The instructions that would show it are the conversions,
-    // MOVS.BW and MOVT.WB, whose widths differ per operand and which are not
-    // executable yet.  tb_v60_idu checks that they DECODE with different
-    // widths; nothing here checks that they execute with them.
+    // ---- the conversions, whose operands are at different widths ------------
+    step;
+    chk(rf.gpr[9] === 32'hFFFF_FF80,
+        "MOVS.BW sign extended a byte immediate into a word register");
+    chk(seq_pc === 32'h00000220,
+        "and its immediate was one byte, because the SOURCE is the byte");
+    step;
+    chk(rf.gpr[10] === 32'h0000_0080,
+        "MOVZ.BW put the same bits in without extending them");
+    step;
+    chk(mem[11'h600] === 8'h80,   "MOVT.WB stored the low byte of the word");
+    chk(seq_psw[PSW_OV] === 1'b0,
+        "and the bits it dropped all matched the result's sign");
+    step;
+    chk(mem[11'h600] === 8'h80,
+        "the other truncation stores the same byte");
+    chk(seq_psw[PSW_OV] === 1'b1,
+        "and overflows, because the bits it dropped do NOT match that sign");
 
     // =======================================================================
     // Control flow.

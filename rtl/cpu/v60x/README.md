@@ -157,6 +157,8 @@ register file, the address unit and the ALU, and retires it.
 | SHL / SHA / ROT / ROTC against a one-bit-per-step model, 132,135 checks | PgmRef §7 blocks | `tb_v60_alu` |
 | a signed byte count, a zero count clearing CY, and counts past the width | PgmRef §7 | `tb_v60_alu` |
 | an instruction whose two operands are at different widths | PgmRef §7 syntax lines | `tb_v60_seq` |
+| MOVS sign extending, MOVZ not, and both leaving all four flags alone | PgmRef §7 blocks | `tb_v60_alu`, `tb_v60_seq` |
+| MOVT keeping the low bits and overflowing when the dropped ones disagree | PgmRef §7 MOVT | `tb_v60_alu`, `tb_v60_seq` |
 | the SBT read at `SBR + 4 × vector`, and the frame BRKV prints | PgmRef §8 | `tb_v60_exc` |
 | execution level 0 and the interrupt-enable rules for a handler | PgmRef §8 | `tb_v60_exc` |
 | a program: immediate, add, compare, store, read-modify-write | all of the above | `tb_v60_seq` |
@@ -289,6 +291,12 @@ A fourth figure defect turned up with `v60_ea`: the p. 3.261 scaling table
 prints a scaled index constant of **3** for Word, against its own
 increment/decrement of 4 and against the sentence on p. 3.257 that says the
 index is scaled by the operand's size. It scales by 4.
+
+`v60_alu` makes one for MOVT: the Programmer's Reference's Condition Codes
+block for it did not survive the scan — it OCRs as the two column headings and
+nothing else — and its Description says only when OV is *set*. Every other
+block in §7 that touches OV says "otherwise cleared", so MOVT clears it when
+nothing was truncated away.
 
 `v60_pfu` makes two more, both in `docs/v60/PREFETCH.md`: what DL1-DL0 carries
 during an instruction fetch (the databook says only that FAS* is undefined
