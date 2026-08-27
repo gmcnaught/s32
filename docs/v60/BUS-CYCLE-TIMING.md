@@ -144,3 +144,19 @@ is idle":
 `v60_biu` drives the "undefined" group to zero rather than X. Undefined permits
 it, and a defined value keeps simulation free of X-propagation noise that would
 obscure real faults.
+
+## Open verification item: the 20-clock reset minimum
+
+`RESET` must be held for at least 20 clocks (p. 3.281). Nothing in this tree
+checks it, deliberately.
+
+The obvious place — a counter in `v60_biu` — cannot work. That module's only
+clock reference is `ce_rise`, and `ce_rise` is gated on `!rst` both in the
+benches and in `s32_v60_timebase`, so a counter driven by it is dead for
+precisely the interval it would be measuring. An assertion written that way was
+tried, and reported a pass on a bench that released reset after four fast
+clocks.
+
+The check belongs where the raw clock is visible and the V60 period is known:
+at the board level, beside the reset synchroniser. Until it lives there, the
+requirement is documented and unenforced, which is at least honest.

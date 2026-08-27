@@ -255,35 +255,24 @@ always_ff @(posedge clk) begin
 end
 
 // ---------------------------------------------------------------------------
-// The premise the board owes this module.
+// The premise the board owes this module, and why it is NOT asserted here.
 // ---------------------------------------------------------------------------
 // "RESET must be held asserted for a minimum of 20 clock cycles before
-// returning to a low level." -- p.3.281.  That is a requirement on whatever
-// drives rst, not something this module can enforce, so it is asserted rather
-// than implemented: a board that releases reset early gets told, in
-// simulation, instead of behaving unpredictably on silicon.
+// returning to a low level." -- p.3.281.
 //
-// Counted in V60 clocks (ce_rise), which is what the page means by "clock".
-`ifndef SYNTHESIS
-integer v60_biu_inv_fails = 0;
-integer rst_clocks = 0;
-
-always @(posedge clk) begin
-    if (rst) begin
-        if (ce_rise) rst_clocks <= rst_clocks + 1;
-    end
-    else if (rst_clocks != 0) begin
-        if (rst_clocks < 20) begin
-            v60_biu_inv_fails = v60_biu_inv_fails + 1;
-            $display("V60-BIU FAIL: RESET released after %0d V60 clocks, minimum is 20 (databook p.3.281) t=%0t",
-                     rst_clocks, $time);
-`ifndef V60_BIU_NONFATAL
-            $fatal(1, "RESET held for less than the databook minimum");
-`endif
-        end
-        rst_clocks <= 0;
-    end
-end
-`endif
+// That was written here as a simulation assertion counting ce_rise pulses
+// during reset.  It could never have fired: ce_rise is gated on !rst, both in
+// the bench and in s32_v60_timebase (`assign ce_rise = !rst && !pause && ...`),
+// so the counter it incremented was dead for exactly the interval it was
+// measuring.  It reported a pass on a bench that released reset after four
+// fast clocks.
+//
+// A check that cannot fail is worse than no check, so it is gone rather than
+// left to reassure.  The requirement is real and belongs where the raw clock
+// is visible and the V60 period is known -- at the board level, next to the
+// reset synchroniser -- not in a module whose only clock reference is a strobe
+// that reset suppresses.
+//
+// Recorded as an open verification item in docs/v60/BUS-CYCLE-TIMING.md.
 
 endmodule
