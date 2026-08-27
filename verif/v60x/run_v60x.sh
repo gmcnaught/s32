@@ -11,7 +11,8 @@ export PATH="/opt/homebrew/bin:$PATH"
 
 RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
-     rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_ea.sv"
+     rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_ea.sv \
+     rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv"
 WORK="${WORK:-/tmp/v60x}"
 mkdir -p "$WORK"
 pass=0; fail=0
@@ -43,6 +44,7 @@ run tb_v60_biu_pins    "V60 BIU PINS PASS"
 run tb_v60_am_decode   "V60 AM DECODE PASS"
 run tb_v60_dxu         "V60 DXU PASS"
 run tb_v60_ea          "V60 EA PASS"
+run tb_v60_pfu         "V60 PFU PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"

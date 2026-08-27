@@ -70,6 +70,27 @@ The memory in both benches is modelled as the databook describes it — two
 byte-wide banks reached only through those three lane encodings — so an access
 that picks the wrong lane moves the wrong byte rather than merely looking wrong.
 
+### The prefetch unit and the bus arbiter
+
+**Instructions reach the decoder.** `v60_pfu` keeps the databook's 16-byte
+queue filled from idle bus cycles and hands the decoder one byte at a time;
+`v60_bus_arb` is the "lowest priority bus requester" rule.
+
+| | source | checked by |
+|---|---|---|
+| a 16 byte queue, which stops fetching when it is full | p. 3.246 | `tb_v60_pfu` |
+| bytes delivered in program order, each with its own PC | p. 3.246 | `tb_v60_pfu` |
+| a control transfer flushes the queue | p. 3.246 | `tb_v60_pfu` |
+| the fetch after a flush is a DEMAND fetch, the rest PREFETCH | p. 3.233-4, 3.246 | `tb_v60_pfu` |
+| the first fetch out of reset is from 0FFFFF0H | p. 3.282 | `tb_v60_pfu` |
+| a fetch never runs while the data unit wants the bus | p. 3.246 | `tb_v60_pfu` |
+| the grant is held from BCY* to the ack, and an ack reaches one master | p. 3.283 | `tb_v60_pfu`, continuously |
+| a request withdrawn before its cycle starts does not wedge the bus | — | `tb_v60_pfu` |
+
+The arbiter's hold rule is not defensive programming: an earlier version
+released the grant when a master dropped its request, and a data read at
+`0x800` was delivered into the instruction queue. See `docs/v60/PREFETCH.md`.
+
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.
@@ -95,21 +116,23 @@ exception model. What exists is the bus and the operand vocabulary that sits
 directly on top of it; nothing yet issues a bus cycle on an instruction's
 behalf.
 
-No sequencer, no opcode decode, no instruction fetch, no MMU, no FPU, no
-exception model. What exists is a bus, the operand vocabulary above it, and the
-machinery that turns one operand reference into bus cycles. Nothing yet reads
-an instruction.
+No sequencer, no opcode decode, no MMU, no FPU, no exception model. What
+exists is a bus, the operand vocabulary above it, the machinery that turns one
+operand reference into bus cycles, and an instruction stream arriving a byte at
+a time. Nothing yet reads that stream.
 
-The next stage is **instruction fetch and opcode decode**: the seven
-instruction formats (p. 3.293), the opcode tables (§5 from p. 3.296), and a
-prefetch queue feeding `v60_am_decode` a byte at a time — which is the
-interface it was built to, and the reason `BST_PREFETCH` and `BST_DEMAND_FETCH`
-are already in `v60_bus_pkg`. That closes the loop on
-`docs/v60/v60_operand_access.csv`: 220 instruction variants, 118 mnemonics,
-each with its read/write/RMW counts and total data bus cycles, 161 marked `ok`
-and 59 `review`. Per operand those counts are already measurable
-(`tb_v60_ea`); per instruction needs the decode that says which operands an
-opcode has.
+The next stage is **the instruction formats and opcode decode**: the seven
+formats on p. 3.293 (`op`, `subop`, `reg`, `m`, `m'`, `d`, `ext` and where each
+sits in the first word) and the instruction-set tables from p. 3.296, which are
+the only thing that says which format an opcode belongs to and therefore how
+many operands to hand `v60_am_decode`. Nine pages of tables, OCR-hostile, and
+worth its own careful pass.
+
+That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
+variants, 118 mnemonics, each with its read/write/RMW counts and total data bus
+cycles, 161 marked `ok` and 59 `review`. Per operand those counts are already
+measurable (`tb_v60_ea`); per instruction needs the decode that says which
+operands an opcode has.
 
 Execution semantics come from the Programmer's Reference and from MAME as an
 architectural oracle, and timing comes from nowhere.
@@ -136,5 +159,11 @@ A fourth figure defect turned up with `v60_ea`: the p. 3.261 scaling table
 prints a scaled index constant of **3** for Word, against its own
 increment/decrement of 4 and against the sentence on p. 3.257 that says the
 index is scaled by the operand's size. It scales by 4.
+
+`v60_pfu` makes two more, both in `docs/v60/PREFETCH.md`: what DL1-DL0 carries
+during an instruction fetch (the databook says only that FAS* is undefined
+there), and that a control transfer to an odd address drops the byte before the
+target — which is why an odd instruction stream rests at fifteen queued bytes
+rather than sixteen.
 
 All are marked in the source at the point of decision.
