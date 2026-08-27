@@ -58,7 +58,7 @@ v60_pfu pfu (
 
 // ---- the instruction decoder ------------------------------------------------
 reg          i_start = 1'b0;
-wire         i_busy, i_done, i_reserved;
+wire         i_busy, i_done, i_res_op, i_res_mode;
 insn_fmt_e   i_fmt;
 wire   [7:0] i_op;
 wire         i_m, i_m2, i_d;
@@ -87,13 +87,14 @@ v60_idu dut (
     .start(i_start), .busy(i_busy), .done(i_done),
     .fmt(i_fmt), .op(i_op), .m(i_m), .m2(i_m2), .d(i_d),
     .reg_field(i_reg), .subop(i_subop), .br_disp(i_disp),
-    .insn_pc(i_pc), .insn_len(i_len), .reserved(i_reserved),
+    .insn_pc(i_pc), .insn_len(i_len),
+    .reserved_op(i_res_op), .reserved_mode(i_res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
-    .op1_imm(o1_imm), .op1_ext_valid(o1_extv), .op1_ext(o1_ext),
+    .op1_imm(o1_imm), .op1_ext_valid(o1_extv), .op1_ext(o1_ext), .op1_bytes(),
     .op2_valid(o2_valid), .op2_mode(o2_mode), .op2_rn(o2_rn), .op2_rx(o2_rx),
     .op2_index(o2_index), .op2_disp(o2_disp), .op2_disp_outer(o2_douter),
-    .op2_imm(o2_imm), .op2_ext_valid(o2_extv), .op2_ext(o2_ext)
+    .op2_imm(o2_imm), .op2_ext_valid(o2_extv), .op2_ext(o2_ext), .op2_bytes()
 );
 
 // ---- arbiter, bus and memory ------------------------------------------------
@@ -201,6 +202,44 @@ initial begin
     mem[10'h11E] = 8'h09; mem[10'h11F] = 8'hA0; mem[10'h120] = 8'h67;
     mem[10'h121] = 8'h67;
 
+    // ---- the operand data type, three ways it is specified -----------------
+    // Each is `MOV`/`ADD`/`MOVF` with an IMMEDIATE source (mod byte F4) and
+    // [Rn] as the destination.  immed.N's width is the operand's data type
+    // (p.3.294 gives the one mode code three rows), so a wrong width changes
+    // the instruction's LENGTH -- which the PC chain checks across all of them.
+    // the suffix says: MOV.B, MOV.H, MOV.W
+    mem[10'h122] = 8'h09; mem[10'h123] = 8'h80; mem[10'h124] = 8'hF4;
+    mem[10'h125] = 8'h7F; mem[10'h126] = 8'h67;
+    mem[10'h127] = 8'h1B; mem[10'h128] = 8'h80; mem[10'h129] = 8'hF4;
+    mem[10'h12A] = 8'h34; mem[10'h12B] = 8'h12; mem[10'h12C] = 8'h67;
+    mem[10'h12D] = 8'h2D; mem[10'h12E] = 8'h80; mem[10'h12F] = 8'hF4;
+    mem[10'h130] = 8'h78; mem[10'h131] = 8'h56; mem[10'h132] = 8'h34;
+    mem[10'h133] = 8'h12; mem[10'h134] = 8'h67;
+    // the siz field says: ADD.b (80) and ADD.w (84)
+    mem[10'h135] = 8'h80; mem[10'h136] = 8'h80; mem[10'h137] = 8'hF4;
+    mem[10'h138] = 8'h55; mem[10'h139] = 8'h67;
+    mem[10'h13A] = 8'h84; mem[10'h13B] = 8'h80; mem[10'h13C] = 8'hF4;
+    mem[10'h13D] = 8'h11; mem[10'h13E] = 8'h22; mem[10'h13F] = 8'h33;
+    mem[10'h140] = 8'h44; mem[10'h141] = 8'h67;
+    // the s bit says: MOVF short real (5C) and long real (5E), subop 8
+    mem[10'h142] = 8'h5C; mem[10'h143] = 8'h88; mem[10'h144] = 8'hF4;
+    mem[10'h145] = 8'h01; mem[10'h146] = 8'h02; mem[10'h147] = 8'h03;
+    mem[10'h148] = 8'h04; mem[10'h149] = 8'h67;
+    mem[10'h14A] = 8'h5E; mem[10'h14B] = 8'h88; mem[10'h14C] = 8'hF4;
+    mem[10'h14D] = 8'h01; mem[10'h14E] = 8'h02; mem[10'h14F] = 8'h03;
+    mem[10'h150] = 8'h04; mem[10'h151] = 8'h05; mem[10'h152] = 8'h06;
+    mem[10'h153] = 8'h07; mem[10'h154] = 8'h08; mem[10'h155] = 8'h67;
+
+    // The conversion instructions are the ones whose two operands are
+    // different widths, which is the only way to see that each operand is
+    // given its OWN: MOVS.BW (0C) reads a byte and writes a word, MOVT.WB (29)
+    // reads a word and writes a byte.  Both with an immediate source.
+    mem[10'h156] = 8'h0C; mem[10'h157] = 8'h80; mem[10'h158] = 8'hF4;
+    mem[10'h159] = 8'hAA; mem[10'h15A] = 8'h67;
+    mem[10'h15B] = 8'h29; mem[10'h15C] = 8'h80; mem[10'h15D] = 8'hF4;
+    mem[10'h15E] = 8'h11; mem[10'h15F] = 8'h22; mem[10'h160] = 8'h33;
+    mem[10'h161] = 8'h44; mem[10'h162] = 8'h67;
+
     repeat (4) @(negedge clk);
     rst = 1'b0;
     @(negedge clk);
@@ -287,7 +326,8 @@ initial begin
     // ---- 9. a reserved opcode -----------------------------------------------
     decode;
     chk(i_fmt === FMT_UNKNOWN, "0x06 is not an instruction");
-    chk(i_reserved === 1'b1,   "and the decoder says so");
+    chk(i_res_op === 1'b1 && i_res_mode === 1'b0,
+                               "and the decoder says which of the two it is");
     chk(i_len === 5'd1,        "consuming only the opcode byte");
 
     // ---- 10. one mod byte, two meanings ------------------------------------
@@ -297,6 +337,36 @@ initial begin
     chk(o1_mode === AM_RN_IND, "the same byte is [Rn] to the first operand");
     chk(o2_mode === AM_RN,     "and Rn to the second");
     chk(i_len === 5'd4,        "four bytes");
+
+    // ---- 11..17. the operand data type decides an immediate's width --------
+    decode;
+    chk(i_len === 5'd5 && o1_mode === AM_IMMED && o1_imm[7:0] === 8'h7F,
+        "MOV.B takes one byte of immediate");
+    decode;
+    chk(i_len === 5'd6 && o1_imm[15:0] === 16'h1234,
+        "MOV.H takes two");
+    decode;
+    chk(i_len === 5'd8 && o1_imm[31:0] === 32'h12345678,
+        "MOV.W takes four");
+    decode;
+    chk(i_len === 5'd5 && o1_imm[7:0] === 8'h55,
+        "ADD with siz = byte takes one");
+    decode;
+    chk(i_len === 5'd8 && o1_imm[31:0] === 32'h44332211,
+        "ADD with siz = word takes four");
+    decode;
+    chk(i_len === 5'd8 && o1_imm[31:0] === 32'h04030201,
+        "MOVF with s = short real takes four");
+    decode;
+    chk(i_len === 5'd12 && o1_imm === 64'h0807060504030201,
+        "MOVF with s = long real takes eight");
+
+    decode;
+    chk(i_len === 5'd5 && o1_imm[7:0] === 8'hAA,
+        "MOVS.BW's source is a byte even though its destination is a word");
+    decode;
+    chk(i_len === 5'd8 && o1_imm[31:0] === 32'h44332211,
+        "MOVT.WB's source is a word even though its destination is a byte");
 
     if (errors == 0) $display("V60 IDU PASS");
     else             $display("V60 IDU FAIL (%0d errors)", errors);

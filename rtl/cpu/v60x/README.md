@@ -122,7 +122,9 @@ plan and runs `v60_am_decode` once per mod field.
 | the generated package matching its table | — | `run_v60x.sh`, before any bench |
 | "I, II" resolved by bit 15; escape opcodes by their subop | p. 3.293, p. 3.297 | `tb_v60_fmt_decode` |
 | Format IV's width, both opcodes | p. 3.295 + Reference §7 | `tb_v60_fmt_decode` |
-| a ten-instruction program decoded off the real bus | pp. 3.293-3.299 | `tb_v60_idu` |
+| a nineteen-instruction program decoded off the real bus | pp. 3.293-3.299 | `tb_v60_idu` |
+| an immediate's width, from the suffix, the `siz` field and the `s` bit | p. 3.295, p. 3.294 | `tb_v60_idu` |
+| a conversion instruction's two operands having different widths | p. 3.261 | `tb_v60_idu` |
 | each instruction's PC is the last one's PC plus its length | — | `tb_v60_idu`, across all ten |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
@@ -170,13 +172,11 @@ Two smaller things are open and neither blocks that:
 - **Three subops in the bit-string group** could not be read off the scan
   (`ORNBS`, `XORNBS`, `SCH1BS`). Their format is not in doubt; see
   `docs/v60/INSTRUCTION-DECODE.md`.
-- **`v60_idu` passes a fixed operand width** (`opbytes = 4`) to
-  `v60_am_decode`, because the data type is in the opcode's `siz` / `s` / `c`
-  field and belongs to execution. It is the first increment of the plan above,
-  and until then an immediate's width is wrong for every non-word operand.
-- **`v60_idu`'s `reserved` is one flag** for two exceptions with different
-  vectors — reserved opcode and reserved addressing mode. It has to be split
-  before anything chooses a vector from it.
+**E1 of that plan is done**: the operand data type comes from the same
+generated table as the format, per operand and — for the escape opcodes — per
+subop, and `v60_idu`'s `reserved` is now the two flags the two exception codes
+need. What is left open is E2 onward: the PSW, the register file, the ALU, the
+exception unit and the sequencer.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus

@@ -13,7 +13,7 @@ Usage:  python3 tools/v60x/gen_op_pkg.py [outfile]
 
 import sys
 
-from insn_table import TABLE, expand, check_table
+from insn_table import TABLE, DATA_TYPE, expand, check_table
 
 HEADER = '''//============================================================================
 //  v60_op_pkg -- which instruction format an opcode is.
@@ -64,17 +64,60 @@ SV_FMT = {
 }
 
 
+DATA_NONE    = 0      # the operand is not a datum of a width
+DATA_UNKNOWN = 15     # this table does not carry it; see insn_table.py
+
+
+def data_width(spec, byte):
+    """One operand's unit size for one concrete opcode byte.
+
+    `siz`, `s` and `c` are fields of the byte, and insn_table's check_table()
+    has already proved each sits where this reads it, so the width resolves
+    here rather than in RTL: the generated table is per byte value.
+    """
+    if spec is None:
+        return DATA_NONE
+    if spec == '?':
+        return DATA_UNKNOWN
+    if spec == 'siz':
+        return {0: 1, 1: 2, 2: 4}.get((byte >> 1) & 3, DATA_UNKNOWN)
+    if spec == 's':
+        return 8 if (byte >> 1) & 1 else 4     # long real / short real
+    if spec == 'c':
+        return 2 if (byte >> 1) & 1 else 1     # halfword / byte character
+    return spec
+
+
 def build():
     """(first[256], escape{(op, subop): fmt}, mnemonic_of{})"""
     first = {}
     escape = {}
     who = {}
+    width = {}        # opcode byte      -> (w1, w2)
+    width_esc = {}    # (opcode, subop)  -> (w1, w2)
 
+    def put(store, key, value, mnemonic, other):
+        # Two instructions on one key must agree about the operand widths.
+        # They do not always: the floating point opcodes 5C/5E carry MOVF and
+        # SCLF alike, and SCLF's first operand is an integer scale factor
+        # where MOVF's is a real.  That is what the subop is for.
+        if key in store and store[key] != value:
+            raise SystemExit(
+                '%s and %s share %s but disagree about operand widths '
+                '(%s vs %s) -- the width has to be keyed by subop'
+                % (mnemonic, other.get(key, '?'), key, store[key], value))
+        store[key] = value
+        other[key] = mnemonic
+
+    who_esc = {}
     for mnemonic, op, subop, fmt, page in TABLE:
+        w1, w2 = DATA_TYPE[mnemonic]
         for b in expand(op):
+            widths = (data_width(w1, b), data_width(w2, b))
             if subop is None:
                 first[b] = SV_FMT[fmt]
                 who[b] = mnemonic
+                put(width, b, widths, mnemonic, who)
             else:
                 first[b] = 'FMT_ESCAPE'
                 who[b] = 'escape'
@@ -82,7 +125,8 @@ def build():
                     assert s < 32, ('%s: subop %02X does not fit the five bits '
                                     'the base word gives it' % (mnemonic, s))
                     escape[(b, s)] = (SV_FMT[fmt], mnemonic)
-    return first, escape, who
+                    put(width_esc, (b, s), widths, mnemonic, who_esc)
+    return first, escape, who, width, width_esc, who_esc
 
 
 def emit(out):
@@ -90,7 +134,7 @@ def emit(out):
     if errors or collisions:
         raise SystemExit('table does not validate; run insn_table.py')
 
-    first, escape, who = build()
+    first, escape, who, width, width_esc, who_esc = build()
     w = out.write
     w(HEADER)
 
@@ -126,6 +170,71 @@ function automatic insn_fmt_e op_format_escape(input logic [7:0] op,
     w('''            default: r = FMT_UNKNOWN;
         endcase
         op_format_escape = r;
+    end
+endfunction
+
+// The operand's data type, as its UNIT SIZE in bytes -- the constant p.3.261
+// scales an index by and steps [Rn+] by, and the width an immed.N takes
+// (p.3.294 gives one mode code three rows, so the mode field cannot say).
+//
+// It is NOT a variable-length operand's length: that is the extension field's
+// (p.3.293), and it reaches the sequencer as v60_idu's opN_ext.
+//
+//   0   this operand is not a datum of a width -- a displacement, a register
+//       number, or an instruction with no operands
+//   15  the instruction has a data operand whose width the table does not
+//       carry; see tools/v60x/insn_table.py.  Callers fall back and say so.
+function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
+                                                   input logic       second);
+    logic [3:0] r;
+    begin
+        case ({op, second})
+''')
+    for b in range(256):
+        if b in width:
+            for which in (0, 1):
+                w('            9\'h%03X: r = 4\'d%-2d;  // %s%s\n'
+                  % ((b << 1) | which, width[b][which], who[b],
+                     '' if which == 0 else " (operand 2)"))
+    w('''            default: r = 4'd15;    // not an instruction: nothing to say
+        endcase
+        op_data_bytes_first = r;
+    end
+endfunction
+
+// The escape opcodes again: 5C and 5E carry MOVF and SCLF alike, and their
+// first operands are not the same kind of thing, so the width is keyed by the
+// subop exactly as the format is.
+function automatic logic [3:0] op_data_bytes_escape(input logic [7:0] op,
+                                                    input logic [4:0] subop,
+                                                    input logic       second);
+    logic [3:0] r;
+    begin
+        case ({op, 2'b00, subop, second})
+''')
+    for (b, sub) in sorted(width_esc):
+        for which in (0, 1):
+            w('            16\'h%04X: r = 4\'d%-2d;  // %s%s\n'
+              % ((b << 8) | (sub << 1) | which, width_esc[(b, sub)][which],
+                 who_esc[(b, sub)], '' if which == 0 else " (operand 2)"))
+    w('''            default: r = 4'd15;
+        endcase
+        op_data_bytes_escape = r;
+    end
+endfunction
+
+// The whole answer.  `subop` is the base word's, and is ignored unless the
+// opcode is one of the escapes.
+function automatic logic [3:0] op_data_bytes(input logic [7:0] op,
+                                             input logic [4:0] subop,
+                                             input logic       second);
+    logic [3:0] r;
+    begin
+        if (op_format_first(op) == FMT_ESCAPE)
+            r = op_data_bytes_escape(op, subop, second);
+        else
+            r = op_data_bytes_first(op, second);
+        op_data_bytes = r;
     end
 endfunction
 
@@ -171,9 +280,9 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else 'rtl/cpu/v60x/v60_op_pkg.sv'
     with open(path, 'w') as out:
         emit(out)
-    first, escape, _ = build()
-    print('%s: %d opcode bytes, %d escape encodings'
-          % (path, len(first), len(escape)))
+    first, escape, _, width, width_esc, _w = build()
+    print('%s: %d opcode bytes, %d escape encodings, %d widths (%d by subop)'
+          % (path, len(first), len(escape), len(width), len(width_esc)))
 
 
 if __name__ == '__main__':

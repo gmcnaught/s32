@@ -251,6 +251,127 @@ DISAGREEMENTS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# The operand data type, per operand.
+# ---------------------------------------------------------------------------
+# What an operand's WIDTH is, which fixes an immediate's length (p.3.294 -- one
+# mode code, three rows), the scaled index constant and the [Rn+] / [-Rn] step
+# (p.3.257, p.3.261), and how many bus cycles the access takes.
+#
+# Four kinds of answer, and only the first three are on a page:
+#
+#   'siz'  the opcode carries the integer data type field: 00 byte, 01
+#          halfword, 10 word, 11 reserved (p.3.295).
+#   's'    the opcode carries the floating point selector: 0 short real
+#          (4 bytes), 1 long real (8) (p.3.295).
+#   'c'    the opcode carries the character selector: 0 byte, 1 halfword
+#          (p.3.295).
+#   an int the width is fixed, and the mnemonic says it: MOV.B is a byte,
+#          MOVS.BH is a byte source and a halfword destination -- the suffix IS
+#          the data type, which is why these need no field in the opcode.
+#   None   the operand is not a datum of a width: a branch displacement, a
+#          register number, or an instruction with no operands at all.
+#   '?'    NOT DETERMINED HERE.  The instruction has a data operand whose width
+#          this table does not carry -- it is in the Programmer's Reference's
+#          per-instruction syntax and has not been transcribed.  v60_idu falls
+#          back to four bytes for these and says so; see
+#          docs/v60/INSTRUCTION-DECODE.md.
+#
+# This is the data type's UNIT SIZE, which is not the same thing as a variable
+# length operand's LENGTH.  p.3.261 lists the unit size for all eleven data
+# types -- it is the constant [Rn+] steps by and a scaled index is multiplied
+# by -- and every value here is one of the four it uses: byte character 1,
+# packed decimal 1, halfword character 2, unpacked decimal 2, bit 4, bit field
+# 4, bit string 4, word 4, doubleword 8.  The LENGTH of a character string or
+# bit field is what the extension field carries (p.3.293), it reaches the
+# sequencer as v60_idu's opN_ext, and it is not this.
+#
+# Keyed by mnemonic, as (operand 1, operand 2).  An address-typed operand is 4
+# because a V60 address is 32 bits (Programmer's Reference S3), not because
+# anything was assumed about it.
+DATA_TYPE = {
+    # Data transfer: the suffix is the data type.
+    'MOV.B': (1, 1), 'MOV.H': (2, 2), 'MOV.W': (4, 4), 'MOV.D': (8, 8),
+    'MOVS.BH': (1, 2), 'MOVS.BW': (1, 4), 'MOVS.HW': (2, 4),
+    'MOVZ.BH': (1, 2), 'MOVZ.BW': (1, 4), 'MOVZ.HW': (2, 4),
+    'MOVT.HB': (2, 1), 'MOVT.WB': (4, 1), 'MOVT.WH': (4, 2),
+    'XCH': ('siz', 'siz'),
+    'MOVEA': (4, 4),          # an effective address, and a place to put it
+    'RVBYT': (4, 4), 'RVBIT': (4, 4),
+
+    # Integer arithmetic and logic: the siz field.
+    'ADD': ('siz', 'siz'), 'ADDC': ('siz', 'siz'),
+    'SUB': ('siz', 'siz'), 'SUBC': ('siz', 'siz'),
+    'MUL': ('siz', 'siz'), 'MULU': ('siz', 'siz'),
+    'MULX': (4, 8), 'MULUX': (4, 8),      # word by word into a doubleword
+    'DIV': ('siz', 'siz'), 'DIVU': ('siz', 'siz'),
+    'DIVX': (4, 8), 'DIVUX': (4, 8),
+    'REM': ('siz', 'siz'), 'REMU': ('siz', 'siz'),
+    'INC': ('siz', None), 'DEC': ('siz', None),
+    'NEG': ('siz', 'siz'), 'CMP': ('siz', 'siz'), 'TEST': ('siz', None),
+    'AND': ('siz', 'siz'), 'OR': ('siz', 'siz'),
+    'XOR': ('siz', 'siz'), 'NOT': ('siz', 'siz'),
+
+    # Shift and rotate: the count is a byte, the datum takes the siz field.
+    'SHA': ('siz', 1), 'SHL': ('siz', 1), 'ROT': ('siz', 1), 'ROTC': ('siz', 1),
+
+    # Floating point: the s bit.
+    'MOVF': ('s', 's'), 'ADDF': ('s', 's'), 'SUBF': ('s', 's'),
+    'MULF': ('s', 's'), 'DIVF': ('s', 's'), 'CMPF': ('s', 's'),
+    'NEGF': ('s', 's'), 'ABSF': ('s', 's'), 'SCLF': (4, 's'),
+    'CVTF': ('?', '?'),       # converts between the two reals; which way is
+                              # in the Reference, not in the opcode
+    'CVT.WS': (4, 4), 'CVT.WL': (4, 8), 'CVT.SW': (4, 4), 'CVT.LW': (8, 4),
+    'TRAPFL': (None, None),
+
+    # Decimal and the variable-length formats: the extension field.
+    # Decimal: packed decimal is 1 and unpacked is 2 (p.3.261), and the CVTD
+    # pair converts between them in the direction its mnemonic gives.
+    'ADDDC': (1, 1), 'SUBDC': (1, 1), 'SUBRDC': (1, 1),
+    'CVTD.PZ': (1, 2), 'CVTD.ZP': (2, 1),
+    # Bit field and bit string are both 4 (p.3.261); their LENGTH is the
+    # extension field's, not this.
+    'EXTBF': (4, 4), 'INSBF': (4, 4), 'CMPBF': (4, 4),
+    'MOVBS': (4, 4), 'NOTBS': (4, 4),
+    'ANDBS': (4, 4), 'ANDNBS': (4, 4),
+    'ORBS': (4, 4), 'ORNBS': (4, 4),
+    'XORBS': (4, 4), 'XORNBS': (4, 4),
+    'SCH0BS': (4, 4), 'SCH1BS': (4, 4),
+    'MOVC': ('c', 'c'), 'MOVCF': ('c', 'c'), 'MOVCS': ('c', 'c'),
+    'CMPC': ('c', 'c'), 'CMPCF': ('c', 'c'), 'CMPCS': ('c', 'c'),
+    'SCHC': ('c', 'c'), 'SKPC': ('c', 'c'),
+
+    # Bit manipulation: a bit is named by a byte base and an offset, both words
+    # on this machine (p.3.261 gives the bit data type a scaling constant of 4).
+    'TEST1': (4, 4), 'SET1': (4, 4), 'CLR1': (4, 4), 'NOT1': (4, 4),
+
+    # Stack: the V60 stack moves words.
+    'PUSH': (4, None), 'POP': (4, None),
+    'PUSHM': (4, None), 'POPM': (4, None),
+    'PREPARE': (4, None), 'DISPOSE': (None, None),
+
+    # Control transfer: displacements and addresses, not data.
+    'Bcc': (None, None), 'DBcc': (None, None), 'TB': (None, None),
+    'JMP': (4, None), 'BSR': (None, None), 'JSR': (4, None),
+    'RSR': (None, None), 'CALL': (4, None), 'RET': (4, None),
+    'BRK': (None, None), 'BRKV': (None, None),
+    'TRAP': (1, None), 'RETIU': (4, None), 'RETIS': (4, None),
+
+    # Miscellaneous and privileged.
+    'NOP': (None, None), 'GETPSW': (4, None),
+    'UPDPSW.H': (2, 2), 'UPDPSW.W': (4, 4),
+    'CHLVL': (1, 4), 'CHKAR': (4, 1), 'CHKAW': (4, 1), 'CHKAE': (4, 1),
+    'TASI': (1, None), 'CAXI': (4, 4), 'SETF': (1, 1),
+    'LDPR': (4, 4), 'STPR': (4, 4),
+    'CLRTLB': (4, None), 'CLRTLBA': (None, None),
+    'GETATE': (4, 4), 'UPDATE': (4, 4), 'GETPTE': (4, 4), 'UPDPTE': (4, 4),
+    'GETRA': (4, 4),
+    'IN': ('siz', 'siz'), 'OUT': ('siz', 'siz'),
+    'LDTASK': (4, None), 'STTASK': (4, None),
+    'HALT': (None, None),
+}
+
+
 def _split(pattern):
     """['0','1','{siz}',...] -- one entry per printed position."""
     out, i = [], 0
@@ -281,9 +402,44 @@ def expand(pattern):
     return vals
 
 
+# The four unit sizes p.3.261 uses, plus the three fields that carry one, plus
+# the two ways of having none.  Three is not among them, which is the cell that
+# table gets wrong for Word -- see docs/v60/DATA-ACCESS-SPLIT.md.
+VALID_DTYPE = (1, 2, 4, 8, 'siz', 's', 'c', '?', None)
+
+# Where each placeholder sits in the byte, checked below rather than assumed.
+DTYPE_FIELD_BIT = {'siz': 1, 's': 1, 'c': 1}
+
+
 def check_table():
     """Returns (errors, collisions).  Both empty means the table is consistent."""
     errors, seen, collisions = [], {}, []
+
+    # The data type has to agree with the encoding: a row typed 'siz' must
+    # carry a siz field, an 'ext' row must be a format that HAS an extension
+    # field, and each placeholder must sit where the generator expects it.
+    for mnemonic, op, subop, fmt, page in TABLE:
+        w1, w2 = DATA_TYPE[mnemonic]
+        for w in (w1, w2):
+            if w not in VALID_DTYPE:
+                errors.append('%s: %r is not a data type' % (mnemonic, w))
+                continue
+            if w in DTYPE_FIELD_BIT:
+                fields = _split(op)
+                if w not in fields:
+                    errors.append('%s: typed %r but its opcode has no %s field'
+                                  % (mnemonic, w, w))
+                else:
+                    # position, counting from bit 7 downwards
+                    bit = 8
+                    for f in fields:
+                        bit -= 1 if f in '01' else FIELD_BITS[f]
+                        if f == w:
+                            break
+                    if bit != DTYPE_FIELD_BIT[w]:
+                        errors.append('%s: its %s field is at bit %d, not %d'
+                                      % (mnemonic, w, bit, DTYPE_FIELD_BIT[w]))
+
 
     for mnemonic, op, subop, fmt, page in TABLE:
         if pattern_bits(op) != 8:

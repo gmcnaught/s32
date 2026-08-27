@@ -26,6 +26,7 @@
 
 module v60_idu
     import v60_fmt_pkg::*;
+    import v60_op_pkg::*;
     import v60_am_pkg::*;
 (
     input               clk,
@@ -52,7 +53,11 @@ module v60_idu
     output logic [31:0] br_disp,        // Format IV / VI displacement
     output logic [31:0] insn_pc,        // the PC the opcode byte came from
     output logic  [4:0] insn_len,       // bytes, base and operands together
-    output logic        reserved,       // reserved opcode, or reserved mode
+    // Two exceptions, not one: Table 8-1 gives the reserved OPCODE code 1000
+    // and the reserved ADDRESSING MODE code 1200, and the system base table
+    // gives them different vectors, so a sequencer has to tell them apart.
+    output logic        reserved_op,
+    output logic        reserved_mode,
 
     // ---- operand 1 ---------------------------------------------------------
     output logic        op1_valid,
@@ -65,6 +70,7 @@ module v60_idu
     output logic [63:0] op1_imm,
     output logic        op1_ext_valid,
     output logic  [7:0] op1_ext,
+    output logic  [3:0] op1_bytes,      // the operand's unit size
 
     // ---- operand 2 ---------------------------------------------------------
     output logic        op2_valid,
@@ -76,7 +82,8 @@ module v60_idu
     output logic [31:0] op2_disp_outer,
     output logic [63:0] op2_imm,
     output logic        op2_ext_valid,
-    output logic  [7:0] op2_ext
+    output logic  [7:0] op2_ext,
+    output logic  [3:0] op2_bytes
 );
 
 typedef enum logic [2:0] {
@@ -132,11 +139,19 @@ v60_am_decode amd (
     .reserved(a_reserved)
 );
 
-// The operand data length, which an immediate's width comes from.  The
-// instruction's data type lives in the opcode's `siz` / `s` / `c` field and
-// belongs to execution, not to decode; four bytes is what this hands the mod
-// decoder until there is something to ask.  See docs/v60/INSTRUCTION-DECODE.md.
-assign a_opbytes = 4'd4;
+// The operand's data type, from the same generated table as the format: it is
+// what an immed.N's width is (p.3.294 gives one mode code three rows), what a
+// scaled index is multiplied by and what [Rn+] steps by (p.3.257, p.3.261).
+//
+// Two of the table's answers are not a width -- 0 for an operand that is not a
+// datum, 15 for an instruction whose width the table does not carry -- and
+// both fall back to four bytes here.  The fallback is visible: `bytes_known`
+// says whether the width used was the table's, and the simulation check below
+// names the opcode when it is not.
+wire [3:0] tbl_bytes   = op_data_bytes(op, subop, in_op2);
+wire       bytes_known = (tbl_bytes == 4'd1) || (tbl_bytes == 4'd2) ||
+                         (tbl_bytes == 4'd4) || (tbl_bytes == 4'd8);
+assign a_opbytes = bytes_known ? tbl_bytes : 4'd4;
 
 // ---- stream ----------------------------------------------------------------
 // Both sub-decoders acknowledge one cycle AFTER their last byte, so the byte
@@ -178,7 +193,10 @@ always_ff @(posedge clk) begin
         br_disp        <= 32'd0;
         insn_pc        <= 32'd0;
         insn_len       <= 5'd0;
-        reserved       <= 1'b0;
+        reserved_op    <= 1'b0;
+        reserved_mode  <= 1'b0;
+        op1_bytes      <= 4'd0;
+        op2_bytes      <= 4'd0;
         op1_valid      <= 1'b0;
         op1_ext_valid  <= 1'b0;
         op1_ext        <= 8'd0;
@@ -193,7 +211,8 @@ always_ff @(posedge clk) begin
         S_IDLE: if (start) begin
             state         <= S_BASE;
             insn_len      <= 5'd0;
-            reserved      <= 1'b0;
+            reserved_op   <= 1'b0;
+            reserved_mode <= 1'b0;
             op1_valid     <= 1'b0;
             op2_valid     <= 1'b0;
             op1_ext_valid <= 1'b0;
@@ -223,9 +242,9 @@ always_ff @(posedge clk) begin
                 if (f_fmt == FMT_UNKNOWN) begin
                     // Nothing can be said about what follows a reserved
                     // opcode, so this stops and says so.
-                    reserved <= 1'b1;
-                    state    <= S_IDLE;
-                    done     <= 1'b1;
+                    reserved_op <= 1'b1;
+                    state       <= S_IDLE;
+                    done        <= 1'b1;
                 end else if (f_need_mod) begin
                     state <= S_MOD1;
                 end else begin
@@ -250,6 +269,7 @@ always_ff @(posedge clk) begin
                     op1_disp       <= a_disp;
                     op1_disp_outer <= a_disp_outer;
                     op1_imm        <= a_imm;
+                    op1_bytes      <= a_opbytes;
                 end else begin
                     op2_valid      <= 1'b1;
                     op2_mode       <= a_mode;
@@ -259,8 +279,9 @@ always_ff @(posedge clk) begin
                     op2_disp       <= a_disp;
                     op2_disp_outer <= a_disp_outer;
                     op2_imm        <= a_imm;
+                    op2_bytes      <= a_opbytes;
                 end
-                if (a_reserved) reserved <= 1'b1;
+                if (a_reserved) reserved_mode <= 1'b1;
 
                 if (a_reserved) begin
                     // A reserved addressing mode has no length either.
@@ -319,6 +340,9 @@ end
 
 // synthesis translate_off
 always_ff @(posedge clk) begin
+    if (!rst && (state == S_MOD1 || state == S_MOD2) && a_start && !bytes_known)
+        $display("WARN v60_idu: opcode %02X operand %0d has no width in the instruction table -- four bytes assumed (t=%0t)",
+                 op, in_op2 + 1, $time);
     // "Instructions formats have a 1 to 9 byte mod (modifier) field" (p.3.294)
     // and the longest base is four bytes, so no instruction this decodes can
     // be longer than two mod fields, two extension bytes and that base.

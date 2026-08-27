@@ -88,10 +88,21 @@ Boundaries that do not chain mean a byte was taken by the wrong stage.
 
 ## Boundaries
 
-- **The operand data length is not decoded.** An immediate's width comes from
-  the instruction's data type, which lives in the opcode's `siz` / `s` / `c`
-  field and belongs to execution; `v60_idu` hands `v60_am_decode` four bytes
-  until there is something to ask.
+- **The operand data length is decoded** (E1 of the execution plan). The table
+  carries a data type per operand, `v60_op_pkg.op_data_bytes()` resolves it per
+  opcode byte — and per *subop* for the escape opcodes, because `5C`/`5E` carry
+  both `MOVF`, whose first operand is a real, and `SCLF`, whose first operand
+  is an integer scale factor. It is the data type's **unit size** from
+  p. 3.261, not a variable-length operand's *length*, which is the extension
+  field's and reaches the sequencer separately as `opN_ext`.
+
+  Two of the table's answers are not a width — an operand that is not a datum,
+  and an instruction whose width the table does not carry — and `v60_idu` falls
+  back to four bytes for both. The fallback is visible rather than silent: it
+  names the opcode in simulation.
+- **`reserved` is two flags**, `reserved_op` and `reserved_mode`, because
+  Table 8-1 gives a reserved opcode and a reserved addressing mode different
+  codes and the system base table gives them different vectors.
 - **Which operand is source and which is destination** is semantics, not
   encoding. Format I carries a `d` bit for exactly that, and it is reported
   rather than acted on.

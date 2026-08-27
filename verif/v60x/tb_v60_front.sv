@@ -75,6 +75,7 @@ am_mode_e    o1_mode, o2_mode;
 wire   [4:0] o1_rn, o1_rx, o2_rn, o2_rx;
 wire  [31:0] o1_disp, o1_douter, o2_disp, o2_douter;
 wire  [63:0] o1_imm, o2_imm;
+wire   [3:0] o1_bytes, o2_bytes;
 
 v60_idu idu (
     .clk(clk), .rst(rst),
@@ -82,13 +83,14 @@ v60_idu idu (
     .byte_take(byte_take),
     .start(i_start), .busy(), .done(i_done),
     .fmt(i_fmt), .op(), .m(), .m2(), .d(), .reg_field(), .subop(),
-    .br_disp(), .insn_pc(i_pc), .insn_len(i_len), .reserved(),
+    .br_disp(), .insn_pc(i_pc), .insn_len(i_len),
+    .reserved_op(), .reserved_mode(),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
-    .op1_imm(o1_imm), .op1_ext_valid(), .op1_ext(),
+    .op1_imm(o1_imm), .op1_ext_valid(), .op1_ext(), .op1_bytes(o1_bytes),
     .op2_valid(o2_valid), .op2_mode(o2_mode), .op2_rn(o2_rn), .op2_rx(o2_rx),
     .op2_index(o2_index), .op2_disp(o2_disp), .op2_disp_outer(o2_douter),
-    .op2_imm(o2_imm), .op2_ext_valid(), .op2_ext()
+    .op2_imm(o2_imm), .op2_ext_valid(), .op2_ext(), .op2_bytes(o2_bytes)
 );
 
 // ---- the operand, resolved --------------------------------------------------
