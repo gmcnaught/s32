@@ -176,7 +176,8 @@ register file, the address unit and the ALU, and retires it.
 | a reserved opcode and a reserved addressing mode raising *different* vectors | Fig 8-2 | `tb_v60_seq` |
 | an immediate used as a destination raising the illegal-mode exception | PgmRef §8 | `tb_v60_seq` |
 | each frame's exception code, from the code table's Instruction Exceptions | PgmRef §8 | `tb_v60_seq` |
-| the Current PC on top of the frame, and the count of 4 meaning one word | Table 8-1 | `tb_v60_seq`, `tb_v60_exc` |
+| the Current PC on top of the frame, under a code word that carries the count | Table 8-1, Fig 8-3 | `tb_v60_seq`, `tb_v60_exc` |
+| an interrupt's frame being the PSW and the PC, with no code word | Fig 8-3 | `tb_v60_exc` |
 | the handler reached through the SBT and the queue flushed for it | Fig 8-2, p. 3.246 | `tb_v60_seq` |
 | one master at a time on the data unit, and completions reaching only it | — | `tb_v60_dmux` |
 

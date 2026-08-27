@@ -30,6 +30,27 @@
 //    Note 2: "Bus error and level stack invalid exceptions will disable
 //     maskable interrupts."
 //
+//  THE EXCEPTION CODE WORD.  Both books draw the exception frame with a "31
+//  ... 0" ruler over a row that reads "Exception Code   Parameter Count" --
+//  Figure 8-3 in the Reference and the same figure in the databook at p.3.269.
+//  That is ONE 32-bit word with the code in the high half and the count in the
+//  low half, not two words and not the code alone.  The count is "the number
+//  of bytes of exception information in addition to the PC and PSW", and it
+//  counts this word too: the Instruction Exceptions group prints 4 and has
+//  nothing else, and the Change Execution Level group prints 8 and has one
+//  Parameter word above it.
+//
+//  So an exception's frame is
+//
+//      [-SP] <- parameter words, if any, deepest first
+//      [-SP] <- { exception code, 4 x (parameters + 1) }
+//      [-SP] <- PSW
+//      [-SP] <- return PC
+//
+//  and an INTERRUPT's is the last two only: Figure 8-3 draws the interrupt
+//  stack format as PSW and PC and nothing else.  `nparams` here counts the
+//  words above the code word, not including it.
+//
 //  The frame's order is the one the Programmer's Reference prints for BRKV,
 //  which is the only place it is spelled out as an operation:
 //
@@ -80,6 +101,10 @@ module v60_exc
     input        [31:0] param0,
     input        [31:0] param1,
 
+    // The exception code, which shares its word with the parameter count --
+    // see the header.  Ignored for an interrupt, whose frame has no such word.
+    input        [15:0] code,
+
     input               is_interrupt,  // an interrupt, not an exception
     input               disable_ie,    // bus error / stack invalid (Note 2)
 
@@ -108,6 +133,7 @@ typedef enum logic [2:0] {
 state_e      state;
 logic  [1:0] pushes_left;   // parameter words still to push
 logic  [1:0] np_r;          // and how many there were
+logic [15:0] code_r;
 logic  [1:0] phase;         // 0: parameters, 1: the PSW, 2: the return PC
 logic [31:0] sp;
 logic [31:0] p0, p1;
@@ -116,20 +142,30 @@ logic  [7:0] vec_r;
 
 assign busy = (state != S_IDLE);
 
+// An interrupt's frame is the PSW and the PC: Figure 8-3 draws it with nothing
+// above them, so it has neither parameter words nor a code word, and asking
+// for parameters cannot mean anything.  Taken once, so the count and the phase
+// the pushes start in cannot disagree about it.
+wire [1:0] np_eff = is_interrupt ? 2'd0 : nparams;
+
 // The next word to push, in the order BRKV prints.
 // Which word goes down next.  The parameters go in order -- param0 first --
 // so the first push is the one where nothing has been pushed yet, `left ==
 // count`, and not "left == 2": with a single parameter that test picked
-// param1, which is the word an instruction exception does not have.
+// param1.  Phase 1 is the exception code word, which an interrupt does not
+// have; phases 2 and 3 are the PSW and the return PC.
 function automatic logic [31:0] push_word(input logic [1:0] ph,
                                           input logic [1:0] left,
                                           input logic [1:0] count,
                                           input logic [31:0] a,
                                           input logic [31:0] b,
+                                          input logic [15:0] code_v,
                                           input logic [31:0] psw_v,
                                           input logic [31:0] pc_v);
     if (ph == 2'd0)      push_word = (left == count) ? a : b;
-    else if (ph == 2'd1) push_word = psw_v;
+    // "4 x (parameters + 1)" -- the count includes this word.
+    else if (ph == 2'd1) push_word = {code_v, 12'd0, count + 2'd1, 2'd0};
+    else if (ph == 2'd2) push_word = psw_v;
     else                 push_word = pc_v;
 endfunction
 
@@ -184,6 +220,7 @@ always_ff @(posedge clk) begin
         bus_cycles  <= 4'd0;
         pushes_left <= 2'd0;
         np_r        <= 2'd0;
+        code_r      <= 16'd0;
         phase       <= 2'd0;
         p0          <= 32'd0;
         p1          <= 32'd0;
@@ -198,13 +235,18 @@ always_ff @(posedge clk) begin
             vec_r       <= vector;
             p0          <= param0;
             p1          <= param1;
-            pushes_left <= nparams;
-            np_r        <= nparams;
+            pushes_left <= np_eff;
+            np_r        <= np_eff;
             int_r       <= is_interrupt;
             dis_r       <= disable_ie;
             sp          <= sp_in;
             bus_cycles  <= 4'd0;
-            phase       <= (nparams == 2'd0) ? 2'd1 : 2'd0;
+            code_r      <= code;
+            // With no parameter words the code word is first -- and with none
+            // of either, which is an interrupt, the PSW is.
+            if (np_eff != 2'd0)     phase <= 2'd0;
+            else if (!is_interrupt) phase <= 2'd1;
+            else                    phase <= 2'd2;
 
             // The vector first: SBR + 4 x vector, a 32-bit read.
             dx_addr   <= sbr[23:0] + {14'd0, vector, 2'b00};
@@ -227,7 +269,7 @@ always_ff @(posedge clk) begin
             dx_nbytes <= 4'd4;
             dx_we     <= 1'b1;
             dx_wdata  <= {32'd0, push_word(phase, pushes_left, np_r, p0, p1,
-                                           psw_in, ret_pc)};
+                                           code_r, psw_in, ret_pc)};
             dx_req    <= 1'b1;
             sp        <= sp - 32'd4;
             state     <= S_PUSH;
@@ -239,10 +281,14 @@ always_ff @(posedge clk) begin
 
             if (phase == 2'd0) begin
                 pushes_left <= pushes_left - 2'd1;
+                // The code word next, unless this is an interrupt, whose frame
+                // is the PSW and the PC and nothing else.
+                // Only an exception has parameter words, so the code word is
+                // always what follows them.
                 if (pushes_left == 2'd1) phase <= 2'd1;
                 state <= S_ISSUE;
-            end else if (phase == 2'd1) begin
-                phase <= 2'd2;
+            end else if (phase != 2'd3) begin
+                phase <= phase + 2'd1;
                 state <= S_ISSUE;
             end else begin
                 state <= S_FIN;
@@ -264,6 +310,12 @@ always_ff @(posedge clk) begin
 end
 
 // synthesis translate_off
+always_ff @(posedge clk) begin
+    if (!rst && req && is_interrupt && (nparams != 2'd0))
+        $display("WARN v60_exc: an interrupt asked for %0d parameter words -- Figure 8-3's interrupt frame is the PSW and the PC (t=%0t)",
+                 nparams, $time);
+end
+
 always_ff @(posedge clk) begin
     if (!rst && req && (sbr[11:0] != 12'd0))
         $display("WARN v60_exc: SBR %h is not page aligned -- 'the twelve low order bits' must be zero (t=%0t)",

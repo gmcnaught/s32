@@ -50,24 +50,39 @@ Table 8-1 draws one frame per exception group. The Instruction Exceptions
 group — vectors 16 to 20 — is:
 
 ```
-   +8    Exception Code
-   +4    PSW                    parameter count 4
+   +8    Exception Code  |  Parameter Count = 4
+   +4    PSW
     0    PC (Current PC)
 ```
 
-Three things follow from that diagram and none of them is inferred:
+**The code and the count share one word.** Both books draw the exception frame
+under a `31 ... 0` ruler with a row that reads `Exception Code   Parameter
+Count` — Figure 8-3 in the Reference and the same figure in the databook at
+p. 3.269 — so that is one 32-bit word with the code in the high half and the
+count in the low half, not two words and not the code alone. Every exception
+code in the table is four hex digits, which is exactly the high half.
 
-- **One parameter word**, the exception code. "The parameter count indicates
-  the number of bytes of exception information in addition to the PC and PSW",
-  so a count of 4 is one 32-bit word.
+Three more things follow from that diagram and none of them is inferred:
+
+- **The count includes that word.** "The parameter count indicates the number
+  of bytes of exception information in addition to the PC and PSW", the
+  Instruction Exceptions group prints 4 and has nothing above the code word,
+  and the Change Execution Level group prints 8 and has one `Parameter` word
+  above it. So the count is `4 × (parameter words + 1)`.
 - **The Current PC**, not the Next PC: "an exception during the execution of an
   instruction stacks the PC of the instruction causing the exception (Current
   PC)", and the diagram says so again. The Change Execution Level frames, by
   contrast, print "PC (Next PC)".
 - **The order.** The frame grows downward with the PC on top, which is the
   order BRKV's operation prints as pseudo-code: `[-SP] ← CurrentPC ; [-SP] ←
-  Exception Code ; [-SP] ← PSW ; [-SP] ← NextPC`. `v60_exc` pushes parameters
-  first, then the PSW, then the return PC.
+  Exception Code ; [-SP] ← PSW ; [-SP] ← NextPC`. So the parameters go down
+  first, then the code word, then the PSW, then the return PC — the code word
+  is always the one under the PSW, whatever else is below it.
+- **An interrupt has neither.** Figure 8-3 draws the interrupt stack format
+  beside the exception one as the PSW and the PC and nothing else: no code
+  word, no parameters. `v60_exc` takes `nparams` as the words *above* the code
+  word, forces it to zero for an interrupt, and says so if a caller asks for
+  parameters on one.
 
 ## The recognition sequence, and a scan defect worth knowing about
 

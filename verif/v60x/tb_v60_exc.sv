@@ -36,6 +36,7 @@ reg    [7:0] e_vec = 8'd0;
 reg   [31:0] e_ret = 32'd0, e_psw = 32'd0, e_sp = 32'd0, e_sbr = 32'd0;
 reg    [1:0] e_np = 2'd0;
 reg   [31:0] e_p0 = 32'd0, e_p1 = 32'd0;
+reg   [15:0] e_code = 16'd0;
 
 wire  [31:0] e_sp_out, e_psw_out, e_handler;
 wire         e_busy, e_done;
@@ -50,7 +51,7 @@ v60_exc dut (
     .clk(clk), .rst(rst),
     .req(e_req), .vector(e_vec), .ret_pc(e_ret), .psw_in(e_psw),
     .sp_in(e_sp), .sbr(e_sbr),
-    .nparams(e_np), .param0(e_p0), .param1(e_p1),
+    .nparams(e_np), .code(e_code), .param0(e_p0), .param1(e_p1),
     .is_interrupt(e_int), .disable_ie(e_dis),
     .sp_out(e_sp_out), .psw_out(e_psw_out), .handler_pc(e_handler),
     .busy(e_busy), .done(e_done), .bus_cycles(e_cycles),
@@ -171,19 +172,22 @@ initial begin
     e_sbr = 32'h0000_1000;
     e_sp  = 32'h0000_0800;
     e_psw = 32'h0304_0000 | (32'h1 << PSW_IE);   // EL = 3, interrupts enabled
-    e_vec = 8'd16;
-    e_ret = 32'h0000_0110;                        // the Next PC
-    e_np  = 2'd2;
-    e_p0  = 32'h0000_0100;                        // the Current PC
-    e_p1  = 32'h0000_1000;                        // the exception code
+    e_vec  = 8'd16;
+    e_ret  = 32'h0000_0110;                       // the Next PC
+    e_np   = 2'd1;                                // one word ABOVE the code word
+    e_p0   = 32'h0000_0100;                       // the Current PC
+    e_p1   = 32'hDEAD_BEEF;                       // and nothing reaches for this
+    e_code = 16'h1000;                            // reserved opcode
     e_int = 1'b0; e_dis = 1'b0;
     take;
 
     chk(e_handler === 32'h0000_2000,
         "the handler comes from SBR + 4 x vector");
-    // The frame, in the order BRKV prints: parameters, PSW, return PC.
-    chk(word_at(13'h7FC) === 32'h0000_0100, "the first parameter is pushed first");
-    chk(word_at(13'h7F8) === 32'h0000_1000, "then the second");
+    // The frame, in the order BRKV prints it: "[-SP] <- CurrentPC ; [-SP] <-
+    // Exception Code ; [-SP] <- PSW ; [-SP] <- NextPC".
+    chk(word_at(13'h7FC) === 32'h0000_0100, "the parameter word is pushed first");
+    chk(word_at(13'h7F8) === 32'h1000_0008,
+        "then the exception code beside the parameter count, in one word");
     chk(word_at(13'h7F4) === e_psw,         "then the PSW as it was");
     chk(word_at(13'h7F0) === 32'h0000_0110, "and the return PC last, on top");
     chk(e_sp_out === 32'h0000_07F0,         "the stack pointer comes back moved");
@@ -203,15 +207,18 @@ initial begin
     // BRKV's vector, which two pages agree on: "Exception Vector 21" and the
     // Integer Arithmetic Exception at offset +84.
     // =======================================================================
-    e_vec = 8'd21;
-    e_sp  = 32'h0000_0700;
-    e_np  = 2'd0;
+    e_vec  = 8'd21;
+    e_sp   = 32'h0000_0700;
+    e_np   = 2'd0;
+    e_code = 16'h2001;               // integer overflow
     take;
     chk(e_handler === 32'h0000_3000, "vector 21 reads the entry at +84");
-    chk(word_at(13'h6FC) === e_psw,  "with no parameters, the PSW is pushed first");
-    chk(word_at(13'h6F8) === 32'h0000_0110, "and the return PC on top of it");
-    chk(e_sp_out === 32'h0000_06F8,  "two words of frame");
-    chk(e_cycles === 4'd6,           "two cycles for the vector and four for the frame");
+    chk(word_at(13'h6FC) === 32'h2001_0004,
+        "with nothing above it, the code word is pushed first");
+    chk(word_at(13'h6F8) === e_psw,  "then the PSW");
+    chk(word_at(13'h6F4) === 32'h0000_0110, "and the return PC on top of it");
+    chk(e_sp_out === 32'h0000_06F4,  "three words of frame");
+    chk(e_cycles === 4'd8,           "two cycles for the vector and six for the frame");
 
     // =======================================================================
     // ONE parameter word, which is what every Instruction Exception has: the
@@ -219,18 +226,22 @@ initial begin
     // (Current PC)" with a parameter count of 4 -- four bytes, one word.  It
     // is param0, not param1: the parameters go down in order.
     // =======================================================================
-    e_vec = 8'd16;
-    e_sp  = 32'h0000_0780;
-    e_np  = 2'd1;
-    e_p0  = 32'h0000_1000;            // the reserved-opcode exception code
-    e_p1  = 32'hDEAD_BEEF;            // and nothing should reach for this
+    e_vec  = 8'd16;
+    e_sp   = 32'h0000_0780;
+    e_np   = 2'd1;
+    e_p0   = 32'h0000_0100;           // the one parameter word
+    e_p1   = 32'hDEAD_BEEF;           // and nothing should reach for this
+    e_code = 16'h1000;                // the reserved-opcode exception code
+    e_int  = 1'b0;
     take;
-    chk(word_at(13'h77C) === 32'h0000_1000,
-        "a single parameter word is param0");
-    chk(word_at(13'h778) === e_psw,   "with the PSW under it");
-    chk(word_at(13'h774) === 32'h0000_0110, "and the return PC on top");
-    chk(e_sp_out === 32'h0000_0774,   "three words of frame");
-    chk(e_cycles === 4'd8,            "a vector read and three words pushed");
+    chk(word_at(13'h77C) === 32'h0000_0100,
+        "a single parameter word is param0, not param1");
+    chk(word_at(13'h778) === 32'h1000_0008,
+        "and the count beside the code counts it: two words, eight bytes");
+    chk(word_at(13'h774) === e_psw,   "with the PSW under them");
+    chk(word_at(13'h770) === 32'h0000_0110, "and the return PC on top");
+    chk(e_sp_out === 32'h0000_0770,   "four words of frame");
+    chk(e_cycles === 4'd10,           "a vector read and four words pushed");
 
     // =======================================================================
     // An interrupt: the enable is cleared and the interrupt stack is selected.
@@ -241,12 +252,35 @@ initial begin
     e_int = 1'b1;
     take;
     chk(e_handler === 32'h0000_4000, "a user vector reads its own entry");
+    // "Interrupt Stack Format: PSW, PC" -- Figure 8-3 draws the interrupt
+    // frame as those two words and nothing else, where the exception frame
+    // beside it has the code word and the parameters above them.
+    chk(word_at(13'h5FC) === e_psw,  "an interrupt pushes the PSW");
+    chk(word_at(13'h5F8) === 32'h0000_0110, "and the return PC, and no more");
+    chk(e_sp_out === 32'h0000_05F8,
+        "so its frame is two words, not three: no exception code word");
+    chk(e_cycles === 4'd6,           "and it costs two bus cycles less");
     chk(e_psw_out[PSW_IE] === 1'b0,
         "an interrupt disables further maskable interrupts");
     chk(e_psw_out[PSW_IS] === 1'b1,
         "and selects the interrupt stack, which is the reading this tree marks");
     chk(e_psw_out[PSW_EL_HI:PSW_EL_LO] === 2'b00,
         "at execution level 0, like everything else here");
+
+    // An interrupt asked for parameter words anyway.  There is no such frame
+    // to build -- Figure 8-3 gives the interrupt format two words -- so the
+    // request is ignored rather than half honoured, and the module says so.
+    e_vec = 8'd200;
+    e_sp  = 32'h0000_0580;
+    e_np  = 2'd2;
+    e_p0  = 32'hAAAA_AAAA;
+    e_p1  = 32'hBBBB_BBBB;
+    take;
+    chk(word_at(13'h57C) === e_psw,   "an interrupt's frame is the PSW");
+    chk(word_at(13'h578) === 32'h0000_0110, "and the return PC");
+    chk(e_sp_out === 32'h0000_0578,
+        "and asking for parameters does not add any");
+    e_np = 2'd0;
 
     // Note 2: a bus error or stack invalid exception disables interrupts too,
     // without being an interrupt.
@@ -278,7 +312,7 @@ initial begin
     chk(e_psw_out[PSW_EM]  === 1'b0, "in native mode, not emulation mode");
     chk(e_psw_out[PSW_ASA] === 1'b1,
         "with asynchronous system traps held off while it runs");
-    chk(word_at(13'h3FC) === e_psw,
+    chk(word_at(13'h3F8) === e_psw,
         "and the PSW it pushed is the one it found, not the one it built");
 
     if (errors == 0) $display("V60 EXC PASS");

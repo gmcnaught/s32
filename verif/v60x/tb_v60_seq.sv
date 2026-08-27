@@ -136,6 +136,7 @@ wire        exc_req, exc_is_int, exc_dis_ie, exc_done;
 wire  [7:0] exc_vector;
 wire [31:0] exc_ret_pc, exc_psw_in, exc_sp_in, exc_sbr;
 wire  [1:0] exc_nparams;
+wire [15:0] exc_code;
 wire [31:0] exc_param0, exc_param1;
 wire [31:0] exc_sp_out, exc_psw_out, exc_handler_pc;
 wire  [3:0] exc_cycles;
@@ -170,7 +171,8 @@ v60_exc exc (
     .clk(clk), .rst(rst),
     .req(exc_req), .vector(exc_vector), .ret_pc(exc_ret_pc),
     .psw_in(exc_psw_in), .sp_in(exc_sp_in), .sbr(exc_sbr),
-    .nparams(exc_nparams), .param0(exc_param0), .param1(exc_param1),
+    .nparams(exc_nparams), .code(exc_code),
+    .param0(exc_param0), .param1(exc_param1),
     .is_interrupt(exc_is_int), .disable_ie(exc_dis_ie),
     .sp_out(exc_sp_out), .psw_out(exc_psw_out), .handler_pc(exc_handler_pc),
     .busy(), .done(exc_done), .bus_cycles(exc_cycles),
@@ -239,7 +241,7 @@ v60_seq seq (
     .sbr(rf_sbr),
     .exc_req(exc_req), .exc_vector(exc_vector), .exc_ret_pc(exc_ret_pc),
     .exc_psw_in(exc_psw_in), .exc_sp_in(exc_sp_in), .exc_sbr(exc_sbr),
-    .exc_nparams(exc_nparams), .exc_param0(exc_param0),
+    .exc_nparams(exc_nparams), .exc_code(exc_code), .exc_param0(exc_param0),
     .exc_param1(exc_param1), .exc_is_interrupt(exc_is_int),
     .exc_disable_ie(exc_dis_ie),
     .exc_sp_out(exc_sp_out), .exc_psw_out(exc_psw_out),
@@ -841,8 +843,8 @@ initial begin
         "a reserved opcode raises an exception rather than stopping");
     chk(seq_pc === 32'h000007A0,
         "and the handler is the one at SBR + 4 x 16");
-    chk(mem_word(13'h5FC) === 32'h00001000,
-        "the frame's parameter word is the exception code the table gives");
+    chk(mem_word(13'h5FC) === 32'h10000004,
+        "the frame word is the exception code beside the parameter count");
     chk(mem_word(13'h5F8) === psw_before, "then the PSW as it was");
     chk(mem_word(13'h5F4) === 32'h00000410,
         "and the CURRENT PC on top: the instruction that caused it");
@@ -861,7 +863,7 @@ initial begin
     step;
     chk(seq_pc === 32'h000007C0,
         "an immediate destination is the illegal addressing mode exception");
-    chk(mem_word(13'h5FC) === 32'h00001300, "with its own exception code");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with its own exception code");
     chk(mem_word(13'h5F4) === 32'h00000420, "and the faulting PC");
     step;
     chk(mem[11'h700] === 8'hE3, "and that handler runs");
@@ -873,7 +875,7 @@ initial begin
     step;
     chk(seq_pc === 32'h000007B0,
         "a reserved mode is a different exception from a reserved opcode");
-    chk(mem_word(13'h5FC) === 32'h00001200, "and carries a different code");
+    chk(mem_word(13'h5FC) === 32'h12000004, "and carries a different code");
     step;
     chk(mem[11'h700] === 8'hE2, "and a different handler runs");
 

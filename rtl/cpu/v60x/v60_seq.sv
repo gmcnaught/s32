@@ -201,6 +201,7 @@ module v60_seq
     output logic [31:0] exc_sp_in,
     output logic [31:0] exc_sbr,
     output logic  [1:0] exc_nparams,
+    output logic [15:0] exc_code,
     output logic [31:0] exc_param0,
     output logic [31:0] exc_param1,
     output logic        exc_is_interrupt,
@@ -253,9 +254,9 @@ module v60_seq
 localparam logic [7:0] VEC_RESERVED_OP   = 8'd16;
 localparam logic [7:0] VEC_RESERVED_MODE = 8'd18;
 localparam logic [7:0] VEC_ILLEGAL_MODE  = 8'd19;
-localparam logic [31:0] CODE_RESERVED_OP   = 32'h0000_1000;
-localparam logic [31:0] CODE_RESERVED_MODE = 32'h0000_1200;
-localparam logic [31:0] CODE_ILLEGAL_MODE  = 32'h0000_1300;
+localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
+localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
+localparam logic [15:0] CODE_ILLEGAL_MODE  = 16'h1300;
 
 // A reserved opcode or addressing mode used to stop here.  It is an
 // exception now -- vectors 16 and 18, Figure 8-2 -- so what is left are the
@@ -291,7 +292,7 @@ logic        wb_rn_en;
 logic  [4:0] wb_rn_sel;
 logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
 logic  [7:0] exc_vec_r;   // the exception being raised, and its code
-logic [31:0] exc_code_r;
+logic [15:0] exc_code_r;
 
 // ---------------------------------------------------------------------------
 // Which operand is the source and which the destination.
@@ -366,6 +367,7 @@ always_ff @(posedge clk) begin
         exc_sp_in       <= 32'd0;
         exc_sbr         <= 32'd0;
         exc_nparams     <= 2'd0;
+        exc_code        <= 16'd0;
         exc_param0      <= 32'd0;
         exc_param1      <= 32'd0;
         exc_is_interrupt<= 1'b0;
@@ -374,7 +376,7 @@ always_ff @(posedge clk) begin
         rf_new_el       <= 2'd0;
         rf_new_is       <= 1'b0;
         exc_vec_r       <= 8'd0;
-        exc_code_r      <= 32'd0;
+        exc_code_r      <= 16'd0;
         cop           <= CTRL_NONE;
         target        <= 32'd0;
         taken         <= 1'b0;
@@ -821,9 +823,12 @@ always_ff @(posedge clk) begin
             exc_psw_in       <= psw;
             exc_sp_in        <= rf_ra;
             exc_sbr          <= sbr;
-            // Parameter count 4: one word, the exception code.
-            exc_nparams      <= 2'd1;
-            exc_param0       <= exc_code_r;
+            // Parameter count 4: one word, and that word is the exception
+            // code beside the count itself -- so there are no parameter words
+            // ABOVE it, which is what nparams counts.
+            exc_nparams      <= 2'd0;
+            exc_code         <= exc_code_r;
+            exc_param0       <= 32'd0;
             exc_param1       <= 32'd0;
             exc_is_interrupt <= 1'b0;
             exc_disable_ie   <= 1'b0;
