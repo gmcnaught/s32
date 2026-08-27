@@ -15,7 +15,7 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
      rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
      rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
-     rtl/cpu/v60x/v60_psw_pkg.sv"
+     rtl/cpu/v60x/v60_psw_pkg.sv rtl/cpu/v60x/v60_regfile.sv"
 WORK="${WORK:-/tmp/v60x}"
 mkdir -p "$WORK"
 pass=0; fail=0
@@ -66,6 +66,7 @@ run tb_v60_fmt_decode  "V60 FMT PASS"
 run tb_v60_idu         "V60 IDU PASS"
 run tb_v60_front       "V60 FRONT PASS"
 run tb_v60_psw         "V60 PSW PASS"
+run tb_v60_regfile     "V60 REGFILE PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"
