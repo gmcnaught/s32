@@ -1,0 +1,247 @@
+//============================================================================
+//  v60_ea -- the effective address, and the operand it names.
+//
+//  Clean-room.  Takes a description from v60_am_decode plus the register
+//  values the sequencer read for it, computes the address the mode names,
+//  makes whatever memory accesses the mode requires through v60_dxu, and hands
+//  back the operand.  It does not decode instructions and it does not own a
+//  register file: Rn, Rx and the PC arrive as values, and the one writeback an
+//  addressing mode can produce leaves as a value.
+//
+//  Sources:
+//
+//    p.3.257    "The scaled index addressing modes automatically scale the
+//               contents of an index register by the size of the operand
+//               (byte / halfword / word / doubleword) before performing the
+//               access."  The scaling table on p.3.261 agrees for every data
+//               type except one: it prints a scaled index constant of 3 for
+//               Word, whose increment/decrement is 4 and whose size is 4.
+//               Nothing is scaled by 3.  See docs/v60/DATA-ACCESS-SPLIT.md.
+//    p.3.261    Increment/decrement constants: byte 1, halfword 2, word 4,
+//               doubleword 8 -- the step for [Rn+] and [-Rn].
+//    p.3.294    The mode syntax, which is where the ORDER comes from:
+//               [disp.8[Rn]](Rx) indexes what the indirection produced, so the
+//               scaled index is added last, after the pointer read.
+//    PgmRef S8  "An illegal addressing mode exception occurs when a valid
+//               addressing mode is used improperly.  An example ... is an
+//               attempt to use an immediate addressing mode as the destination
+//               operand in an instruction."
+//
+//  Boundaries, deliberately outside this module:
+//
+//    * WHICH PC.  `pc_val` is whatever the sequencer presents.  What a PC
+//      relative displacement is relative to belongs to instruction fetch.
+//    * The address is 32 bits and the bus is 24 (A23-A0, p.3.235), so the top
+//      eight bits are dropped at the pins and `ea` reports all 32.
+//    * Addressing modes name memory.  I/O accesses come from the instruction
+//      (IN/OUT), not from a mode, so `io` is tied low into the data unit.
+//============================================================================
+`timescale 1ns/1ps
+
+module v60_ea
+    import v60_am_pkg::*;
+(
+    input               clk,
+    input               rst,
+
+    // ---- the operand, as v60_am_decode described it -----------------------
+    input               start,
+    input am_mode_e     mode,
+    input               has_index,
+    input        [31:0] disp,
+    input        [31:0] disp_outer,
+    input        [63:0] imm,
+
+    // ---- what the sequencer read for it -----------------------------------
+    input        [31:0] rn_val,
+    input        [31:0] rx_val,
+    input        [31:0] pc_val,
+
+    input         [3:0] opbytes,     // operand data length: 1, 2, 4 or 8
+    input               we,          // the operand is a destination
+    input        [63:0] wdata,
+
+    // ---- results -----------------------------------------------------------
+    output logic [31:0] ea,          // the effective address (32 bits)
+    output logic [63:0] rdata,       // the operand, however it was obtained
+    output logic        rn_wb,       // Rn takes rn_wb_val
+    output logic [31:0] rn_wb_val,
+    output logic        illegal,     // illegal addressing mode
+    output logic        busy,
+    output logic        done,
+    output logic  [3:0] bus_cycles,  // what this operand reference cost
+
+    // ---- data access unit --------------------------------------------------
+    output logic        dx_req,
+    output logic [23:0] dx_addr,
+    output logic  [3:0] dx_nbytes,
+    output logic        dx_we,
+    output logic [63:0] dx_wdata,
+    input        [63:0] dx_rdata,
+    input               dx_done,
+    input         [3:0] dx_cycles
+);
+
+typedef enum logic [1:0] {
+    S_IDLE,
+    S_PTR,      // reading the pointer an indirect mode needs
+    S_ISSUE,    // one cycle with dx_req low, so the next access has an edge
+    S_ACC       // the operand's own access
+} state_e;
+
+state_e      state;
+am_mode_e    mode_r;
+logic [31:0] scaled_r;    // the index contribution, added last
+logic [31:0] outer_r;
+logic  [3:0] size_r;
+logic        we_r;
+logic [63:0] wdata_r;
+
+assign busy = (state != S_IDLE);
+
+// The scaling constant is the operand's size (p.3.257).  1, 2, 4 and 8 are the
+// only sizes, so the multiply is a shift.
+logic [1:0] shift;
+always_comb begin
+    case (opbytes)
+        4'd1:    shift = 2'd0;
+        4'd2:    shift = 2'd1;
+        4'd4:    shift = 2'd2;
+        default: shift = 2'd3;
+    endcase
+end
+wire [31:0] scaled = has_index ? (rx_val << shift) : 32'd0;
+
+// The base the mode names, before any displacement.
+wire [31:0] base = am_base_is_pc(mode)   ? pc_val
+                 : am_base_is_none(mode) ? 32'd0
+                 : (mode == AM_RN_DEC)   ? (rn_val - {28'd0, opbytes})
+                                         : rn_val;
+wire [31:0] addr1 = base + disp;
+
+always_ff @(posedge clk) begin
+    if (rst) begin
+        state      <= S_IDLE;
+        done       <= 1'b0;
+        dx_req     <= 1'b0;
+        dx_addr    <= 24'd0;
+        dx_nbytes  <= 4'd0;
+        dx_we      <= 1'b0;
+        dx_wdata   <= 64'd0;
+        ea         <= 32'd0;
+        rdata      <= 64'd0;
+        rn_wb      <= 1'b0;
+        rn_wb_val  <= 32'd0;
+        illegal    <= 1'b0;
+        bus_cycles <= 4'd0;
+        mode_r     <= AM_RESERVED;
+        scaled_r   <= 32'd0;
+        outer_r    <= 32'd0;
+        size_r     <= 4'd0;
+        we_r       <= 1'b0;
+        wdata_r    <= 64'd0;
+    end else begin
+        done  <= 1'b0;
+        rn_wb <= 1'b0;
+
+        case (state)
+        S_IDLE: if (start) begin
+            mode_r     <= mode;
+            scaled_r   <= scaled;
+            outer_r    <= disp_outer;
+            size_r     <= opbytes;
+            we_r       <= we;
+            wdata_r    <= wdata;
+            illegal    <= 1'b0;
+            bus_cycles <= 4'd0;
+
+            if (am_is_reg_direct(mode)) begin
+                // The operand is the register.  Nothing reaches the bus.
+                ea    <= 32'd0;
+                rdata <= {32'd0, rn_val};
+                if (we) begin
+                    rn_wb     <= 1'b1;
+                    rn_wb_val <= wdata[31:0];
+                end
+                done <= 1'b1;
+            end else if (am_is_immediate(mode)) begin
+                // The operand is in the instruction stream.  Writing one is
+                // the illegal-addressing-mode exception, not a bus cycle.
+                ea      <= 32'd0;
+                rdata   <= imm;
+                illegal <= we;
+                done    <= 1'b1;
+            end else begin
+                // Autoincrement and autodecrement move Rn by the operand's
+                // size (p.3.261).  Predecrement is already in `base`.
+                if (mode == AM_RN_INC) begin
+                    rn_wb     <= 1'b1;
+                    rn_wb_val <= rn_val + {28'd0, opbytes};
+                end else if (mode == AM_RN_DEC) begin
+                    rn_wb     <= 1'b1;
+                    rn_wb_val <= rn_val - {28'd0, opbytes};
+                end
+
+                if (am_is_indirect(mode)) begin
+                    // The address is in memory: read the 32-bit pointer first.
+                    dx_addr   <= addr1[23:0];
+                    dx_nbytes <= 4'd4;
+                    dx_we     <= 1'b0;
+                    dx_req    <= 1'b1;
+                    state     <= S_PTR;
+                end else begin
+                    ea        <= addr1 + scaled;
+                    dx_addr   <= addr1[23:0] + scaled[23:0];
+                    dx_nbytes <= opbytes;
+                    dx_we     <= we;
+                    dx_wdata  <= wdata;
+                    dx_req    <= 1'b1;
+                    state     <= S_ACC;
+                end
+            end
+        end
+
+        S_PTR: if (dx_done) begin
+            // "[disp[Rn]](Rx)" indexes the result of the indirection, so the
+            // scaled index goes on here and not before.  A double displacement
+            // adds its outer displacement to the pointer.
+            ea         <= dx_rdata[31:0] + outer_r + scaled_r;
+            dx_addr    <= dx_rdata[23:0] + outer_r[23:0] + scaled_r[23:0];
+            dx_nbytes  <= size_r;
+            dx_we      <= we_r;
+            dx_wdata   <= wdata_r;
+            dx_req     <= 1'b0;
+            bus_cycles <= bus_cycles + dx_cycles;
+            state      <= S_ISSUE;
+        end
+
+        S_ISSUE: begin
+            dx_req <= 1'b1;
+            state  <= S_ACC;
+        end
+
+        S_ACC: if (dx_done) begin
+            if (!we_r) rdata <= dx_rdata;
+            dx_req     <= 1'b0;
+            bus_cycles <= bus_cycles + dx_cycles;
+            done       <= 1'b1;
+            state      <= S_IDLE;
+        end
+
+        default: state <= S_IDLE;
+        endcase
+    end
+end
+
+// synthesis translate_off
+always_ff @(posedge clk) begin
+    if (!rst && start && am_is_reg_direct(mode) && (opbytes == 4'd8))
+        $display("WARN v60_ea: a doubleword register-direct operand needs a register PAIR, and this module is given one register (t=%0t)",
+                 $time);
+    if (!rst && start && (mode == AM_RESERVED))
+        $display("WARN v60_ea: started on a reserved addressing mode -- the sequencer should have taken the exception (t=%0t)",
+                 $time);
+end
+// synthesis translate_on
+
+endmodule

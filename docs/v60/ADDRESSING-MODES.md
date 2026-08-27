@@ -156,8 +156,9 @@ document publishes (`docs/v60/INSTRUCTION-TIMING.md`).
 
 ## Scaling, for the stage that computes addresses
 
-Not implemented by the decoder — recorded here because it belongs to this
-figure's neighbours and will be needed next. `Rx` in an indexed mode and the
+Not implemented by the decoder — `v60_ea` does it, and the p. 3.261 table has a
+defect of its own (it prints a scaled index constant of **3** for Word). See
+`docs/v60/DATA-ACCESS-SPLIT.md`. `Rx` in an indexed mode and the
 step of `[Rn+]`/`[-Rn]` are scaled by the operand's data type (databook
 p. 3.261): byte 1, halfword 2, word 4, doubleword 8, packed decimal 1, unpacked
 decimal 2, byte character 1, halfword character 2, bit 4, bit field 4 (scaled

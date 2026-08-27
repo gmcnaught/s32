@@ -47,6 +47,29 @@ argues they must be rather than as printed: as printed, `[Rn]` collides with
 neighbours, so no decoder can exist for the table as it stands. The bench
 checks what the printed bytes decode to as well, so the difference is visible.
 
+### The data access unit and the effective-address unit
+
+**An operand reference now costs a countable number of bus cycles.** `v60_dxu`
+turns one logical access into the bus cycles the `{UBE*, A0}` encoding allows;
+`v60_ea` computes the address a mode names, makes the pointer read the indirect
+modes need, and hands back the operand.
+
+| | source | checked by |
+|---|---|---|
+| a halfword cycle needs A0 low; three legal lane encodings, no fourth | p. 3.235-6 | `tb_v60_dxu` |
+| 1 / 1-2 / 2-3 / 4-5 bus cycles for byte / halfword / word / doubleword | p. 3.236 + PgmRef §3 | `tb_v60_dxu` |
+| DL1-DL0 is the logical length and holds across the access | p. 3.235 | `tb_v60_dxu` |
+| FAS* marks the first bus cycle and only the first | p. 3.235 | `tb_v60_dxu` |
+| unaligned operands are legal and are assembled in order | PgmRef §3 | `tb_v60_dxu`, `tb_v60_ea` |
+| every addressing mode's effective address, against real memory | p. 3.294 | `tb_v60_ea` |
+| the scaled index is the operand's size, and is added after an indirection | p. 3.257, p. 3.294 | `tb_v60_ea` |
+| `[Rn+]` / `[-Rn]` step by the operand's size, decrement before the access | p. 3.261 | `tb_v60_ea` |
+| writing an immediate is the illegal-addressing-mode exception | PgmRef §8 | `tb_v60_ea` |
+
+The memory in both benches is modelled as the databook describes it — two
+byte-wide banks reached only through those three lane encodings — so an access
+that picks the wrong lane moves the wrong byte rather than merely looking wrong.
+
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.
@@ -72,24 +95,26 @@ exception model. What exists is the bus and the operand vocabulary that sits
 directly on top of it; nothing yet issues a bus cycle on an instruction's
 behalf.
 
-The next stage is the piece between them: an **effective-address unit** that
-takes a description from `v60_am_decode`, scales the index register by the
-operand's data type (databook p. 3.261), adds the base, issues the pointer read
-that the indirect modes need through `v60_biu`, and then makes the operand's own
-access. At that point an operand reference costs a countable number of bus
-cycles, and `docs/v60/v60_operand_access.csv` becomes a runnable golden: 220
-instruction variants, 118 mnemonics, each with its read/write/RMW counts and
-total data bus cycles, 161 marked `ok` and 59 `review`. That is a
-per-instruction **bus transaction** golden — how many cycles of what kind an
-instruction must generate — checkable against this BIU without the per-
-instruction cycle counts that no NEC document publishes.
+No sequencer, no opcode decode, no instruction fetch, no MMU, no FPU, no
+exception model. What exists is a bus, the operand vocabulary above it, and the
+machinery that turns one operand reference into bus cycles. Nothing yet reads
+an instruction.
 
-Opcode decode (databook §5 from p. 3.296, the seven instruction formats on
-p. 3.293) is what turns that into whole instructions. Execution semantics come
-from the Programmer's Reference and from MAME as an architectural oracle, and
-timing comes from nowhere.
+The next stage is **instruction fetch and opcode decode**: the seven
+instruction formats (p. 3.293), the opcode tables (§5 from p. 3.296), and a
+prefetch queue feeding `v60_am_decode` a byte at a time — which is the
+interface it was built to, and the reason `BST_PREFETCH` and `BST_DEMAND_FETCH`
+are already in `v60_bus_pkg`. That closes the loop on
+`docs/v60/v60_operand_access.csv`: 220 instruction variants, 118 mnemonics,
+each with its read/write/RMW counts and total data bus cycles, 161 marked `ok`
+and 59 `review`. Per operand those counts are already measurable
+(`tb_v60_ea`); per instruction needs the decode that says which operands an
+opcode has.
 
-## The two things here that are not from a page
+Execution semantics come from the Programmer's Reference and from MAME as an
+architectural oracle, and timing comes from nowhere.
+
+## The things here that are not from a page
 
 The databook scopes the three-TI recovery gap to "any consecutive pair of I/O
 bus cycles" (p. 3.291) but does not say what an intervening memory cycle does.
@@ -101,4 +126,15 @@ immediate — with `m` = 0 and prints no `m` = 1 row for the group at all.
 FSM, so `tb_v60_am_decode` checks it against the encoding function directly
 rather than leaving a claim no test can fail.
 
-Both are marked in the source at the point of decision.
+`v60_dxu` makes two more, both in `docs/v60/DATA-ACCESS-SPLIT.md`: DL1-DL0 has
+no doubleword code, so an eight-byte operand is driven as `word` and treated as
+two logical word accesses for FAS*; and the split walks upward from the
+operand's address, which nothing observable here depends on but a bus analyser
+would see.
+
+A fourth figure defect turned up with `v60_ea`: the p. 3.261 scaling table
+prints a scaled index constant of **3** for Word, against its own
+increment/decrement of 4 and against the sentence on p. 3.257 that says the
+index is scaled by the operand's size. It scales by 4.
+
+All are marked in the source at the point of decision.
