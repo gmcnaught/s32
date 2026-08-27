@@ -975,6 +975,76 @@ always @(posedge clk) begin
 end
 
 
+
+// ---------------------------------------------------------------------------
+// The premise s32.sdc's sprite exception rests on.
+// ---------------------------------------------------------------------------
+// The SDC relaxes sw[0..6] / x0 / y0 -> every sprite register to a two-cycle
+// setup requirement, justified by "sprite words 0..6 are loaded at least two
+// fetch clocks before decode; word 7 is intentionally excluded because clip
+// commands consume it on the very next decode edge".
+//
+// That is a claim about THIS state machine and nothing else, and nothing
+// checked it.  A relaxed setup requirement on a path that is really one cycle
+// does not fail STA -- it fails on the device, for some placements and not
+// others -- so a simulator is the only place the premise can be tested at all.
+//
+// Both properties reduce to state sequencing:
+//
+//   A  sw[k<=6] is written in R_FETCHW.  R_DECODE, which consumes it, must
+//      never be the very next state -- only swi==7 may lead there, and sw[7]
+//      is excluded from the exception for exactly that reason.
+//
+//   B  x0/y0 are written on the R_DECODE edge that leaves for R_SCALE.  The
+//      first read is in R_PIXEL (scrx), which must be at least two clocks
+//      later.
+`ifndef SYNTHESIS
+integer   spr_inv_fails = 0;
+reg [4:0] rs_d                = R_IDLE;
+reg       sw_deferred_written = 1'b0;
+reg [3:0] xy_age              = 4'd15;   // saturating; 15 == "not recent"
+
+task automatic spr_inv_fail(input [8*80:1] what);
+begin
+    spr_inv_fails = spr_inv_fails + 1;
+    $display("SPRITE-INVARIANT FAIL: %0s (t=%0t)", what, $time);
+`ifndef SPRITE_INVARIANT_NONFATAL
+    $fatal(1, "s32.sdc's sprite two-cycle exception is no longer sound");
+`endif
+end
+endtask
+
+// x0/y0 have no write-enable signal of their own -- they are assigned inside
+// the R_DECODE draw branch, the one that leaves for R_SCALE.  Rather than
+// adding a marker to the FSM for a check's convenience, the write is detected
+// after the fact from the transition it is part of: seeing R_DECODE -> R_SCALE
+// means x0/y0 took their new values on that edge, one clock ago.
+always @(posedge clk) begin
+    if (rst) begin
+        rs_d                <= R_IDLE;
+        sw_deferred_written <= 1'b0;
+        xy_age              <= 4'd15;
+    end
+    else begin
+        // A: R_DECODE consumes sw[0..6]; it must never follow their write
+        // directly.  Only swi == 7 may lead there, and sw[7] is excluded from
+        // the exception for exactly that reason.
+        if (sw_deferred_written && rs == R_DECODE)
+            spr_inv_fail("R_DECODE entered one clock after sw[<=6] was written");
+        sw_deferred_written <= (rs == R_FETCHW) && (swi <= 3'd6);
+
+        // B: R_PIXEL reads x0 (scrx).  It must be at least two clocks after
+        // the write.
+        if (xy_age < 4'd2 && rs == R_PIXEL)
+            spr_inv_fail("R_PIXEL entered less than two clocks after x0/y0 written");
+
+        rs_d <= rs;
+        if (rs_d == R_DECODE && rs == R_SCALE) xy_age <= 4'd1;
+        else if (xy_age != 4'd15)              xy_age <= xy_age + 4'd1;
+    end
+end
+`endif
+
 endmodule
 
 
