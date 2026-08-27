@@ -95,10 +95,12 @@ What is still not raised anywhere: every exception that needs a pin (`berr`,
   that was already in use — which `v60_seq` was already doing and can now
   cite.
 
-Also still unresolved from the transcription: three bit-string subops
-(`ORNBS`, `XORNBS`, `SCH1BS`), recorded in `tools/v60x/insn_table.py`'s
-`UNRESOLVED_SUBOP`. Their *format* is not in doubt, so nothing the RTL uses
-depends on them.
+The three bit-string subops that were unresolved (`ORNBS`, `XORNBS`,
+`SCH1BS`) are resolved too, and by the same move as the PSW columns above: the
+Programmer's Reference prints every instruction's subop in its Opcode line,
+`5B-16 / 5B-17` for `ORNBS`. All three placements the collision check had
+inferred were right, and all ten rows of the group now cross-check against
+those lines. `UNRESOLVED_SUBOP` is empty.
 
 ---
 

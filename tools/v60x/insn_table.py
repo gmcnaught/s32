@@ -149,11 +149,11 @@ TABLE = [
     ('ANDBS',    '01011011',      '0001000{d}', 'VIIb', '3.297'),
     ('ANDNBS',   '01011011',      '0001001{d}', 'VIIb', '3.297'),
     ('ORBS',     '01011011',      '0001010{d}', 'VIIb', '3.297'),
-    ('ORNBS',    '01011011',      '0001011{d}', 'VIIb', '3.298'),   # UNRESOLVED
+    ('ORNBS',    '01011011',      '0001011{d}', 'VIIb', '3.298'),   # PgmRef 5B-16/17
     ('XORBS',    '01011011',      '0001100{d}', 'VIIb', '3.298'),
-    ('XORNBS',   '01011011',      '0001101{d}', 'VIIb', '3.298'),   # UNRESOLVED
+    ('XORNBS',   '01011011',      '0001101{d}', 'VIIb', '3.298'),   # PgmRef 5B-1A/1B
     ('SCH0BS',   '01011011',      '0000000{d}', 'VIIb', '3.298'),
-    ('SCH1BS',   '01011011',      '0000001{d}', 'VIIb', '3.298'),   # UNRESOLVED
+    ('SCH1BS',   '01011011',      '0000001{d}', 'VIIb', '3.298'),   # PgmRef 5B-02/03
 
     # ---- p.3.298  Character Manipulation -----------------------------------
     ('MOVC',     '010110{c}0',    '0000100{d}', 'VIIa', '3.298'),
@@ -219,11 +219,19 @@ TABLE = [
     ('HALT',     '00000000',      None, 'V',     '3.299'),
 ]
 
-# Rows whose SUBOP could not be read reliably off the scan and were resolved by
-# the collision check plus the group's own numbering, not by reading.  See
-# docs/v60/INSTRUCTION-FORMATS.md.  Their FORMAT is not in doubt -- the format
-# column is a word, not a bit string -- and the format is all the RTL uses.
-UNRESOLVED_SUBOP = {'ORNBS', 'XORNBS', 'SCH1BS'}
+# ORNBS, XORNBS and SCH1BS were here: their subops could not be read off the
+# databook's scan and were placed by the group's numbering and the collision
+# check.  The Programmer's Reference prints each one's subop outright in its
+# Opcode line -- "5B-16 / 5B-17" for ORNBS -- and all three placements were
+# right.  The whole group cross-checks against those lines:
+#
+#   SCH0BS 5B-00/01   MOVBS 5B-08/09   ANDBS  5B-10/11   ORBS   5B-14/15
+#   SCH1BS 5B-02/03   NOTBS 5B-0A/0B   ANDNBS 5B-12/13   ORNBS  5B-16/17
+#                                                        XORBS  5B-18/19
+#                                                        XORNBS 5B-1A/1B
+#
+# so ten rows of this group are now read from a page rather than nine.
+UNRESOLVED_SUBOP = set()
 
 # Encodings two instructions legitimately share, with what tells them apart.
 # The FORMAT is the same for both members of each pair, so op_format() is

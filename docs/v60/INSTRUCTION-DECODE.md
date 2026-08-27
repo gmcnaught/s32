@@ -54,15 +54,24 @@ displacement) **6x** / (halfword displacement) **7x**" — the same `b` bit the
 databook shows at p. 3.295 — and BSR's syntax as "**bsr disp16**". Those are
 the only two Format IV opcodes, so `op_iv_disp_bytes()` covers the format.
 
-### Still unresolved
+### Resolved, by the other book
 
 Three **subops** in the bit-string group (`ORNBS`, `XORNBS`, `SCH1BS`) could
-not be read reliably off the scan and are recorded in `UNRESOLVED_SUBOP`. They
-are placed where the group's numbering and the collision check allow. Their
-**format** is not in doubt — the format column is a word, not a bit string, and
-all of Bit String is VIIb — so nothing `v60_op_pkg` reports depends on them.
-Resolving them needs a better scan or the Reference's own pages for those
-instructions.
+not be read off the databook's scan and were placed by the group's numbering
+and the collision check. "Resolving them needs a better scan or the
+Reference's own pages for those instructions" — which is where they were all
+along. Every instruction page in the Programmer's Reference prints its subop
+in the Opcode line, `5B-16` and `5B-17` for `ORNBS`'s two directions, and the
+whole group agrees with the placements:
+
+| | | | |
+|---|---|---|---|
+| `SCH0BS` 00/01 | `MOVBS` 08/09 | `ANDBS` 10/11 | `ORBS` 14/15 |
+| `SCH1BS` 02/03 | `NOTBS` 0A/0B | `ANDNBS` 12/13 | `ORNBS` 16/17 |
+| | | `XORBS` 18/19 | `XORNBS` 1A/1B |
+
+`UNRESOLVED_SUBOP` is empty. The low bit of each pair is the `d` bit — upward
+then downward — which is what the table already encoded.
 
 ## The decode unit
 

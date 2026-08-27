@@ -132,6 +132,7 @@ plan and runs `v60_am_decode` once per mod field.
 | | source | checked by |
 |---|---|---|
 | 134 rows / 284 encodings, and no two instructions sharing one | pp. 3.296-3.299 | `tools/v60x/insn_table.py` |
+| the bit-string group's ten subops, against the Reference's Opcode lines | PgmRef §7 `5B-nn` | read directly |
 | 66 rows agreeing with a separately compiled reference | Programmer's Reference | same, `cross_check()` |
 | the generated package matching its table | — | `run_v60x.sh`, before any bench |
 | "I, II" resolved by bit 15; escape opcodes by their subop | p. 3.293, p. 3.297 | `tb_v60_fmt_decode` |
@@ -251,15 +252,16 @@ System 32 still needs:
   `STOP_TWO_WB` rather than dropping one silently, and the bench executes that
   instruction to prove it does.
 
-Two smaller things are open and neither blocks that:
-
-- **Three subops in the bit-string group** could not be read off the scan
-  (`ORNBS`, `XORNBS`, `SCH1BS`). Their format is not in doubt; see
-  `docs/v60/INSTRUCTION-DECODE.md`.
-The one thing the plan recorded as unreadable turned out to be readable in the
-*other* book: the Programmer's Reference's printing of the recognition
-sequence loses three digits to the scan, and the databook's second printing at
-pp. 3.269–3.270 has all of them. `v60_exc` performs the whole sequence.
+Two things this tree recorded as unreadable turned out to be readable in the
+*other* book, and both are closed. The Programmer's Reference's printing of
+the exception recognition sequence loses three digits to the scan, and the
+databook's second printing at pp. 3.269–3.270 has all of them, so `v60_exc`
+performs the whole sequence. The other way round, three bit-string subops the
+databook's scan could not settle (`ORNBS`, `XORNBS`, `SCH1BS`) are printed
+outright in the Reference's Opcode lines — `5B-16 / 5B-17` and so on — which
+confirms all three placements and the seven around them. When a page in one
+book is illegible, look for the same material in the other one before
+recording it as unread.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus
