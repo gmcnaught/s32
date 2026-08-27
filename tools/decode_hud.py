@@ -63,6 +63,24 @@ def decode(path):
     for bit in bits:
         v = (v << 1) | bit
     out = {"raw": v}
+    # Cells 57..63 carry a counter clocked inside the overlay itself, painted
+    # on every band row.  Sample them on each row: the rows are a scanline
+    # apart, so a running clock cannot paint the same value twice.  Equal on
+    # every row means the overlay is frozen and NOTHING else it reports can be
+    # believed -- which is exactly how a set of readings was taken at face
+    # value on 2026-08-26 from builds whose debug bus was static.
+    beats = []
+    for row in range(rule):
+        b = 0
+        for i in range(57, 64):
+            xx = i * CELL_W + CELL_W // 2
+            if xx >= w:
+                break
+            r, g, bl = px[xx, row]
+            b = (b << 1) | (1 if (g > 128 and r < 128) else 0)
+        beats.append(b)
+    out["alive"] = len(set(beats)) > 1
+    out["beats"] = beats
     for name, (lsb, width) in FIELDS.items():
         out[name] = (v >> lsb) & ((1 << width) - 1)
     return out
@@ -84,6 +102,19 @@ def main(paths):
         print(f"    bus_txns  = {d['bus_txns']}")
         print(f"    ce_viol   = {d['ce_viol']}"
               f"{'   <-- SDC two-cycle premise VIOLATED' if d['ce_viol'] else ''}")
+        if not d["alive"] and not any(d["beats"]):
+            print(f"    LIVENESS  = all zero {d['beats']}")
+            print("    -> cells 57..63 read zero on every row. Either this shot predates")
+            print("       the liveness cells (they were the word's zero padding), or the")
+            print("       overlay is frozen. Rebuild with the current HUD to tell them")
+            print("       apart; until then treat the fields above as unverified.")
+        elif not d["alive"]:
+            print(f"    LIVENESS  = FROZEN {d['beats']}")
+            print("    -> the overlay's own counter is identical on every band row,")
+            print("       which one running clock cannot produce. The debug bus is")
+            print("       static: every field above is stale and means nothing.")
+        else:
+            print(f"    liveness  = ok {d['beats']}")
 
     if len(rows) >= 2:
         (_, a), (_, b) = rows[0], rows[-1]
