@@ -45,6 +45,8 @@ module v60_biu
     input               we,         // 1 = write
     input         [1:0] dl,         // DL1-DL0 data length
     input               ube,        // upper byte enable, active low as a pin
+    input               first,      // this is the FIRST bus cycle of a logical
+                                    // access -- drives FAS*, see below
     input        [15:0] wdata,
     output logic        ack,        // one fast-clock pulse at falling T4
     output logic [15:0] rdata,
@@ -168,7 +170,16 @@ always_ff @(posedge clk) begin
                     mrq_n    <= status[3];      // pin level, not a decode
                     rw_n     <= ~we;            // R/W*: high read, low write
                     ube_n    <= ube;
-                    fas_n    <= 1'b0;
+                    // "FAS* = 0: First bus cycle / FAS* = 1: Subsequent bus
+                    // cycles" -- p.3.235.  A multi-cycle logical access (a
+                    // word on a 16-bit bus, or a string) drives it low only
+                    // for the first.  It was unconditionally low here until
+                    // the DL1-DL0 table was read, which is a good argument for
+                    // reading the whole page before implementing half of it.
+                    //
+                    // "FAS* is undefined during an instruction fetch bus
+                    // access" (p.3.235), so a fetch may drive it either way.
+                    fas_n    <= ~first;
                     bcy_n    <= 1'b0;
                     status_r <= status;
                     we_r     <= we;

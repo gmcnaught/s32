@@ -32,7 +32,7 @@ always @(posedge clk) if (!rst) tick <= (tick == DIV-1) ? 3'd0 : tick + 3'd1;
 wire ce_rise = !rst && (tick == 3'd0);
 wire ce_fall = !rst && (tick == DIV/2);
 
-reg          req = 1'b0, we = 1'b0, ube = 1'b1;
+reg          req = 1'b0, we = 1'b0, ube = 1'b1, first = 1'b1;
 bus_status_e status = BST_MEM_SINGLE;
 reg   [23:0] addr = 24'h0;
 reg    [1:0] dl   = 2'b01;
@@ -51,6 +51,7 @@ bus_state_e  state;
 v60_biu dut (
     .clk(clk), .rst(rst), .ce_rise(ce_rise), .ce_fall(ce_fall),
     .req(req), .status(status), .addr(addr), .we(we), .dl(dl), .ube(ube),
+    .first(first),
     .wdata(wdata), .ack(ack), .rdata(rdata), .busy(busy),
     .a(a), .dl_o(dl_o), .st(st), .mrq_n(mrq_n), .rw_n(rw_n), .ube_n(ube_n),
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),

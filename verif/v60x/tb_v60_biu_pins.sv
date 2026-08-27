@@ -29,7 +29,7 @@ always @(posedge clk) if (!rst) tick <= (tick == DIV-1) ? 3'd0 : tick + 3'd1;
 wire ce_rise = !rst && (tick == 3'd0);
 wire ce_fall = !rst && (tick == DIV/2);
 
-reg          req = 1'b0, we = 1'b0, ube = 1'b1;
+reg          req = 1'b0, we = 1'b0, ube = 1'b1, first = 1'b1;
 bus_status_e status = BST_MEM_SINGLE;
 reg   [23:0] addr = 24'h0;
 reg    [1:0] dl = 2'b01;
@@ -48,6 +48,7 @@ bus_state_e  state;
 v60_biu dut (
     .clk(clk), .rst(rst), .ce_rise(ce_rise), .ce_fall(ce_fall),
     .req(req), .status(status), .addr(addr), .we(we), .dl(dl), .ube(ube),
+    .first(first),
     .wdata(wdata), .ack(ack), .rdata(rdata), .busy(busy),
     .a(a), .dl_o(dl_o), .st(st), .mrq_n(mrq_n), .rw_n(rw_n), .ube_n(ube_n),
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
@@ -166,6 +167,25 @@ initial begin
                 "status code drives MRQ and ST2-ST0 unaltered");
         end
     end
+
+    // ---- FAS* marks the first bus cycle of a logical access (p.3.235) ---
+    first = 1'b1;
+    do_cycle(BST_MEM_SINGLE, 1'b0, 24'h005000, 16'h0);
+    chk(fas_n === 1'b0, "FAS* low on the first bus cycle of an access");
+    first = 1'b0;
+    do_cycle(BST_MEM_SINGLE, 1'b0, 24'h005002, 16'h0);
+    chk(fas_n === 1'b1, "FAS* high on a subsequent bus cycle");
+    first = 1'b1;
+
+    // ---- UBE* + A0 select the byte lanes (p.3.236) ----------------------
+    ube = 1'b0;
+    do_cycle(BST_MEM_SINGLE, 1'b0, 24'h006000, 16'h0);   // A0 = 0
+    chk(lane_of(ube_n, a[0]) === LANE_HALFWORD, "UBE*=0 A0=0 is a halfword access");
+    do_cycle(BST_MEM_SINGLE, 1'b0, 24'h006001, 16'h0);   // A0 = 1
+    chk(lane_of(ube_n, a[0]) === LANE_UPPER_BYTE, "UBE*=0 A0=1 is an upper byte access");
+    ube = 1'b1;
+    do_cycle(BST_MEM_SINGLE, 1'b0, 24'h006002, 16'h0);
+    chk(lane_of(ube_n, a[0]) === LANE_LOWER_BYTE, "UBE*=1 A0=0 is a lower byte access");
 
     // ---- back-to-back I/O gets three TI states (p.3.291) ---------------
     do_cycle(BST_IO_SINGLE, 1'b0, 24'h003000, 16'h0);

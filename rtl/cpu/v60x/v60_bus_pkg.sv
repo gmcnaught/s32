@@ -60,6 +60,41 @@ function automatic logic bst_needs_io_recovery(input bus_status_e s);
     return bst_is_io(s);
 endfunction
 
+// ---------------------------------------------------------------------------
+// DL1-DL0, the data length / string direction code -- databook p.3.235.
+// ---------------------------------------------------------------------------
+// The same two pins mean different things depending on whether the cycle is a
+// single-mode or a string-mode access, and which of the two it is comes from
+// the bus status, not from these bits.  Decode them together or not at all.
+typedef enum logic [1:0] {
+    DL_BYTE     = 2'b00,   // single mode
+    DL_HALFWORD = 2'b01,
+    DL_WORD     = 2'b10,
+    DL_RESERVED = 2'b11
+} dl_single_e;
+
+typedef enum logic [1:0] {
+    DLS_INCREMENT = 2'b10,  // string mode: with FAS low, "start increment";
+    DLS_DECREMENT = 2'b11   // with FAS high, "address increment/decrement"
+} dl_string_e;
+
+// ---------------------------------------------------------------------------
+// UBE* + A0 byte lane decode -- databook p.3.236.
+// ---------------------------------------------------------------------------
+// "UBE* is an active low output and is asserted when the upper byte (D15-D8)
+// of the data bus contains valid data.  UBE* is used along with A0 by decoding
+// logic to select the even/odd addressed buses."
+typedef enum logic [1:0] {
+    LANE_HALFWORD   = 2'b00,   // {UBE*, A0}
+    LANE_UPPER_BYTE = 2'b01,
+    LANE_LOWER_BYTE = 2'b10,
+    LANE_RESERVED   = 2'b11
+} byte_lane_e;
+
+function automatic byte_lane_e lane_of(input logic ube_n, input logic a0);
+    return byte_lane_e'({ube_n, a0});
+endfunction
+
 // The seven bus states of databook S4.  A state is one clock period, measured
 // rising edge to rising edge (p.3.233), so every "falling edge of Tn" in the
 // specification is the MIDPOINT of one of these.
