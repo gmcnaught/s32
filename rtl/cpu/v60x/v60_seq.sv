@@ -70,6 +70,26 @@
 //  which is the opposite way round from the databook's Format I and II.
 //
 //  ---------------------------------------------------------------------------
+//  Exceptions
+//  ---------------------------------------------------------------------------
+//  Three of Table 8-1's Instruction Exceptions are raised here rather than
+//  stopping: a reserved opcode, a reserved addressing mode and an immediate
+//  used as a destination.  v60_exc does the taking -- the vector read, the
+//  frame, the PSW -- and reaches the data access unit through v60_dmux, which
+//  is a mux and not a third bus master because an exception is raised between
+//  operand accesses and never during one.
+//
+//  One thing about that path is NOT observable from this module's bench, and
+//  is recorded rather than left to be assumed: the PSW the handler runs with.
+//  v60_exc computes it (execution level 0, and the interrupt rules), and this
+//  sequencer runs at execution level 0 already, so for these three exceptions
+//  the handler's PSW equals the faulting one and a sequencer that failed to
+//  take the new PSW would behave identically.  tb_v60_exc holds that claim
+//  instead: it drives execution level 3 and checks what comes back.  Nothing
+//  reachable from reset in this tree sets the execution level to anything
+//  else -- there is no LDPSW, no task switch, and RETIU/RETIS are not here.
+//
+//  ---------------------------------------------------------------------------
 //  What this does not do
 //  ---------------------------------------------------------------------------
 //  * Anything v60_alu does not implement: the multiplies and divides, the
@@ -81,8 +101,9 @@
 //    neither is here; BSR and JSR pair with RSR, which is.
 //  * RETIU and RETIS, which restore the PSW as well as the PC, and belong with
 //    v60_exc when it is wired in.
-//  * Exceptions.  v60_exc exists and is not wired in: it would want the data
-//    unit that v60_ea is holding, which is the mux the plan describes.
+//  * Every exception except the three instruction ones below.  There is no
+//    pin for a bus error, an NMI or a maskable interrupt (v60_biu has none),
+//    no MMU to raise a page fault, and no trace or breakpoint machinery.
 //  * Two addressing-mode register writebacks in one instruction -- `mov.w
 //    [R1+], [R2+]` -- which needs two retirement slots and has one.  This
 //    stops with STOP_TWO_WB rather than dropping one of them silently.
@@ -169,6 +190,34 @@ module v60_seq
     input               ea_done,
     input         [3:0] ea_bus_cycles,
 
+    // ---- the exception unit --------------------------------------------------
+    // Raised between instructions, never during an operand access, which is
+    // what lets v60_dmux be a mux rather than a third bus master.
+    input        [31:0] sbr,            // from the register file
+    output logic        exc_req,
+    output logic  [7:0] exc_vector,
+    output logic [31:0] exc_ret_pc,
+    output logic [31:0] exc_psw_in,
+    output logic [31:0] exc_sp_in,
+    output logic [31:0] exc_sbr,
+    output logic  [1:0] exc_nparams,
+    output logic [31:0] exc_param0,
+    output logic [31:0] exc_param1,
+    output logic        exc_is_interrupt,
+    output logic        exc_disable_ie,
+    input        [31:0] exc_sp_out,
+    input        [31:0] exc_psw_out,
+    input        [31:0] exc_handler_pc,
+    input               exc_done,
+    input         [3:0] exc_bus_cycles,
+
+    // The stack the frame goes on is the one the NEW execution level names:
+    // "the PC and PSW are saved on the interrupt stack" (PgmRef S8), so the
+    // register file switches R31 before v60_exc pushes anything.
+    output logic        rf_stack_switch,
+    output logic  [1:0] rf_new_el,
+    output logic        rf_new_is,
+
     // ---- control transfers ---------------------------------------------------
     // A taken branch flushes the prefetch queue and refills it from the target
     // -- "in the event of a control transfer ... the instruction queue contents
@@ -190,10 +239,31 @@ module v60_seq
     output logic  [1:0] stop_reason
 );
 
-localparam logic [1:0] STOP_RESERVED = 2'd0;   // reserved opcode or mode
-localparam logic [1:0] STOP_NO_ALU   = 2'd1;   // not an operation v60_alu has
-localparam logic [1:0] STOP_FORMAT   = 2'd2;   // not a format this executes
-localparam logic [1:0] STOP_TWO_WB   = 2'd3;   // two addressing-mode writebacks
+// The exception vectors this stage can raise, from Figure 8-2's offsets --
+// the entry is at SBR + 4 x vector, so the vector is the printed offset over
+// four -- and the codes from the exception-code table in the same section:
+//
+//    +64  Reserved Opcode Exception          vector 16   code 1000
+//    +72  Reserved Addressing Mode           vector 18   code 1200
+//    +76  Illegal Addressing Mode            vector 19   code 1300
+//
+// All three are Instruction Exceptions, whose frame the same table gives as
+// "+8 Exception Code / +4 PSW / PC (Current PC)" with a parameter count of 4 --
+// one parameter word, and the return PC is the faulting instruction's own.
+localparam logic [7:0] VEC_RESERVED_OP   = 8'd16;
+localparam logic [7:0] VEC_RESERVED_MODE = 8'd18;
+localparam logic [7:0] VEC_ILLEGAL_MODE  = 8'd19;
+localparam logic [31:0] CODE_RESERVED_OP   = 32'h0000_1000;
+localparam logic [31:0] CODE_RESERVED_MODE = 32'h0000_1200;
+localparam logic [31:0] CODE_ILLEGAL_MODE  = 32'h0000_1300;
+
+// A reserved opcode or addressing mode used to stop here.  It is an
+// exception now -- vectors 16 and 18, Figure 8-2 -- so what is left are the
+// three things this sequencer cannot do rather than the ones the architecture
+// says are wrong.
+localparam logic [1:0] STOP_NO_ALU   = 2'd0;   // not an operation v60_alu has
+localparam logic [1:0] STOP_FORMAT   = 2'd1;   // not a format this executes
+localparam logic [1:0] STOP_TWO_WB   = 2'd2;   // two addressing-mode writebacks
 
 typedef enum logic [4:0] {
     S_IDLE, S_FETCH,
@@ -202,7 +272,10 @@ typedef enum logic [4:0] {
     S_EXEC, S_WB, S_WBW, S_RETIRE, S_STOP,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
-    S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN
+    S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
+
+    // an exception: switch the stack, take it, then run the handler
+    S_EXC_SW, S_EXC_REQ, S_EXC_W
 } state_e;
 
 state_e      state;
@@ -217,6 +290,8 @@ logic [31:0] wb_rn_val;
 logic        wb_rn_en;
 logic  [4:0] wb_rn_sel;
 logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
+logic  [7:0] exc_vec_r;   // the exception being raised, and its code
+logic [31:0] exc_code_r;
 
 // ---------------------------------------------------------------------------
 // Which operand is the source and which the destination.
@@ -235,6 +310,16 @@ wire  [4:0] reg_operand = fmt_i ? idu_reg : op2_rn;
 // The mod field that is NOT the register operand.  Format I has only one, and
 // it is whichever side `d` did not take.
 wire        dst_am_is_op2 = fmt_ii;
+
+// The destination operand's addressing mode.  Spelled out rather than
+// selected with a ternary: a ternary between two enum values is not an enum to
+// every tool.
+am_mode_e    dst_mode;
+always_comb begin
+    if (dst_am_is_op2) dst_mode = op2_mode;
+    else               dst_mode = op1_mode;
+end
+
 
 // The operand widths are the instruction's, not the addressing mode's, so they
 // come straight from the table rather than from whichever mod field decoded.
@@ -268,9 +353,25 @@ always_ff @(posedge clk) begin
         retired       <= 1'b0;
         insn_cycles   <= 5'd0;
         stopped       <= 1'b0;
-        stop_reason   <= STOP_RESERVED;
+        stop_reason   <= STOP_NO_ALU;
         redirect      <= 1'b0;
         redirect_pc   <= 32'd0;
+        exc_req         <= 1'b0;
+        exc_vector      <= 8'd0;
+        exc_ret_pc      <= 32'd0;
+        exc_psw_in      <= 32'd0;
+        exc_sp_in       <= 32'd0;
+        exc_sbr         <= 32'd0;
+        exc_nparams     <= 2'd0;
+        exc_param0      <= 32'd0;
+        exc_param1      <= 32'd0;
+        exc_is_interrupt<= 1'b0;
+        exc_disable_ie  <= 1'b0;
+        rf_stack_switch <= 1'b0;
+        rf_new_el       <= 2'd0;
+        rf_new_is       <= 1'b0;
+        exc_vec_r       <= 8'd0;
+        exc_code_r      <= 32'd0;
         cop           <= CTRL_NONE;
         target        <= 32'd0;
         taken         <= 1'b0;
@@ -291,6 +392,8 @@ always_ff @(posedge clk) begin
         rf_wr_en  <= 1'b0;
         retired   <= 1'b0;
         redirect  <= 1'b0;
+        exc_req         <= 1'b0;
+        rf_stack_switch <= 1'b0;
 
         // An addressing mode's register writeback -- the Rn that [Rn+] or
         // [-Rn] moved -- is a single cycle pulse, and v60_ea raises it when
@@ -329,9 +432,17 @@ always_ff @(posedge clk) begin
             next_pc <= idu_pc + {27'd0, idu_len};
 
             if (idu_res_op || idu_res_mode) begin
-                stopped     <= 1'b1;
-                stop_reason <= STOP_RESERVED;
-                state       <= S_STOP;
+                // Two different exceptions, which is why v60_idu reports them
+                // separately: Figure 8-2 gives the reserved opcode and the
+                // reserved addressing mode different entries.
+                if (idu_res_op) begin
+                    exc_vec_r  <= VEC_RESERVED_OP;
+                    exc_code_r <= CODE_RESERVED_OP;
+                end else begin
+                    exc_vec_r  <= VEC_RESERVED_MODE;
+                    exc_code_r <= CODE_RESERVED_MODE;
+                end
+                state <= S_EXC_SW;
             end else if (op_ctrl(idu_op) != CTRL_NONE) begin
                 state <= S_CTRL;
             end else if (op_alu(idu_op) == ALU_NONE) begin
@@ -403,7 +514,18 @@ always_ff @(posedge clk) begin
         // ---- the destination, read as well when the operation needs its old
         // ---- value.
         S_OP2: begin
-            if (dst_is_reg) begin
+            // "An illegal addressing mode exception occurs when a valid
+            // addressing mode is used improperly.  An example ... is an
+            // attempt to use an immediate addressing mode as the destination
+            // operand" (PgmRef S8).  It is caught here, from the mode, rather
+            // than from v60_ea's own `illegal`: the read of a read-modify-write
+            // destination is not a write, so the address unit does not see one
+            // coming, and an access that must not happen is better not started.
+            if (!dst_is_reg && am_is_immediate(dst_mode)) begin
+                exc_vec_r  <= VEC_ILLEGAL_MODE;
+                exc_code_r <= CODE_ILLEGAL_MODE;
+                state      <= S_EXC_SW;
+            end else if (dst_is_reg) begin
                 // A register destination needs no address and no bus cycle:
                 // its old value is read here and the result is written to the
                 // file at retirement.
@@ -413,10 +535,7 @@ always_ff @(posedge clk) begin
                 rf_ra_sel     <= dst_am_is_op2 ? op2_rn    : op1_rn;
                 ea_rn_sel     <= dst_am_is_op2 ? op2_rn    : op1_rn;
                 rf_rb_sel     <= dst_am_is_op2 ? op2_rx    : op1_rx;
-                // The enum needs the branch spelled out: a ternary between
-                // two enum values is not an enum to every tool.
-                if (dst_am_is_op2) ea_mode <= op2_mode;
-                else               ea_mode <= op1_mode;
+                ea_mode       <= dst_mode;
                 ea_index      <= dst_am_is_op2 ? op2_index : op1_index;
                 ea_disp       <= dst_am_is_op2 ? op2_disp  : op1_disp;
                 ea_disp_outer <= dst_am_is_op2 ? op2_disp_outer : op1_disp_outer;
@@ -672,6 +791,53 @@ always_ff @(posedge clk) begin
             end
             retired <= 1'b1;
             state   <= S_IDLE;
+        end
+
+        // ---- an exception --------------------------------------------------
+        // The stack first: R31 is the stack pointer the PSW's {IS, EL} names,
+        // and the frame goes on the one the handler will run with, so the
+        // register file switches before v60_exc pushes.  A switch to the same
+        // entry is a no-op there, which is the ordinary case here -- this
+        // sequencer runs at execution level 0 and these three exceptions
+        // handle at execution level 0.
+        S_EXC_SW: begin
+            rf_stack_switch <= 1'b1;
+            rf_new_el       <= 2'd0;
+            rf_new_is       <= psw[PSW_IS];
+            rf_ra_sel       <= 5'd31;
+            state           <= S_EXC_REQ;
+        end
+
+        S_EXC_REQ: begin
+            exc_req          <= 1'b1;
+            exc_vector       <= exc_vec_r;
+            // "An exception during the execution of an instruction stacks the
+            // PC of the instruction causing the exception (Current PC)", and
+            // the Instruction Exceptions frame prints "PC (Current PC)".
+            exc_ret_pc       <= idu_pc;
+            exc_psw_in       <= psw;
+            exc_sp_in        <= rf_ra;
+            exc_sbr          <= sbr;
+            // Parameter count 4: one word, the exception code.
+            exc_nparams      <= 2'd1;
+            exc_param0       <= exc_code_r;
+            exc_param1       <= 32'd0;
+            exc_is_interrupt <= 1'b0;
+            exc_disable_ie   <= 1'b0;
+            state            <= S_EXC_W;
+        end
+
+        S_EXC_W: if (exc_done) begin
+            insn_cycles <= insn_cycles + {1'b0, exc_bus_cycles};
+            psw         <= exc_psw_out;
+            rf_wr_en    <= 1'b1;
+            rf_wr_sel   <= 5'd31;
+            rf_wr_data  <= exc_sp_out;
+            pc          <= exc_handler_pc;
+            redirect    <= 1'b1;
+            redirect_pc <= exc_handler_pc;
+            retired     <= 1'b1;
+            state       <= S_IDLE;
         end
 
         S_STOP: ;

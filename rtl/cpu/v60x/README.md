@@ -70,6 +70,20 @@ The memory in both benches is modelled as the databook describes it — two
 byte-wide banks reached only through those three lane encodings — so an access
 that picks the wrong lane moves the wrong byte rather than merely looking wrong.
 
+### The data unit's two masters
+
+`v60_ea` and `v60_exc` both want `v60_dxu`, and `v60_dmux` gives it to one of
+them. It is a mux and not a third `v60_bus_arb` port on purpose: `tb_v60_pfu`
+asserts continuously that bus ownership does not change between BCY* and the
+ack and that an ack reaches exactly one master, and a third port would put
+that proof back on the table for nothing.
+
+| | source | checked by |
+|---|---|---|
+| the requesting master's address, length, direction and data reach `v60_dxu` | — | `tb_v60_dmux` |
+| a completion reaches the master that asked and no other | — | `tb_v60_dmux` |
+| two masters asking at once is reported rather than resolved silently | — | `tb_v60_dmux` |
+
 ### The prefetch unit and the bus arbiter
 
 **Instructions reach the decoder.** `v60_pfu` keeps the databook's 16-byte
@@ -152,6 +166,12 @@ register file, the address unit and the ALU, and retires it.
 | JMP and JSR transferring to the effective ADDRESS, not to what is at it | PgmRef §7 | `tb_v60_seq` |
 | a taken branch flushing the queue, so the fall-through is not executed | p. 3.246 | `tb_v60_seq` |
 | a stack push costing two bus cycles and a branch costing none | p. 3.236 | `tb_v60_seq` |
+| a reserved opcode and a reserved addressing mode raising *different* vectors | Fig 8-2 | `tb_v60_seq` |
+| an immediate used as a destination raising the illegal-mode exception | PgmRef §8 | `tb_v60_seq` |
+| each frame's exception code, from the code table's Instruction Exceptions | PgmRef §8 | `tb_v60_seq` |
+| the Current PC on top of the frame, and the count of 4 meaning one word | Table 8-1 | `tb_v60_seq`, `tb_v60_exc` |
+| the handler reached through the SBT and the queue flushed for it | Fig 8-2, p. 3.246 | `tb_v60_seq` |
+| one master at a time on the data unit, and completions reaching only it | — | `tb_v60_dmux` |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
@@ -202,8 +222,19 @@ System 32 still needs:
   Marked at the point of decision in `v60_seq.sv`.
 - **The multiplies, divides, shifts and rotates**, and everything outside the
   integer set. The generated table returns `ALU_NONE` for them.
-- **Wiring `v60_exc` in.** It works and is benched, and connecting it needs the
-  data-unit mux the plan describes — `v60_ea` holds `v60_dxu` today.
+- ~~Wiring `v60_exc` in~~ — **done** for the three Instruction Exceptions this
+  stage can raise (reserved opcode, reserved addressing mode, immediate
+  destination). `v60_dmux` is the data-unit mux the plan asked for rather than
+  a third `v60_bus_arb` port, so `tb_v60_pfu`'s bus-ownership proof stands
+  untouched; `tb_v60_dmux` holds the mux itself, because the two masters are
+  never live at once and the property is invisible from above. The vectors,
+  codes and frame are `docs/v60/EXCEPTIONS.md`.
+
+  One claim on that path is **recorded as uncovered rather than assumed**: the
+  PSW the handler runs with. This sequencer runs at execution level 0 and
+  these three exceptions handle at execution level 0, so the new PSW equals
+  the old one and a sequencer that ignored it would behave identically.
+  `tb_v60_exc` holds it directly instead, at execution level 3.
 - **The externally raised exceptions.** `v60_biu` has `ready_n`, `bmode` and
   `hldrq_n` and no `berr`, `int` or `nmi`: the bus error, NMI and maskable
   interrupt families cannot be driven end to end whatever the units above do.

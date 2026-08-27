@@ -42,17 +42,28 @@ and both mutation-checked:
   computed its destination address and never wrote to it. Every field of the
   address descriptor is now set before an access starts.
 
-## 2. Wire `v60_exc` in
+## 2. Wire `v60_exc` in — **done**
 
-It works and is benched against real memory, and nothing calls it. `v60_seq`
-stops on a reserved opcode or addressing mode instead of raising vector 16 or
-18.
+Landed. `v60_seq` raises three of Table 8-1's Instruction Exceptions instead of
+stopping on them — reserved opcode (vector 16), reserved addressing mode
+(vector 18) and an immediate used as a destination (vector 19) — and
+`v60_exc` takes them: the SBT read, the frame, the PSW, the redirect. The
+vectors, codes and frame layout are `docs/v60/EXCEPTIONS.md`.
 
-The structural change is the one `EXECUTION-STAGE-PLAN.md` describes: **mux
-`v60_exc` and `v60_ea` above `v60_dxu`**, not as a third `v60_bus_arb` port.
-`tb_v60_pfu` asserts continuously that bus ownership does not change between
-BCY* and the ack and that an ack reaches exactly one master; a third port
-invalidates that proof and would require re-establishing it.
+The structural change is the one the plan asked for: **`v60_dmux`, a mux above
+`v60_dxu`**, not a third `v60_bus_arb` port, so `tb_v60_pfu`'s bus-ownership
+proof is untouched. The two masters are never live at once, which makes the
+mux's own behaviour invisible from `tb_v60_seq` — `tb_v60_dmux` holds it
+directly, the way `tb_v60_am_decode` holds the encodings no FSM can reach.
+
+A defect in `v60_exc` came out of using it, now fixed and covered: with a
+single parameter word it pushed `param1` rather than `param0`, because the
+first push was identified as "two left" rather than "none pushed yet".
+`tb_v60_exc` had only ever asked for none or two.
+
+What is still not raised anywhere: every exception that needs a pin (`berr`,
+`int`, `nmi`), an MMU, or the trace and breakpoint machinery. And `RETIU` /
+`RETIS`, which are how a handler would return.
 
 ## 3. Three recorded gaps, each small
 

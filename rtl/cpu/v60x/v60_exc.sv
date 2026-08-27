@@ -106,6 +106,7 @@ typedef enum logic [2:0] {
 
 state_e      state;
 logic  [1:0] pushes_left;   // parameter words still to push
+logic  [1:0] np_r;          // and how many there were
 logic  [1:0] phase;         // 0: parameters, 1: the PSW, 2: the return PC
 logic [31:0] sp;
 logic [31:0] p0, p1;
@@ -115,13 +116,18 @@ logic  [7:0] vec_r;
 assign busy = (state != S_IDLE);
 
 // The next word to push, in the order BRKV prints.
+// Which word goes down next.  The parameters go in order -- param0 first --
+// so the first push is the one where nothing has been pushed yet, `left ==
+// count`, and not "left == 2": with a single parameter that test picked
+// param1, which is the word an instruction exception does not have.
 function automatic logic [31:0] push_word(input logic [1:0] ph,
                                           input logic [1:0] left,
+                                          input logic [1:0] count,
                                           input logic [31:0] a,
                                           input logic [31:0] b,
                                           input logic [31:0] psw_v,
                                           input logic [31:0] pc_v);
-    if (ph == 2'd0)      push_word = (left == 2'd2) ? a : b;
+    if (ph == 2'd0)      push_word = (left == count) ? a : b;
     else if (ph == 2'd1) push_word = psw_v;
     else                 push_word = pc_v;
 endfunction
@@ -157,6 +163,7 @@ always_ff @(posedge clk) begin
         handler_pc  <= 32'd0;
         bus_cycles  <= 4'd0;
         pushes_left <= 2'd0;
+        np_r        <= 2'd0;
         phase       <= 2'd0;
         p0          <= 32'd0;
         p1          <= 32'd0;
@@ -172,6 +179,7 @@ always_ff @(posedge clk) begin
             p0          <= param0;
             p1          <= param1;
             pushes_left <= nparams;
+            np_r        <= nparams;
             int_r       <= is_interrupt;
             dis_r       <= disable_ie;
             sp          <= sp_in;
@@ -198,7 +206,7 @@ always_ff @(posedge clk) begin
             dx_addr   <= sp[23:0] - 24'd4;
             dx_nbytes <= 4'd4;
             dx_we     <= 1'b1;
-            dx_wdata  <= {32'd0, push_word(phase, pushes_left, p0, p1,
+            dx_wdata  <= {32'd0, push_word(phase, pushes_left, np_r, p0, p1,
                                            psw_in, ret_pc)};
             dx_req    <= 1'b1;
             sp        <= sp - 32'd4;

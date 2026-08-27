@@ -214,10 +214,30 @@ initial begin
     chk(e_cycles === 4'd6,           "two cycles for the vector and four for the frame");
 
     // =======================================================================
+    // ONE parameter word, which is what every Instruction Exception has: the
+    // table's frame for vectors 16 to 20 is "+8 Exception Code / +4 PSW / PC
+    // (Current PC)" with a parameter count of 4 -- four bytes, one word.  It
+    // is param0, not param1: the parameters go down in order.
+    // =======================================================================
+    e_vec = 8'd16;
+    e_sp  = 32'h0000_0780;
+    e_np  = 2'd1;
+    e_p0  = 32'h0000_1000;            // the reserved-opcode exception code
+    e_p1  = 32'hDEAD_BEEF;            // and nothing should reach for this
+    take;
+    chk(word_at(13'h77C) === 32'h0000_1000,
+        "a single parameter word is param0");
+    chk(word_at(13'h778) === e_psw,   "with the PSW under it");
+    chk(word_at(13'h774) === 32'h0000_0110, "and the return PC on top");
+    chk(e_sp_out === 32'h0000_0774,   "three words of frame");
+    chk(e_cycles === 4'd8,            "a vector read and three words pushed");
+
+    // =======================================================================
     // An interrupt: the enable is cleared and the interrupt stack is selected.
     // =======================================================================
     e_vec = 8'd200;                   // in the user range, 64-255
     e_sp  = 32'h0000_0600;
+    e_np  = 2'd0;
     e_int = 1'b1;
     take;
     chk(e_handler === 32'h0000_4000, "a user vector reads its own entry");

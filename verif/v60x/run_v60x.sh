@@ -11,7 +11,8 @@ export PATH="/opt/homebrew/bin:$PATH"
 
 RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
-     rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_ea.sv \
+     rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_dmux.sv \
+     rtl/cpu/v60x/v60_ea.sv \
      rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
      rtl/cpu/v60x/v60_psw_pkg.sv rtl/cpu/v60x/v60_regfile.sv \
      rtl/cpu/v60x/v60_alu_pkg.sv rtl/cpu/v60x/v60_alu.sv \
@@ -63,6 +64,7 @@ run tb_v60_biu_pins    "V60 BIU PINS PASS"
 run tb_v60_am_decode   "V60 AM DECODE PASS"
 run tb_v60_dxu         "V60 DXU PASS"
 run tb_v60_ea          "V60 EA PASS"
+run tb_v60_dmux       "V60 DMUX PASS"
 run tb_v60_pfu         "V60 PFU PASS"
 run tb_v60_fmt_decode  "V60 FMT PASS"
 run tb_v60_idu         "V60 IDU PASS"

@@ -96,7 +96,14 @@ v60_idu idu (
 );
 
 // ---- registers ----------------------------------------------------------------
+wire [31:0] seq_pc, seq_psw;
+reg   [4:0] pr_id    = 5'd0;
+reg         pr_wr    = 1'b0;
+reg  [31:0] pr_wdata = 32'd0;
 wire  [4:0] rf_ra_sel, rf_rb_sel, rf_wr_sel;
+wire        rf_stack_switch, rf_new_is;
+wire  [1:0] rf_new_el;
+wire [31:0] rf_sbr;
 wire [31:0] rf_ra, rf_rb, rf_wr_data;
 wire        rf_wr_en;
 
@@ -104,10 +111,10 @@ v60_regfile rf (
     .clk(clk), .rst(rst),
     .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb), .ra_pair(),
     .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data),
-    .psw_el(2'd0), .psw_is(1'b0),
-    .stack_switch(1'b0), .new_el(2'd0), .new_is(1'b0),
-    .pr_id(5'd0), .pr_wr(1'b0), .pr_wdata(32'd0),
-    .pr_rdata(), .pr_rd_ok(), .pr_wr_ok(), .sbr()
+    .psw_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
+    .stack_switch(rf_stack_switch), .new_el(rf_new_el), .new_is(rf_new_is),
+    .pr_id(pr_id), .pr_wr(pr_wr), .pr_wdata(pr_wdata),
+    .pr_rdata(), .pr_rd_ok(), .pr_wr_ok(), .sbr(rf_sbr)
 );
 
 // ---- address unit and data unit ------------------------------------------------
@@ -125,6 +132,23 @@ wire [23:0] dx_addr;
 wire  [3:0] dx_nbytes, dx_cycles;
 wire [63:0] dx_wdata, dx_rdata;
 
+wire        exc_req, exc_is_int, exc_dis_ie, exc_done;
+wire  [7:0] exc_vector;
+wire [31:0] exc_ret_pc, exc_psw_in, exc_sp_in, exc_sbr;
+wire  [1:0] exc_nparams;
+wire [31:0] exc_param0, exc_param1;
+wire [31:0] exc_sp_out, exc_psw_out, exc_handler_pc;
+wire  [3:0] exc_cycles;
+wire        b_req, b_we, b_done;
+wire [23:0] b_addr;
+wire  [3:0] b_nbytes, b_cycles;
+wire [63:0] b_wdata, b_rdata;
+wire        a_req, a_we, a_done;
+wire [23:0] a_addr;
+wire  [3:0] a_nbytes, a_cycles;
+wire [63:0] a_wdata, a_rdata;
+wire        dmux_overlap;
+
 v60_ea ea (
     .clk(clk), .rst(rst),
     .start(ea_start), .mode(ea_mode), .has_index(ea_index),
@@ -136,9 +160,34 @@ v60_ea ea (
     .rmw_data(ea_rmw_data),
     .ea(ea_ea), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
     .illegal(), .busy(), .done(ea_done), .bus_cycles(ea_cycles),
+    .dx_req(a_req), .dx_addr(a_addr), .dx_nbytes(a_nbytes), .dx_we(a_we),
+    .dx_wdata(a_wdata), .dx_rdata(a_rdata), .dx_done(a_done),
+    .dx_cycles(a_cycles)
+);
+
+// ---- the exception unit, and the mux that gives it the data unit -------------
+v60_exc exc (
+    .clk(clk), .rst(rst),
+    .req(exc_req), .vector(exc_vector), .ret_pc(exc_ret_pc),
+    .psw_in(exc_psw_in), .sp_in(exc_sp_in), .sbr(exc_sbr),
+    .nparams(exc_nparams), .param0(exc_param0), .param1(exc_param1),
+    .is_interrupt(exc_is_int), .disable_ie(exc_dis_ie),
+    .sp_out(exc_sp_out), .psw_out(exc_psw_out), .handler_pc(exc_handler_pc),
+    .busy(), .done(exc_done), .bus_cycles(exc_cycles),
+    .dx_req(b_req), .dx_addr(b_addr), .dx_nbytes(b_nbytes), .dx_we(b_we),
+    .dx_wdata(b_wdata), .dx_rdata(b_rdata), .dx_done(b_done),
+    .dx_cycles(b_cycles)
+);
+
+v60_dmux dmux (
+    .a_req(a_req), .a_addr(a_addr), .a_nbytes(a_nbytes), .a_we(a_we),
+    .a_wdata(a_wdata), .a_rdata(a_rdata), .a_done(a_done), .a_cycles(a_cycles),
+    .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we),
+    .b_wdata(b_wdata), .b_rdata(b_rdata), .b_done(b_done), .b_cycles(b_cycles),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
-    .dx_cycles(dx_cycles)
+    .dx_cycles(dx_cycles),
+    .overlap(dmux_overlap)
 );
 
 wire         d_req, d_we, d_ube, d_first, d_ack;
@@ -159,7 +208,6 @@ v60_dxu dxu (
 
 // ---- the sequencer --------------------------------------------------------------
 reg          run = 1'b0;
-wire  [31:0] seq_pc, seq_psw;
 wire         retired, stopped;
 wire   [1:0] stop_reason;
 wire   [4:0] insn_cycles;
@@ -188,6 +236,17 @@ v60_seq seq (
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
     .ea_rn_wb(ea_rn_wb), .ea_rn_wb_val(ea_rn_wb_val), .ea_done(ea_done),
     .ea_bus_cycles(ea_cycles),
+    .sbr(rf_sbr),
+    .exc_req(exc_req), .exc_vector(exc_vector), .exc_ret_pc(exc_ret_pc),
+    .exc_psw_in(exc_psw_in), .exc_sp_in(exc_sp_in), .exc_sbr(exc_sbr),
+    .exc_nparams(exc_nparams), .exc_param0(exc_param0),
+    .exc_param1(exc_param1), .exc_is_interrupt(exc_is_int),
+    .exc_disable_ie(exc_dis_ie),
+    .exc_sp_out(exc_sp_out), .exc_psw_out(exc_psw_out),
+    .exc_handler_pc(exc_handler_pc), .exc_done(exc_done),
+    .exc_bus_cycles(exc_cycles),
+    .rf_stack_switch(rf_stack_switch), .rf_new_el(rf_new_el),
+    .rf_new_is(rf_new_is),
     .redirect(seq_redirect), .redirect_pc(seq_redirect_pc),
     .pc(seq_pc), .psw(seq_psw), .retired(retired), .insn_cycles(insn_cycles),
     .stopped(stopped), .stop_reason(stop_reason)
@@ -259,6 +318,28 @@ endtask
 
 // Run one instruction and stop on its retirement.
 reg [31:0] last_pc;
+reg [31:0] psw_before;
+
+// Place the program counter, the way a debugger would: the prefetch unit takes
+// a redirect from the bench on the same input the sequencer drives.
+// The address unit and the exception unit are never live at once -- that is
+// what lets the data unit be muxed rather than arbitrated.  Held every cycle
+// rather than checked at a moment, because it is an invariant and not an
+// event.
+always @(posedge clk) if (!rst && dmux_overlap)
+    chk(1'b0, "the address unit and the exception unit both wanted the bus");
+
+task jump(input [31:0] to);
+begin
+    @(negedge clk);
+    redirect_pc = to;
+    redirect    = 1'b1;
+    @(negedge clk);
+    redirect    = 1'b0;
+    @(negedge clk);
+end
+endtask
+
 task step;
 begin
     last_pc = seq_pc;
@@ -427,6 +508,46 @@ initial begin
     // RSR
     mem[11'h395] = 8'hCA;
 
+    // ---- a fourth program, at 0x400: exceptions -------------------------------
+    // Three of Table 8-1's Instruction Exceptions, each raised by an
+    // instruction and each handled by one that writes a marker.  The system
+    // base table is at SBR = 0, so entry N is at 4N: entry 16 at +64, entry 18
+    // at +72 and entry 19 at +76, which are the offsets Figure 8-2 prints.
+    // SBT entry 16, Reserved Opcode           -> 0x7A0
+    mem[11'h040] = 8'hA0; mem[11'h041] = 8'h07; mem[11'h042] = 8'h00;
+    mem[11'h043] = 8'h00;
+    // SBT entry 18, Reserved Addressing Mode  -> 0x7B0
+    mem[11'h048] = 8'hB0; mem[11'h049] = 8'h07; mem[11'h04A] = 8'h00;
+    mem[11'h04B] = 8'h00;
+    // SBT entry 19, Illegal Addressing Mode   -> 0x7C0
+    mem[11'h04C] = 8'hC0; mem[11'h04D] = 8'h07; mem[11'h04E] = 8'h00;
+    mem[11'h04F] = 8'h00;
+    // MOV.W #0x600, R31    the stack the frame goes on
+    mem[11'h400] = 8'h2D; mem[11'h401] = 8'hA0; mem[11'h402] = 8'hF4;
+    mem[11'h403] = 8'h00; mem[11'h404] = 8'h06; mem[11'h405] = 8'h00;
+    mem[11'h406] = 8'h00; mem[11'h407] = 8'h7F;
+    // MOV.W #0x700, R8     where a handler leaves its mark
+    mem[11'h408] = 8'h2D; mem[11'h409] = 8'hA0; mem[11'h40A] = 8'hF4;
+    mem[11'h40B] = 8'h00; mem[11'h40C] = 8'h07; mem[11'h40D] = 8'h00;
+    mem[11'h40E] = 8'h00; mem[11'h40F] = 8'h68;
+    // opcode 06            which the table does not have
+    mem[11'h410] = 8'h06;
+    // MOV.B #0x12, #0x34   an immediate DESTINATION
+    mem[11'h420] = 8'h09; mem[11'h421] = 8'hE0; mem[11'h422] = 8'hF4;
+    mem[11'h423] = 8'h12; mem[11'h424] = 8'hF4; mem[11'h425] = 8'h34;
+    // MOV.B <F5>, R8       a mod byte the figure does not print
+    mem[11'h430] = 8'h09; mem[11'h431] = 8'hE0; mem[11'h432] = 8'hF5;
+    mem[11'h433] = 8'h68;
+    // handler 16: MOV.B #0xE1, [R8]
+    mem[11'h7A0] = 8'h09; mem[11'h7A1] = 8'h80; mem[11'h7A2] = 8'hF4;
+    mem[11'h7A3] = 8'hE1; mem[11'h7A4] = 8'h68;
+    // handler 18: MOV.B #0xE2, [R8]
+    mem[11'h7B0] = 8'h09; mem[11'h7B1] = 8'h80; mem[11'h7B2] = 8'hF4;
+    mem[11'h7B3] = 8'hE2; mem[11'h7B4] = 8'h68;
+    // handler 19: MOV.B #0xE3, [R8]
+    mem[11'h7C0] = 8'h09; mem[11'h7C1] = 8'h80; mem[11'h7C2] = 8'hF4;
+    mem[11'h7C3] = 8'hE3; mem[11'h7C4] = 8'h68;
+
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
     mem[11'h612] = 8'h00; mem[11'h613] = 8'h00;
@@ -490,7 +611,7 @@ initial begin
     step;
     chk(stopped === 1'b1,
         "a shift is decoded and addressed and not executed");
-    chk(stop_reason === 2'd1,
+    chk(stop_reason === 2'd0,
         "and it says why: the table has the opcode, v60_alu does not have the operation");
 
     // ---- 9. a format whose semantics are not documented --------------------------
@@ -639,7 +760,70 @@ initial begin
     // has one retirement slot for.
     step;
     chk(stopped,                  "two autoincrement operands stop the sequencer");
-    chk(stop_reason === 2'd3,     "saying which of the four reasons it was");
+    chk(stop_reason === 2'd2,     "saying which of the three reasons it was");
+
+    // =======================================================================
+    // Exceptions.  Each case runs the setup, then the one instruction that
+    // raises, then the handler the vector points at.
+    // =======================================================================
+    @(negedge clk);
+    rst = 1'b1;
+    repeat (4) @(negedge clk);
+    rst = 1'b0;
+    repeat (2) @(negedge clk);
+
+    // The system base register, placed the way the PC is: this sequencer has
+    // no LDPR, and the register file's privileged port is where SBR lives.
+    pr_id    = 5'd5;                 // PR_SBR
+    pr_wdata = 32'h0000_0000;
+    pr_wr    = 1'b1;
+    @(negedge clk);
+    pr_wr    = 1'b0;
+
+    // ---- a reserved opcode -------------------------------------------------
+    jump(32'h00000400);
+    step; step;                                  // the setup
+    psw_before = seq_psw;
+    step;
+    chk(!stopped,
+        "a reserved opcode raises an exception rather than stopping");
+    chk(seq_pc === 32'h000007A0,
+        "and the handler is the one at SBR + 4 x 16");
+    chk(mem_word(13'h5FC) === 32'h00001000,
+        "the frame's parameter word is the exception code the table gives");
+    chk(mem_word(13'h5F8) === psw_before, "then the PSW as it was");
+    chk(mem_word(13'h5F4) === 32'h00000410,
+        "and the CURRENT PC on top: the instruction that caused it");
+    chk(rf.gpr[31] === 32'h000005F4, "three words of frame");
+    chk(insn_cycles === 5'd8,
+        "two bus cycles for the vector and two for each word pushed");
+    chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b00,
+        "the handler runs at execution level 0");
+    step;
+    chk(mem[11'h700] === 8'hE1, "and the handler runs");
+
+    // ---- an immediate used as a destination --------------------------------
+    jump(32'h00000400);
+    step; step;
+    jump(32'h00000420);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "an immediate destination is the illegal addressing mode exception");
+    chk(mem_word(13'h5FC) === 32'h00001300, "with its own exception code");
+    chk(mem_word(13'h5F4) === 32'h00000420, "and the faulting PC");
+    step;
+    chk(mem[11'h700] === 8'hE3, "and that handler runs");
+
+    // ---- a mod byte that is not printed ------------------------------------
+    jump(32'h00000400);
+    step; step;
+    jump(32'h00000430);
+    step;
+    chk(seq_pc === 32'h000007B0,
+        "a reserved mode is a different exception from a reserved opcode");
+    chk(mem_word(13'h5FC) === 32'h00001200, "and carries a different code");
+    step;
+    chk(mem[11'h700] === 8'hE2, "and a different handler runs");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
