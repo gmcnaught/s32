@@ -1,9 +1,10 @@
 # What is open, in the order it is worth doing
 
-**Written 2026-08-27**, after `docs/v60/EXECUTION-STAGE-PLAN.md`'s six
-increments landed and Format I was wired in. `rtl/cpu/v60x/README.md` is the
-boundary statement — what is verified, against which page, by which bench. This
-file is the other half: what is *not*, and what each piece would take.
+**Rewritten 2026-08-27**, after the three items this file opened with — control
+flow, wiring `v60_exc` in, and the three recorded gaps — all closed. What they
+were and what closing them turned up is at the bottom, under *What this
+replaced*. `rtl/cpu/v60x/README.md` is the boundary statement: what is
+verified, against which page, by which bench. This file is the other half.
 
 The rules every item below inherits, from that README: a claim carries the page
 it came from, every bench runs under both simulators, every bench is
@@ -12,95 +13,62 @@ from a page is marked at the point of decision.
 
 ---
 
-## 1. Control flow — **done**, except two pairs
+## 1. The two return pairs
 
-Landed. `Bcc`, `BSR`, `JMP`, `JSR`, `RSR`, `DBcc` and `TB` execute in
-`v60_seq` and drive `v60_pfu.redirect`; `tb_v60_seq`'s third program is a
-counted loop, two subroutine calls and returns, a jump through a register, a TB
-taken and not taken, and a conditional branch that is not taken. Nineteen
-mutations of that path are caught. The pages it rests on, and the two decisions
-it forced, are `docs/v60/CONTROL-FLOW.md`.
+`BSR` and `JSR` pair with `RSR`, which is implemented. The other two pairs are
+not, and each is a pair because neither half is useful alone:
 
-Still open in the group, and neither is a branch:
+- **`CALL` and `RET`**, which pass the argument pointer: `RET`'s operation is
+  `tmp1 <- num ; tmp2 <- [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ; PC <- tmp2`
+  (§7). `AP` is R30 in the register file already; what is missing is the
+  sequencing and `CALL`'s side of the frame.
+- **`RETIU` and `RETIS`**, which restore the PSW as well as the PC and are how
+  a handler returns. They are the other end of `v60_exc`, which pushes exactly
+  the frame they pop: the return PC on top, the PSW under it, the parameters
+  under that, and the parameter count in the exception code word says how many
+  to discard — "it is used by exception handlers to determine the number of
+  bytes to discard from the stack following the processing of the exception".
 
-- **`CALL` and `RET`**, which pass the argument pointer: `tmp1 <- num ; tmp2 <-
-  [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ; PC <- tmp2` (RET, §7). They are each
-  other's partner, so they land together.
-- **`RETIU` and `RETIS`**, which restore the PSW as well as the PC. They pair
-  with item 2 below.
+`RETIU` and `RETIS` differ in which stack they return to, so they also need
+the register file's stack switch, which `v60_seq` already drives on the way
+*in*.
 
-Two defects in the already-benched code came out of doing this, both now fixed
-and both mutation-checked:
+## 2. The externally raised exceptions
 
-- An addressing mode's register writeback (`[Rn+]`, `[-Rn]`) was read only in
-  the cycle the access *finished*, and `v60_ea` raises it when the access
-  *starts*. Every mode that reached memory therefore lost its writeback; only
-  register-direct operands, where the two coincide, worked. It is now taken
-  wherever it appears, and an instruction carrying two of them stops with
-  `STOP_TWO_WB` rather than dropping one.
-- `ea_addr_only` was set by `JMP` and never cleared, so the *next* instruction
-  computed its destination address and never wrote to it. Every field of the
-  address descriptor is now set before an access starts.
+`v60_biu` has `ready_n`, `bmode` and `hldrq_n`, and no `berr`, `int` or `nmi`.
+The bus error, NMI and maskable interrupt families therefore cannot be driven
+end to end whatever the units above them do — `v60_exc` takes `is_interrupt`
+and `disable_ie` as inputs precisely so the behaviour could be built and
+benched before the pins exist, and `tb_v60_exc` does both.
 
-## 2. Wire `v60_exc` in — **done**
+Adding them is a bus-unit change and a sequencer change: a pin, the
+recognition point (between instructions, which is where `v60_seq` already
+raises), and the vector. System 32 raises interrupts, so nothing in this tree
+can run that machine's code until this is done.
 
-Landed. `v60_seq` raises three of Table 8-1's Instruction Exceptions instead of
-stopping on them — reserved opcode (vector 16), reserved addressing mode
-(vector 18) and an immediate used as a destination (vector 19) — and
-`v60_exc` takes them: the SBT read, the frame, the PSW, the redirect. The
-vectors, codes and frame layout are `docs/v60/EXCEPTIONS.md`.
+## 3. The rest of the instruction set
 
-The structural change is the one the plan asked for: **`v60_dmux`, a mux above
-`v60_dxu`**, not a third `v60_bus_arb` port, so `tb_v60_pfu`'s bus-ownership
-proof is untouched. The two masters are never live at once, which makes the
-mux's own behaviour invisible from `tb_v60_seq` — `tb_v60_dmux` holds it
-directly, the way `tb_v60_am_decode` holds the encodings no FSM can reach.
+In rough order of how much machinery each needs:
 
-A defect in `v60_exc` came out of using it, now fixed and covered: with a
-single parameter word it pushed `param1` rather than `param0`, because the
-first push was identified as "two left" rather than "none pushed yet".
-`tb_v60_exc` had only ever asked for none or two.
+- **`MUL`, `MULU`, `DIV`, `DIVU`, `REM`, `REMU` and the `X` forms.** Not one
+  cycle of combinational logic, so they need a multi-cycle unit and a sequencer
+  state to hold it. The generated table already reports `ALU_NONE` for them and
+  `v60_seq` stops rather than inventing an answer.
+- **The bit-string group.** All ten subops are read (see
+  `docs/v60/INSTRUCTION-DECODE.md`) and none is executed. They are the first
+  instructions here that are *interruptible mid-execution* — "to minimize the
+  interrupt latency time, the ORNBS instruction ..." — which is a sequencer
+  property, not an ALU one.
+- **The floating point group**, the MMU, task and context switching, address
+  traps and emulation mode. Each is its own subsystem.
 
-What is still not raised anywhere: every exception that needs a pin (`berr`,
-`int`, `nmi`), an MMU, or the trace and breakpoint machinery. And `RETIU` /
-`RETIS`, which are how a handler would return.
+## 4. A doubleword operand is a register PAIR
 
-## 3. Three recorded gaps, each small
-
-- ~~The shifts and rotates~~ — **done.** All four Condition Codes blocks are
-  read and implemented, and `tb_v60_alu` holds them against a model that
-  shifts one bit at a time: 132,135 checks over three widths, counts from -34
-  to +34 and both states of the incoming carry. `docs/v60/SHIFTS.md` has the
-  pages. Doing it turned up a table defect — the group's two operand widths
-  were the wrong way round, the count taking the size field where the syntax
-  lines give it `.b` in all three variants — which nothing could notice while
-  nothing executed them.
-- ~~The extending moves~~ — **done.** `MOVS`, `MOVZ` and `MOVT` are in
-  `v60_alu`, which now takes the source's width as well as the destination's,
-  because "the source and destination operand lengths differ in this
-  instruction" is their whole point. That also closes what `tb_v60_seq`
-  recorded as unobservable: it executes `movs.bw`, `movz.bw` and two
-  `movt.wb`s, whose one-byte immediates would be four if the widths were taken
-  the other way round. One decision is marked: MOVT's Condition Codes block
-  did not survive the scan, so "OV cleared when nothing was truncated away" is
-  read from every other block in §7 rather than from MOVT's own.
-
-- ~~Table 8-1's TE / TP / AE / EM / ASA columns~~ — **done, and they were
-  never unreadable.** The Programmer's Reference's printing of the recognition
-  sequence loses three digits to the scan; the databook prints the same
-  sequence at pp. 3.269–3.270 with all of them. `PSW.TE <- 0`, `PSW.TP <- 0`,
-  `PSW.AE <- 0`, `PSW.EM <- 0` and `PSW.ASA <- 1`. `v60_exc` sets all five and
-  `tb_v60_exc` starts each one the other way round. The same page settles
-  which stack an exception's frame goes on — `L0SP`, or the interrupt stack if
-  that was already in use — which `v60_seq` was already doing and can now
-  cite.
-
-The three bit-string subops that were unresolved (`ORNBS`, `XORNBS`,
-`SCH1BS`) are resolved too, and by the same move as the PSW columns above: the
-Programmer's Reference prints every instruction's subop in its Opcode line,
-`5B-16 / 5B-17` for `ORNBS`. All three placements the collision check had
-inferred were right, and all ten rows of the group now cross-check against
-those lines. `UNRESOLVED_SUBOP` is empty.
+`v60_ea` takes `rn_val` as 32 bits and warns when it is asked for an
+eight-byte register-direct operand, because "a doubleword operand is a
+register pair, low register first" (§3). `v60_regfile` already has `ra_pair`
+for this; nothing uses it. It matters for `MOV.D`, the `X` multiplies and
+divides, and the doubleword floating point.
 
 ---
 
@@ -118,11 +86,33 @@ tests `s32_v60.sv` in a way nothing currently does — the cheapest useful thing
 on this page, and the only one that pays off for the shipping core rather than
 for this one.
 
-## What a swap would still need
+---
 
-Beyond everything above: the `berr`, `int` and `nmi` pins `v60_biu` does not
-have — System 32 raises interrupts, and the bus unit cannot receive one — plus
-the MMU, the FPU, task and context switching, address traps and emulation mode.
-`rtl/cpu/v60/s32_v60.sv` is 5,703 lines and executes the full integer ISA; this
-tree is 4,600 lines and executes the integer two-operand instructions of
-Formats I and II.
+## What this replaced
+
+Three items, all closed, and each one turned up something that was not the
+work itself:
+
+**Control flow** — `Bcc`, `BSR`, `JMP`, `JSR`, `RSR`, `DBcc`, `TB`, with
+`docs/v60/CONTROL-FLOW.md` for the pages. Two defects in already-benched code
+came out of it: an addressing mode's register writeback was read only in the
+cycle the access *finished*, and `v60_ea` raises it when the access *starts*,
+so every mode that reached memory lost it; and `ea_addr_only`, once set by a
+`JMP`, was never cleared, so the next instruction computed its destination
+address and never wrote to it.
+
+**`v60_exc` wired in** — three Instruction Exceptions raised instead of
+stopped on, through `v60_dmux` rather than a third arbiter port, with
+`docs/v60/EXCEPTIONS.md` for the vectors, codes and frame. `v60_exc` turned
+out to push `param1` for a single-parameter frame, which no bench had asked
+for.
+
+**The three recorded gaps** — the shift group (`docs/v60/SHIFTS.md`), the
+extending moves, and the five PSW fields of the recognition sequence. The
+first turned up an instruction-table defect: the shift group's two operand
+widths were the wrong way round, which nothing could notice while nothing
+executed them. The last two turned up a habit worth keeping: **when a page in
+one book is illegible, look for the same material in the other one before
+recording it as unread.** Three digits of the recognition sequence and three
+bit-string subops were both recorded as unreadable, and both were printed
+plainly in the other book.

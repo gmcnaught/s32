@@ -201,56 +201,23 @@ the bench fails when the RTL is broken in the corresponding way.
 ## Not built yet
 
 No MMU, no FPU, no task or context switching, no address traps, no emulation
-mode. What exists is a bus, the operand vocabulary above it, the machinery that
-turns one operand reference into bus cycles, an instruction stream, a decoder,
-enough architectural state and datapath to execute the integer two-operand
-instructions of Formats I and II, and the control transfers that make a
-sequence of them a program.
+mode. What exists is a bus, the operand vocabulary above it, the machinery
+that turns one operand reference into bus cycles, an instruction stream, a
+decoder, enough architectural state and datapath to execute the integer
+two-operand instructions of Formats I and II including the shift group and the
+conversions, the control transfers that make a sequence of them a program, and
+three of the instruction exceptions.
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
-piece would take. `docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are
-**done**: the operand
+piece would take. In short: the two return pairs (`CALL`/`RET` and
+`RETIU`/`RETIS`), the externally raised exceptions — which need `berr`, `int`
+and `nmi` pins `v60_biu` does not have, so System 32's interrupts cannot be
+driven end to end whatever the units above do — the multiplies and divides and
+everything outside the integer set, and a doubleword operand's register pair.
+
+`docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are **done**: the operand
 data type, the PSW package, the register file, the ALU, the exception unit and
-the sequencer. What that plan did not scope, and what a machine that could run
-System 32 still needs:
-
-- ~~Control flow~~ — **done** for `Bcc`, `BSR`, `JMP`, `JSR`, `RSR`, `DBcc`
-  and `TB`, which drive `v60_pfu.redirect` and are benched as a running
-  program: a counted loop, two subroutine calls and returns, a jump through a
-  register and a branch that is not taken. Still open in that group are `CALL`
-  and `RET`, which pass the argument pointer and are each other's partner, and
-  `RETIU` / `RETIS`, which restore the PSW and belong with `v60_exc`.
-- ~~Format I~~ — **done**, and it is the one piece of this tree taken from
-  MAME rather than a page. `d`'s polarity is stated nowhere in the documents
-  held (p. 3.293's legend gives only "d : direction field", and the
-  Programmer's Reference's Appendix B reprints the same figure); it comes from
-  MAME's V60 core by way of the Sega System 32 core's `s32_v60.sv`, which the
-  README already admits as an architectural oracle for execution semantics.
-  Marked at the point of decision in `v60_seq.sv`.
-- **The multiplies and divides**, and everything outside the integer set. The
-  generated table returns `ALU_NONE` for them. ~~The shifts and rotates~~ are
-  **done** — see `docs/v60/SHIFTS.md`.
-- ~~Wiring `v60_exc` in~~ — **done** for the three Instruction Exceptions this
-  stage can raise (reserved opcode, reserved addressing mode, immediate
-  destination). `v60_dmux` is the data-unit mux the plan asked for rather than
-  a third `v60_bus_arb` port, so `tb_v60_pfu`'s bus-ownership proof stands
-  untouched; `tb_v60_dmux` holds the mux itself, because the two masters are
-  never live at once and the property is invisible from above. The vectors,
-  codes and frame are `docs/v60/EXCEPTIONS.md`.
-
-  One claim on that path is **recorded as uncovered rather than assumed**: the
-  PSW the handler runs with. This sequencer runs at execution level 0 and
-  these three exceptions handle at execution level 0, so the new PSW equals
-  the old one and a sequencer that ignored it would behave identically.
-  `tb_v60_exc` holds it directly instead, at execution level 3.
-- **The externally raised exceptions.** `v60_biu` has `ready_n`, `bmode` and
-  `hldrq_n` and no `berr`, `int` or `nmi`: the bus error, NMI and maskable
-  interrupt families cannot be driven end to end whatever the units above do.
-
-- **Two addressing-mode register writebacks in one instruction.** `mov.w
-  [R1+], [R2+]` moves two registers and `v60_seq` retires one. It stops with
-  `STOP_TWO_WB` rather than dropping one silently, and the bench executes that
-  instruction to prove it does.
+the sequencer.
 
 Two things this tree recorded as unreadable turned out to be readable in the
 *other* book, and both are closed. The Programmer's Reference's printing of
