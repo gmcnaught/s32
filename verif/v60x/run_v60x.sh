@@ -63,6 +63,7 @@ run tb_v60_ea          "V60 EA PASS"
 run tb_v60_pfu         "V60 PFU PASS"
 run tb_v60_fmt_decode  "V60 FMT PASS"
 run tb_v60_idu         "V60 IDU PASS"
+run tb_v60_front       "V60 FRONT PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"
