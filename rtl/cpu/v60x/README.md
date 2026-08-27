@@ -91,6 +91,23 @@ The arbiter's hold rule is not defensive programming: an earlier version
 released the grant when a master dropped its request, and a data read at
 `0x800` was delivered into the instruction queue. See `docs/v60/PREFETCH.md`.
 
+### The instruction formats
+
+**The seven formats are decoded**, minus the mod fields. `v60_fmt_decode`
+consumes everything else an instruction carries — the opcode byte, the second
+half of the base word, the displacements of Formats IV and VI — and reports
+which mod fields follow and which `m` each is decoded with.
+
+| | source | checked by |
+|---|---|---|
+| all seven formats' field positions and base lengths | p. 3.293 | `tb_v60_fmt_decode` |
+| Format III's one-byte base, with `m` as bit 0 of the opcode | p. 3.293 | `tb_v60_fmt_decode` |
+| Format I's second operand is `reg`, not a mod field | p. 3.293 | `tb_v60_fmt_decode` |
+| the mod/ext order, and which of VIIa/b/c carries which | p. 3.293 | `tb_v60_fmt_decode` |
+| Format IV and VI displacements, signed and little endian | p. 3.293-5 | `tb_v60_fmt_decode` |
+| the extension field's length-or-register-id encoding | p. 3.293 | `tb_v60_fmt_decode` |
+| a whole instruction's length, format decoder plus mod decoder | p. 3.293-4 | `tb_v60_fmt_decode` |
+
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.
@@ -116,17 +133,24 @@ exception model. What exists is the bus and the operand vocabulary that sits
 directly on top of it; nothing yet issues a bus cycle on an instruction's
 behalf.
 
-No sequencer, no opcode decode, no MMU, no FPU, no exception model. What
-exists is a bus, the operand vocabulary above it, the machinery that turns one
-operand reference into bus cycles, and an instruction stream arriving a byte at
-a time. Nothing yet reads that stream.
+No sequencer, no MMU, no FPU, no exception model, and nothing that says which
+format an opcode is. What exists is a bus, the operand vocabulary above it, the
+machinery that turns one operand reference into bus cycles, an instruction
+stream arriving a byte at a time, and a decoder for the shape of an instruction
+once something says which of the seven shapes it has.
 
-The next stage is **the instruction formats and opcode decode**: the seven
-formats on p. 3.293 (`op`, `subop`, `reg`, `m`, `m'`, `d`, `ext` and where each
-sits in the first word) and the instruction-set tables from p. 3.296, which are
-the only thing that says which format an opcode belongs to and therefore how
-many operands to hand `v60_am_decode`. Nine pages of tables, OCR-hostile, and
-worth its own careful pass.
+The next stage is **the opcode → format table**, pp. 3.296–3.301. It is the
+one input `v60_fmt_decode` takes rather than derives, and it is a transcription
+job with real traps: the printed opcodes are patterns with placeholder fields,
+the escape opcodes' format depends on their subop, and the subop column does
+not survive being read at scan resolution — several rows read as duplicates,
+which is impossible. `docs/v60/INSTRUCTION-FORMATS.md` records what a pass at
+it needs to know, including which rows the operand-access CSV can corroborate.
+
+After that, the **instruction decode unit**: sequence the plan
+`v60_fmt_decode` produces — mod, ext, mod', ext' — through `v60_am_decode` and
+`v60_ea`, which is the point at which whole instructions have measurable bus
+behaviour.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus
