@@ -26,6 +26,16 @@ typedef enum logic [3:0] {
     FMT_VIIA = 4'd6,   // [ext'] [mod'] [ext] [mod] [1 m m' subop] [op]
     FMT_VIIB = 4'd7,   // [mod'] [ext] [mod] [1 m m' subop] [op]
     FMT_VIIC = 4'd8,   // [ext'] [mod'] [mod] [1 m m' subop] [op]
+
+    // Two answers that are not yet a format.  The instruction-set table lists
+    // most opcodes as "I, II" and the INSTRUCTION says which -- bit 15 of the
+    // base word, because Format I is `0 m d reg` and Format II is
+    // `1 m m' subop` in that position.  And the escape opcodes 0x58-0x5F
+    // carry a subop that their format depends on.  v60_op_pkg returns these;
+    // op_format() resolves them from the byte after the opcode.
+    FMT_I_OR_II = 4'd9,
+    FMT_ESCAPE  = 4'd10,
+
     FMT_UNKNOWN = 4'd15
 } insn_fmt_e;
 
@@ -35,9 +45,12 @@ typedef enum logic [3:0] {
 // The second half of the base word -- "0 m d reg", "1 m m' subop" or
 // "subop reg".  Formats III, IV and V have no second half: III packs its m
 // into the opcode byte and IV and V have nothing but the opcode.
+// FMT_I_OR_II and FMT_ESCAPE are here because the byte that resolves them IS
+// this second byte: bit 15 for the first, the subop for the second.
 function automatic logic fmt_has_second_byte(input insn_fmt_e f);
     fmt_has_second_byte = (f == FMT_I) || (f == FMT_II) || (f == FMT_VI) ||
-                          (f == FMT_VIIA) || (f == FMT_VIIB) || (f == FMT_VIIC);
+                          (f == FMT_VIIA) || (f == FMT_VIIB) || (f == FMT_VIIC) ||
+                          (f == FMT_I_OR_II) || (f == FMT_ESCAPE);
 endfunction
 
 // The displacement two formats carry in the instruction itself: Format IV's

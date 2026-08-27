@@ -13,10 +13,25 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
      rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_ea.sv \
      rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
-     rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_fmt_decode.sv"
+     rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
+     rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv"
 WORK="${WORK:-/tmp/v60x}"
 mkdir -p "$WORK"
 pass=0; fail=0
+
+# The opcode table is data (tools/v60x/insn_table.py) and v60_op_pkg.sv is
+# generated from it.  A table edited without regenerating is a table that says
+# one thing and an RTL that does another, so check before running anything.
+if ! python3 tools/v60x/insn_table.py > "$WORK/table.log" 2>&1; then
+  echo "FAIL  the instruction table does not validate"; sed 's/^/        /' "$WORK/table.log"
+  exit 1
+fi
+( cd tools/v60x && python3 gen_op_pkg.py "$WORK/v60_op_pkg.sv" >/dev/null )
+if ! diff -q "$WORK/v60_op_pkg.sv" rtl/cpu/v60x/v60_op_pkg.sv > /dev/null; then
+  echo "FAIL  rtl/cpu/v60x/v60_op_pkg.sv is stale -- regenerate it:"
+  echo "        (cd tools/v60x && python3 gen_op_pkg.py ../../rtl/cpu/v60x/v60_op_pkg.sv)"
+  exit 1
+fi
 
 run() {
   local tb=$1 marker=$2 src="$RTL verif/v60x/$1.sv"
@@ -47,6 +62,7 @@ run tb_v60_dxu         "V60 DXU PASS"
 run tb_v60_ea          "V60 EA PASS"
 run tb_v60_pfu         "V60 PFU PASS"
 run tb_v60_fmt_decode  "V60 FMT PASS"
+run tb_v60_idu         "V60 IDU PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"

@@ -46,9 +46,11 @@ are told apart by the instruction itself, not by a table — one opcode byte, tw
 layouts, chosen by a bit.
 
 **A table, for the rest.** Formats III–VII are named per opcode in the
-instruction-set table on pp. 3.296–3.301, and `v60_fmt_decode` takes `fmt` as
-an input because building that table is a separate job. What a pass at it needs
-to know, learned by starting one:
+instruction-set table on pp. 3.296–3.299. **That table now exists** —
+`tools/v60x/insn_table.py`, generated into `rtl/cpu/v60x/v60_op_pkg.sv`, and
+`v60_fmt_decode` looks the opcode up itself. See
+`docs/v60/INSTRUCTION-DECODE.md` for what building it turned up. What made it a
+job of its own:
 
 1. **The printed "opcode" is a pattern, not a byte.** The bit strings contain
    placeholder fields, each of which is a small table on p. 3.295: `siz` (2
@@ -89,17 +91,16 @@ which is V; control transfer is a mix of III, IV, V, VI and II).
 
 ## Format IV's displacement width
 
-`iv_disp_bytes` is an input for the same reason. For `Bcc` the width is in the
-opcode — the branch displacement table on p. 3.295 gives `b = 0` byte and
-`b = 1` halfword, and `Bcc` is printed `0 1 1 b c3 c2 c1 c0` — but Format IV is
-not only `Bcc` (`BSR` is `01001000`, with no `b` bit visible), so the rule that
-covers all of Format IV is not established here.
+Settled, and no longer an input. The Programmer's Reference prints `Bcc` as
+"Branch on Condition (byte displacement) **6x** / (halfword displacement)
+**7x**" — the same `b` bit the databook shows at p. 3.295 — and `BSR`'s syntax
+as "**bsr disp16**". Those are the only two Format IV opcodes, so
+`op_iv_disp_bytes()` in `v60_op_pkg` covers the format.
 
 ## Boundary
 
 `v60_fmt_decode` consumes everything in an instruction that is *not* a mod
 field: the opcode byte, the second half of the base word, and the
 displacements of Formats IV and VI. It then reports which mod fields follow and
-which `m` each is decoded with. Nothing sequences them yet — that is the
-instruction decode unit, which will drive `v60_am_decode` and `v60_ea` from
-this plan.
+which `m` each is decoded with. `v60_idu` walks that plan — see
+`docs/v60/INSTRUCTION-DECODE.md`.

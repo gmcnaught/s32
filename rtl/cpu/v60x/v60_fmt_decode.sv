@@ -21,28 +21,35 @@
 //    VIIb         [mod'] [ext] [mod] [1 m m' subop] [op]
 //    VIIc  [ext'] [mod']       [mod] [1 m m' subop] [op]
 //
-//  Two things this deliberately does not decide, both in
-//  docs/v60/INSTRUCTION-FORMATS.md:
+//  WHICH FORMAT an opcode is comes from v60_op_pkg, generated from the
+//  instruction-set table on pp.3.296-3.299.  Three cases, and this module
+//  resolves all three:
 //
-//    * WHICH FORMAT an opcode is.  That is the instruction-set table on
-//      pp.3.296-3.301 and it is a separate job -- for the escape opcodes the
-//      format depends on the SUBOP as well, so it is not an 8-bit lookup.
-//      `fmt` is an input here.
-//    * How wide Format IV's displacement is.  For Bcc the `b` bit in the
-//      opcode says (p.3.295: "b = 0 byte, b = 1 halfword"), but Format IV is
-//      not only Bcc.  `iv_disp_bytes` is an input.
+//    a format straight from the opcode byte
+//    "I, II" -- the table's answer for most opcodes, and the INSTRUCTION says
+//      which: Format I is `0 m d reg` and Format II is `1 m m' subop` in the
+//      same position, so bit 15 of the base word decides (p.3.293)
+//    an escape opcode, 0x58-0x5F, whose format depends on the subop -- 0x5D is
+//      VIIb for EXTBF and CMPBF but VIIc for INSBF
+//
+//  Both of the last two are resolved by the SAME byte -- the one after the
+//  opcode -- so neither costs a cycle.
+//
+//  Format IV's displacement width comes from v60_op_pkg's op_iv_disp_bytes(),
+//  which has both Format IV opcodes: Bcc's `b` bit (p.3.295, and the
+//  Programmer's Reference prints the two opcode ranges as 6x and 7x) and BSR,
+//  whose syntax the Reference gives as "bsr disp16".
 //============================================================================
 `timescale 1ns/1ps
 
 module v60_fmt_decode
     import v60_fmt_pkg::*;
+    import v60_op_pkg::*;
 (
     input               clk,
     input               rst,
 
     input               start,          // asserted WITH the opcode byte
-    input  insn_fmt_e   fmt,
-    input         [1:0] iv_disp_bytes,  // Format IV only: 1 or 2
 
     input               byte_valid,
     input         [7:0] byte_in,
@@ -51,6 +58,7 @@ module v60_fmt_decode
     output logic        done,           // base decoded; the plan below is set
 
     // ---- fields -----------------------------------------------------------
+    output insn_fmt_e   fmt_out,        // the format, resolved
     output logic  [7:0] op,             // the first byte, whole and unaltered
     output logic        m,              // operand 1's addressing-mode bit
     output logic        m2,             // operand 2's (m' in the figure)
@@ -72,8 +80,9 @@ module v60_fmt_decode
 typedef enum logic [1:0] { S_OP, S_SECOND, S_DISP } state_e;
 
 state_e      state;
-insn_fmt_e   fmt_r;
-logic  [1:0] ivd_r;
+insn_fmt_e   fmt_r;      // what the opcode byte alone said
+logic  [7:0] op_r;
+logic  [1:0] ivd_r;   // the Format IV width, latched with the opcode
 logic  [3:0] cnt, want;
 logic [31:0] acc;
 
@@ -110,6 +119,8 @@ always_ff @(posedge clk) begin
         m_mod     <= 1'b0;
         m_mod2    <= 1'b0;
         fmt_r     <= FMT_UNKNOWN;
+        fmt_out   <= FMT_UNKNOWN;
+        op_r      <= 8'd0;
         ivd_r     <= 2'd0;
         cnt       <= 4'd0;
         want      <= 4'd0;
@@ -120,8 +131,6 @@ always_ff @(posedge clk) begin
         if (start) begin
             busy      <= 1'b1;
             state     <= S_OP;
-            fmt_r     <= fmt;
-            ivd_r     <= iv_disp_bytes;
             base_len  <= 4'd0;
             cnt       <= 4'd0;
             acc       <= 32'd0;
@@ -131,41 +140,67 @@ always_ff @(posedge clk) begin
             d         <= 1'b0;
             reg_field <= 5'd0;
             subop     <= 5'd0;
-            // The plan is the package's statement about the format, not this
-            // module's: one place says which mod fields a format carries.
-            need_mod  <= fmt_has_mod(fmt);
-            need_ext  <= fmt_has_ext(fmt);
-            need_mod2 <= fmt_has_mod2(fmt);
-            need_ext2 <= fmt_has_ext2(fmt);
+            need_mod  <= 1'b0;
+            need_ext  <= 1'b0;
+            need_mod2 <= 1'b0;
+            need_ext2 <= 1'b0;
         end
 
         if (taking) begin
             base_len <= (start ? 4'd0 : base_len) + 4'd1;
 
-            if (start || (state == S_OP)) begin
-                op <= byte_in;
+            if (start || (state == S_OP)) begin : opcode_byte
+                insn_fmt_e f0;
+                f0 = op_format_first(byte_in);
+
+                op    <= byte_in;
+                op_r  <= byte_in;
+                fmt_r <= f0;
+                ivd_r <= op_iv_disp_bytes(byte_in);
 
                 // Format III is the one format whose m rides in the opcode
                 // byte: "op(7:1) m", p.3.293.
-                if (fmt == FMT_III) begin
+                if (f0 == FMT_III) begin
                     m     <= byte_in[0];
                     m_mod <= byte_in[0];
                 end
 
-                if (fmt_has_second_byte(fmt)) begin
+                // A format that needs no second byte is already known, so its
+                // plan is set here; the other two are resolved below.
+                if (fmt_has_second_byte(f0)) begin
                     state <= S_SECOND;
                     busy  <= 1'b1;
-                end else if (fmt_disp_bytes(fmt, iv_disp_bytes) != 4'd0) begin
-                    state <= S_DISP;
-                    want  <= fmt_disp_bytes(fmt, iv_disp_bytes);
-                    cnt   <= 4'd0;
-                    busy  <= 1'b1;
                 end else begin
-                    busy <= 1'b0;
-                    done <= 1'b1;
+                    fmt_out   <= f0;
+                    need_mod  <= fmt_has_mod(f0);
+                    need_ext  <= fmt_has_ext(f0);
+                    need_mod2 <= fmt_has_mod2(f0);
+                    need_ext2 <= fmt_has_ext2(f0);
+                    if (fmt_disp_bytes(f0, op_iv_disp_bytes(byte_in)) != 4'd0) begin
+                        state <= S_DISP;
+                        want  <= fmt_disp_bytes(f0, op_iv_disp_bytes(byte_in));
+                        cnt   <= 4'd0;
+                        busy  <= 1'b1;
+                    end else begin
+                        busy <= 1'b0;
+                        done <= 1'b1;
+                    end
                 end
-            end else if (state == S_SECOND) begin
-                case (fmt_r)
+            end else if (state == S_SECOND) begin : second_byte
+                // "I, II" and the escape opcodes are both resolved by THIS
+                // byte: bit 15 of the base word, or the subop it carries.
+                // v60_op_pkg resolves both of the unresolved answers from
+                // this byte, and it is the only place that knows how.
+                insn_fmt_e fe;
+                fe = op_format(op_r, byte_in);
+
+                fmt_out   <= fe;
+                need_mod  <= fmt_has_mod(fe);
+                need_ext  <= fmt_has_ext(fe);
+                need_mod2 <= fmt_has_mod2(fe);
+                need_ext2 <= fmt_has_ext2(fe);
+
+                case (fe)
                     // "0 m d reg" -- bit 15 is 0 and identifies Format I.
                     FMT_I: begin
                         m         <= byte_in[6];
@@ -180,7 +215,7 @@ always_ff @(posedge clk) begin
                         subop     <= {2'b00, byte_in[7:5]};
                         reg_field <= byte_in[4:0];
                         state     <= S_DISP;
-                        want      <= fmt_disp_bytes(fmt_r, ivd_r);
+                        want      <= fmt_disp_bytes(fe, ivd_r);
                         cnt       <= 4'd0;
                         busy      <= 1'b1;
                     end
@@ -210,13 +245,13 @@ end
 
 // synthesis translate_off
 always_ff @(posedge clk) begin
-    if (!rst && start && (fmt == FMT_UNKNOWN))
-        $display("WARN v60_fmt_decode: started on an opcode with no format -- the instruction-set table has to say (t=%0t)",
-                 $time);
-    if (!rst && start && (fmt == FMT_IV) &&
-        !((iv_disp_bytes == 2'd1) || (iv_disp_bytes == 2'd2)))
+    if (!rst && start && (op_format_first(byte_in) == FMT_UNKNOWN))
+        $display("WARN v60_fmt_decode: opcode %02X is not in the instruction set -- reserved opcode exception (t=%0t)",
+                 byte_in, $time);
+    if (!rst && start && (op_format_first(byte_in) == FMT_IV) &&
+        !((op_iv_disp_bytes(byte_in) == 2'd1) || (op_iv_disp_bytes(byte_in) == 2'd2)))
         $display("WARN v60_fmt_decode: Format IV takes disp8 or disp16, not %0d bytes (t=%0t)",
-                 iv_disp_bytes, $time);
+                 op_iv_disp_bytes(byte_in), $time);
 end
 // synthesis translate_on
 

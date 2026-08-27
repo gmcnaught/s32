@@ -108,6 +108,23 @@ which mod fields follow and which `m` each is decoded with.
 | the extension field's length-or-register-id encoding | p. 3.293 | `tb_v60_fmt_decode` |
 | a whole instruction's length, format decoder plus mod decoder | p. 3.293-4 | `tb_v60_fmt_decode` |
 
+### The opcode table and the decode unit
+
+**An instruction decodes end to end.** The instruction-set table
+(pp. 3.296–3.299) is data in `tools/v60x/insn_table.py`, generated into
+`v60_op_pkg`; `v60_fmt_decode` looks opcodes up itself; `v60_idu` walks the
+plan and runs `v60_am_decode` once per mod field.
+
+| | source | checked by |
+|---|---|---|
+| 134 rows / 284 encodings, and no two instructions sharing one | pp. 3.296-3.299 | `tools/v60x/insn_table.py` |
+| 66 rows agreeing with a separately compiled reference | Programmer's Reference | same, `cross_check()` |
+| the generated package matching its table | — | `run_v60x.sh`, before any bench |
+| "I, II" resolved by bit 15; escape opcodes by their subop | p. 3.293, p. 3.297 | `tb_v60_fmt_decode` |
+| Format IV's width, both opcodes | p. 3.295 + Reference §7 | `tb_v60_fmt_decode` |
+| a ten-instruction program decoded off the real bus | pp. 3.293-3.299 | `tb_v60_idu` |
+| each instruction's PC is the last one's PC plus its length | — | `tb_v60_idu`, across all ten |
+
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.
@@ -133,24 +150,25 @@ exception model. What exists is the bus and the operand vocabulary that sits
 directly on top of it; nothing yet issues a bus cycle on an instruction's
 behalf.
 
-No sequencer, no MMU, no FPU, no exception model, and nothing that says which
-format an opcode is. What exists is a bus, the operand vocabulary above it, the
-machinery that turns one operand reference into bus cycles, an instruction
-stream arriving a byte at a time, and a decoder for the shape of an instruction
-once something says which of the seven shapes it has.
+No execution: no register file, no PSW, no ALU, no MMU, no FPU, no exception
+model. What exists is a bus, the operand vocabulary above it, the machinery
+that turns one operand reference into bus cycles, an instruction stream
+arriving a byte at a time, and a decoder that turns that stream into
+instructions with described operands.
 
-The next stage is **the opcode → format table**, pp. 3.296–3.301. It is the
-one input `v60_fmt_decode` takes rather than derives, and it is a transcription
-job with real traps: the printed opcodes are patterns with placeholder fields,
-the escape opcodes' format depends on their subop, and the subop column does
-not survive being read at scan resolution — several rows read as duplicates,
-which is impossible. `docs/v60/INSTRUCTION-FORMATS.md` records what a pass at
-it needs to know, including which rows the operand-access CSV can corroborate.
+The next stage is **execution**: the register file, the PSW, the ALU and the
+exception model. Everything below it now exists — an instruction arrives,
+decodes, and its operands can be resolved to addresses and fetched — so what is
+missing is the part that does something with them.
 
-After that, the **instruction decode unit**: sequence the plan
-`v60_fmt_decode` produces — mod, ext, mod', ext' — through `v60_am_decode` and
-`v60_ea`, which is the point at which whole instructions have measurable bus
-behaviour.
+Two smaller things are open and neither blocks that:
+
+- **Three subops in the bit-string group** could not be read off the scan
+  (`ORNBS`, `XORNBS`, `SCH1BS`). Their format is not in doubt; see
+  `docs/v60/INSTRUCTION-DECODE.md`.
+- **Nothing yet drives `v60_ea` from `v60_idu`.** The descriptions are in the
+  shape it takes, but the wire between them belongs to the sequencer, which is
+  part of execution.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus

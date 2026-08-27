@@ -1,19 +1,22 @@
 //============================================================================
-//  tb_v60_fmt_decode -- the seven formats, field by field.
+//  tb_v60_fmt_decode -- the seven formats, field by field, from real opcodes.
 //
 //  Every case below is a byte string as it would sit in memory, fed one byte
-//  per clock the way v60_pfu hands them out, and checked against the figure on
-//  databook p.3.293: which byte is the opcode, where m / m' / d / reg / subop
-//  live, how long the base is, and which mod fields follow.
+//  per clock the way v60_pfu hands them out.  The format is NOT told to the
+//  decoder: it looks the opcode up in v60_op_pkg, which is generated from the
+//  instruction-set table (tools/v60x/insn_table.py), so these cases exercise
+//  the table as well as the field extraction.
 //
-//  The last two cases run the real thing: v60_fmt_decode followed by
-//  v60_am_decode over one byte stream, so the instruction's total length is
-//  measured rather than asserted.
+//  Checked against the figure on databook p.3.293: which byte is the opcode,
+//  where m / m' / d / reg / subop live, how long the base is, and which mod
+//  fields follow.  The last two cases run v60_fmt_decode and v60_am_decode
+//  over one byte stream, so an instruction's total length is measured.
 //============================================================================
 `timescale 1ns/1ps
 
 module tb_v60_fmt_decode;
     import v60_fmt_pkg::*;
+    import v60_op_pkg::*;
     import v60_am_pkg::*;
 
 reg clk = 1'b0;
@@ -22,10 +25,9 @@ always #5 clk = ~clk;
 reg          rst = 1'b1;
 reg          f_start = 1'b0, byte_valid = 1'b0;
 reg    [7:0] byte_in = 8'h00;
-insn_fmt_e   f_fmt = FMT_V;
-reg    [1:0] f_ivd = 2'd1;
 
 wire         f_busy, f_done;
+insn_fmt_e   f_fmt;
 wire   [7:0] f_op;
 wire         f_m, f_m2, f_d;
 wire   [4:0] f_reg, f_subop;
@@ -35,9 +37,9 @@ wire         need_mod, need_ext, need_mod2, need_ext2, m_mod, m_mod2;
 
 v60_fmt_decode dut (
     .clk(clk), .rst(rst),
-    .start(f_start), .fmt(f_fmt), .iv_disp_bytes(f_ivd),
+    .start(f_start),
     .byte_valid(byte_valid), .byte_in(byte_in),
-    .busy(f_busy), .done(f_done),
+    .busy(f_busy), .done(f_done), .fmt_out(f_fmt),
     .op(f_op), .m(f_m), .m2(f_m2), .d(f_d), .reg_field(f_reg),
     .subop(f_subop), .disp(f_disp), .base_len(f_len),
     .need_mod(need_mod), .need_ext(need_ext), .need_mod2(need_mod2),
@@ -89,13 +91,12 @@ begin
 end
 endtask
 
-// Feed the base of an instruction to the format decoder.
-task base(input [3:0] fmt_in, input [1:0] ivd);
+// Feed the base of an instruction.  The opcode is seq[0]; nothing tells the
+// decoder what format to expect.
+task base;
     integer i;
 begin
     @(negedge clk);
-    f_fmt = insn_fmt_e'(fmt_in);
-    f_ivd = ivd;
     for (i = 0; i < nseq; i = i + 1) begin
         byte_in    = seq[i];
         byte_valid = 1'b1;
@@ -112,7 +113,7 @@ begin
 end
 endtask
 
-// Feed one mod field to the addressing-mode decoder and return its length.
+// Feed one mod field to the addressing-mode decoder.
 task modfield(input mm);
     integer i;
 begin
@@ -123,7 +124,7 @@ begin
         byte_valid = 1'b1;
         a_start    = (i == 0);
         @(negedge clk);
-        if (a_done) i = nseq;      // it took what it needed
+        if (a_done) i = nseq;
     end
     byte_valid = 1'b0;
     a_start    = 1'b0;
@@ -138,11 +139,12 @@ initial begin
     @(negedge clk);
 
     // =======================================================================
-    // Format I:  [mod] [0 m d reg] [op]
-    // 0x45 = 0100_0101 -> bit15 of the word is 0, m = 1, d = 0, reg = 5
+    // Format I and Format II are the SAME opcode.  MOV.B is 0x09, which the
+    // instruction-set table lists as "I, II"; bit 15 of the base word decides.
+    // 0x45 = 0100_0101 -> bit15 = 0, m = 1, d = 0, reg = 5
     // =======================================================================
-    clr; push(8'h09); push(8'h45); base(FMT_I, 2'd0);
-    chk(f_done === 1'b1,      "Format I: the base is decoded");
+    clr; push(8'h09); push(8'h45); base;
+    chk(f_fmt === FMT_I,      "MOV.B with bit 15 clear is Format I");
     chk(f_op === 8'h09,       "Format I: the opcode is the first byte");
     chk(f_m === 1'b1,         "Format I: m is bit 14 of the word");
     chk(f_d === 1'b0,         "Format I: d is bit 13");
@@ -153,56 +155,58 @@ initial begin
     chk(m_mod === 1'b1,       "Format I: the mod field is decoded with m");
     chk(need_ext === 1'b0 && need_ext2 === 1'b0, "Format I: no extension field");
 
-    // =======================================================================
-    // Format II:  [mod'] [mod] [1 m m' subop] [op]
     // 0xA3 = 1010_0011 -> bit15 = 1, m = 0, m' = 1, subop = 3
-    // =======================================================================
-    clr; push(8'h09); push(8'hA3); base(FMT_II, 2'd0);
+    clr; push(8'h09); push(8'hA3); base;
+    chk(f_fmt === FMT_II,     "the same opcode with bit 15 set is Format II");
     chk(f_m === 1'b0 && f_m2 === 1'b1, "Format II: m is bit 14 and m' is bit 13");
     chk(f_subop === 5'd3,     "Format II: subop is bits 12:8");
     chk(f_len === 4'd2,       "Format II: the base is two bytes");
     chk(need_mod === 1'b1 && need_mod2 === 1'b1, "Format II: two mod fields");
     chk(m_mod === 1'b0 && m_mod2 === 1'b1,
                               "Format II: each mod field gets its own m");
-    chk(need_ext === 1'b0 && need_ext2 === 1'b0, "Format II: no extension field");
 
     // =======================================================================
-    // Format III:  [mod] [op(7:1) m]  -- one byte of base, m at the bottom
+    // Format III: JMP is 1101011-, one byte of base, m at the bottom of it.
     // =======================================================================
-    clr; push(8'hD7); base(FMT_III, 2'd0);
-    chk(f_len === 4'd1,  "Format III: the base is ONE byte");
-    chk(f_m === 1'b1,    "Format III: m is bit 0 of that byte");
-    chk(m_mod === 1'b1,  "Format III: the mod field is decoded with it");
+    clr; push(8'hD7); base;
+    chk(f_fmt === FMT_III, "JMP is Format III");
+    chk(f_len === 4'd1,    "Format III: the base is ONE byte");
+    chk(f_m === 1'b1,      "Format III: m is bit 0 of that byte");
+    chk(m_mod === 1'b1,    "Format III: the mod field is decoded with it");
     chk(need_mod === 1'b1 && need_mod2 === 1'b0, "Format III: one mod field");
-    clr; push(8'hD6); base(FMT_III, 2'd0);
-    chk(f_m === 1'b0,    "Format III: and the other value of bit 0");
+    clr; push(8'hD6); base;
+    chk(f_fmt === FMT_III, "JMP's other byte value is the same instruction");
+    chk(f_m === 1'b0,      "Format III: and the other value of bit 0");
 
     // =======================================================================
-    // Format IV:  [disp8/disp16] [op].  "b = 0 byte / b = 1 halfword" is in
-    // the opcode for Bcc (p.3.295), so the width arrives as an input.
+    // Format IV: Bcc is 011 b cccc, and the width is in the opcode -- 6x is a
+    // byte displacement and 7x a halfword (Programmer's Reference S7), which
+    // is the same b bit as p.3.295.  Nothing outside has to say.
     // =======================================================================
-    clr; push(8'h60); push(8'h80); base(FMT_IV, 2'd1);
+    clr; push(8'h60); push(8'h80); base;
+    chk(f_fmt === FMT_IV,         "Bcc is Format IV");
     chk(f_len === 4'd2,           "Format IV: opcode plus a byte displacement");
     chk(f_disp === 32'hFFFFFF80,  "Format IV: disp8 is signed");
     chk(need_mod === 1'b0,        "Format IV: no mod field");
-    clr; push(8'h68); push(8'h34); push(8'h12); base(FMT_IV, 2'd2);
+    clr; push(8'h70); push(8'h34); push(8'h12); base;
     chk(f_len === 4'd3,           "Format IV: opcode plus a halfword displacement");
     chk(f_disp === 32'h00001234,  "Format IV: disp16 is little endian");
 
     // =======================================================================
-    // Format V:  [op].  Nothing else at all.
+    // Format V: NOP is 0xCD, and nothing follows it at all.
     // =======================================================================
-    clr; push(8'hCD); base(FMT_V, 2'd0);
-    chk(f_len === 4'd1, "Format V: one byte");
-    chk(f_op === 8'hCD, "Format V: and it is the opcode");
+    clr; push(8'hCD); base;
+    chk(f_fmt === FMT_V, "NOP is Format V");
+    chk(f_len === 4'd1,  "Format V: one byte");
     chk(need_mod === 1'b0 && need_mod2 === 1'b0 &&
         need_ext === 1'b0 && need_ext2 === 1'b0, "Format V: nothing follows");
 
     // =======================================================================
-    // Format VI:  [disp16] [subop reg] [op].  subop is THREE bits here.
+    // Format VI: TB is 0xC7.  subop is THREE bits here.
     // 0xA5 = 1010_0101 -> subop = 101, reg = 5
     // =======================================================================
-    clr; push(8'hC7); push(8'hA5); push(8'h34); push(8'h12); base(FMT_VI, 2'd0);
+    clr; push(8'hC7); push(8'hA5); push(8'h34); push(8'h12); base;
+    chk(f_fmt === FMT_VI,        "TB is Format VI");
     chk(f_len === 4'd4,          "Format VI: opcode, fields and a halfword displacement");
     chk(f_subop === 5'd5,        "Format VI: subop is bits 15:13");
     chk(f_reg === 5'd5,          "Format VI: reg is bits 12:8");
@@ -210,18 +214,37 @@ initial begin
     chk(need_mod === 1'b0,       "Format VI: no mod field");
 
     // =======================================================================
-    // Format VII: the three of them differ only in which extension fields
-    // they carry, and the order is always mod, ext, mod', ext'.
+    // The escape opcodes: 0x58-0x5F carry a subop and their format depends on
+    // it.  The second byte is `1 m m' subop`, so 0xA8 is m=0, m'=1, subop=8.
     // =======================================================================
-    clr; push(8'h58); push(8'hA0); base(FMT_VIIA, 2'd0);
+    clr; push(8'h58); push(8'hA8); base;   // MOVC
+    chk(f_fmt === FMT_VIIA, "MOVC is Format VIIa");
     chk(need_mod && need_ext && need_mod2 && need_ext2,
         "Format VIIa: mod, ext, mod', ext'");
-    clr; push(8'h5B); push(8'hA0); base(FMT_VIIB, 2'd0);
+
+    clr; push(8'h5B); push(8'hA8); base;   // MOVBS
+    chk(f_fmt === FMT_VIIB, "MOVBS is Format VIIb");
     chk(need_mod && need_ext && need_mod2 && !need_ext2,
         "Format VIIb: mod, ext, mod' -- no ext'");
-    clr; push(8'h59); push(8'hA0); base(FMT_VIIC, 2'd0);
+
+    clr; push(8'h59); push(8'hA0); base;   // ADDDC
+    chk(f_fmt === FMT_VIIC, "ADDDC is Format VIIc");
     chk(need_mod && !need_ext && need_mod2 && need_ext2,
         "Format VIIc: mod, mod', ext' -- no ext");
+
+    // The headline reason the table is not an 8-bit lookup: one opcode byte,
+    // two formats, told apart by the subop.
+    clr; push(8'h5D); push(8'hA8); base;   // EXTBF, subop 8
+    chk(f_fmt === FMT_VIIB, "0x5D with subop 8 is EXTBF: Format VIIb");
+    clr; push(8'h5D); push(8'hB8); base;   // INSBF, subop 0x18
+    chk(f_fmt === FMT_VIIC, "0x5D with subop 0x18 is INSBF: Format VIIc");
+
+    // An opcode the instruction set does not assign.  Nothing can be said
+    // about its length either, so the decoder stops at the opcode byte and the
+    // sequencer takes the reserved-opcode exception.
+    clr; push(8'h06); base;
+    chk(f_fmt === FMT_UNKNOWN, "0x06 is not an instruction: reserved opcode");
+    chk(f_len === 4'd1,        "a reserved opcode consumes only itself");
 
     // The extension field's own encoding, p.3.293.
     chk(ext_is_register(8'h80) === 1'b1, "ext bit 7 set: the length is in a register");
@@ -232,19 +255,20 @@ initial begin
     // =======================================================================
     // Two whole instructions, measured rather than asserted.
     // =======================================================================
-    // Format I, m = 1, one mod field of one byte: 011 Rn with m=1 is Rn.
-    clr; push(8'h09); push(8'h45); base(FMT_I, 2'd0);
+    // MOV.B as Format I, m = 1: one mod field of one byte (011 Rn with m=1).
+    clr; push(8'h09); push(8'h45); base;
     total = f_len;
     clr; push(8'h67);              modfield(m_mod);
     chk(a_mode === AM_RN, "whole instruction: the mod field decodes as Rn");
     total = total + a_len;
     chk(total == 3, "whole instruction: Format I with a register operand is three bytes");
 
-    // Format II, m = 0 and m' = 1: [Rn] and Rn, one byte each.
-    // 0x80 = 1000_0000 -> bit15 = 1 (Format II), m = 0, m' = 0, subop = 0
-    clr; push(8'h09); push(8'h80); base(FMT_II, 2'd0);
+    // MOV.B as Format II, m = 0 and m' = 0: [Rn] and disp.16[Rn].
+    // 0x80 = 1000_0000 -> bit15 = 1, m = 0, m' = 0, subop = 0
+    clr; push(8'h09); push(8'h80); base;
     total = f_len;
-    chk(m_mod === 1'b0 && m_mod2 === 1'b0, "whole instruction: 0x80 is m = 0, m' = 0");
+    chk(f_fmt === FMT_II, "whole instruction: 0x80 makes it Format II");
+    chk(m_mod === 1'b0 && m_mod2 === 1'b0, "whole instruction: m = 0, m' = 0");
     clr; push(8'h67);              modfield(m_mod);
     chk(a_mode === AM_RN_IND, "whole instruction: the first operand is [Rn]");
     total = total + a_len;
