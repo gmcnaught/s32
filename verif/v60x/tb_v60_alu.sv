@@ -38,7 +38,107 @@ wire         writes;
 v60_alu dut (.op(op), .opbytes(opbytes), .x(x), .y(y), .flags_in(flags_in),
              .result(result), .flags_out(flags_out), .writes(writes));
 
+// ---------------------------------------------------------------------------
+// The shift group's reference: the Description sentences, one step at a time.
+// ---------------------------------------------------------------------------
+reg [31:0] m_res;
+reg        m_cy, m_ov, m_s, m_z;
+integer    wi, oi, ci, vi, fi;
+reg  [3:0] w;
+
+function [31:0] wmask(input [3:0] bytes);
+    wmask = (bytes == 4'd1) ? 32'h0000_00FF :
+            (bytes == 4'd2) ? 32'h0000_FFFF : 32'hFFFF_FFFF;
+endfunction
+
+// Values chosen for their edges: zero, one, the sign bit, all ones, and a few
+// patterns whose bits are not symmetric so a reversed rotate is visible.
+function [31:0] sh_value(input integer i, input [3:0] bytes);
+    integer nb;
+    begin
+        nb = bytes * 8;
+        case (i)
+            0: sh_value = 32'h0000_0000;
+            1: sh_value = 32'h0000_0001;
+            2: sh_value = 32'h0000_0003;
+            3: sh_value = 32'h0000_0002;
+            4: sh_value = 32'hFFFF_FFFF;
+            5: sh_value = 32'h0000_0080 << (nb - 8);          // the sign bit
+            6: sh_value = 32'h0000_0081 << (nb - 8);
+            7: sh_value = 32'h0000_0055;
+            8: sh_value = 32'h0000_00AA;
+            9: sh_value = 32'h1234_5678;
+            10: sh_value = 32'h0000_0040 << (nb - 8);
+            default: sh_value = 32'h8000_0001;
+        endcase
+        sh_value = sh_value & wmask(bytes);
+    end
+endfunction
+
+task sh_model(input alu_op_e o, input [3:0] bytes,
+              input [31:0] v, input [7:0] count, input cy0);
+    integer nb, n, k;
+    reg [31:0] a;
+    reg        cy, out, top_before, sign0, left;
+    begin
+        nb    = bytes * 8;
+        left  = !count[7];
+        n     = left ? count : (256 - count);      // the magnitude, 0 to 128
+        a     = v & wmask(bytes);
+        cy    = cy0;
+        out   = 1'b0;
+        m_ov  = 1'b0;
+        sign0 = a[nb-1];
+
+        for (k = 0; k < n; k = k + 1) begin
+            top_before = a[nb-1];
+            if (left) begin
+                out = top_before;
+                a   = (a << 1) & wmask(bytes);
+                // Left: a zero comes in for both shifts; a rotate brings the
+                // bit that just left, and a rotate through carry brings CY.
+                if (o == ALU_ROT)  a[0] = out;
+                if (o == ALU_ROTC) begin a[0] = cy; cy = out; end
+            end else begin
+                out = a[0];
+                a   = (a >> 1) & wmask(bytes);
+                // Right: "the MSB being shifted into itself" for SHA, the bit
+                // that just left for ROT, and CY for ROTC.
+                if (o == ALU_SHA)  a[nb-1] = top_before;
+                if (o == ALU_ROT)  a[nb-1] = out;
+                if (o == ALU_ROTC) begin a[nb-1] = cy; cy = out; end
+            end
+            // "Integer overflow occurs if the sign of the result changes at
+            // anytime during the execution of this instruction."
+            if ((o == ALU_SHA) && (a[nb-1] !== sign0)) m_ov = 1'b1;
+        end
+
+        m_res = a & wmask(bytes);
+        m_cy  = (n == 0) ? 1'b0 : out;
+        m_s   = a[nb-1];
+        m_z   = ((a & wmask(bytes)) == 32'd0);
+        if (o != ALU_SHA) m_ov = 1'b0;
+    end
+endtask
+
 integer errors = 0;
+integer checked_q = 0;
+
+// A check inside a sweep: silent while it passes, and when it fails it says
+// which case it was, because "the shift group's result" alone would not.
+task chk_q(input cond, input [8*48:1] what, input integer count,
+           input integer value_index);
+begin
+    checked_q = checked_q + 1;
+    if (!cond) begin
+        errors = errors + 1;
+        if (errors < 20)
+            $display("FAIL  %0s: op=%0d width=%0d count=%0d value=%h -> %h/%b, model %h/%b",
+                     what, op, opbytes, count, y, result, flags_out,
+                     m_res & wmask(opbytes), {m_cy, m_ov, m_s, m_z});
+    end
+end
+endtask
 integer checked = 0;
 task chk(input cond, input [8*72:1] what);
 begin
@@ -247,6 +347,73 @@ initial begin
     chk(result === 32'h03,           "ADDC adds the carry in");
     op = ALU_SUBC; x = 32'h01; y = 32'h05; #1;
     chk(result === 32'h03,           "SUBC subtracts it");
+
+    // =======================================================================
+    // The shift group, against a reference that shifts ONE BIT AT A TIME.
+    //
+    // v60_alu computes these with barrel shifts and modulo arithmetic; the
+    // model below does what the Description sentences literally say, one step
+    // per iteration, keeping the last bit to leave and watching the sign after
+    // every step.  Two different formulations, which is the point.
+    // =======================================================================
+    for (wi = 0; wi < 3; wi = wi + 1) begin
+        w = (wi == 0) ? 4'd1 : (wi == 1) ? 4'd2 : 4'd4;
+        for (oi = 0; oi < 4; oi = oi + 1) begin
+            for (ci = -34; ci <= 34; ci = ci + 1) begin
+                for (vi = 0; vi < 12; vi = vi + 1) begin
+                    for (fi = 0; fi < 2; fi = fi + 1) begin
+                        opbytes  = w;
+                        y        = sh_value(vi, w);
+                        x        = {24'd0, ci[7:0]};
+                        flags_in = fi ? 4'b1000 : 4'b0000;
+                        case (oi)
+                            0: op = ALU_SHL;
+                            1: op = ALU_SHA;
+                            2: op = ALU_ROT;
+                            default: op = ALU_ROTC;
+                        endcase
+                        #1;
+                        sh_model(op, w, y, ci[7:0], flags_in[PSW_CY]);
+                        chk_q(result === (m_res & wmask(w)),
+                              "the shift group's result", ci, vi);
+                        chk_q(flags_out[PSW_CY] === m_cy,
+                              "the last bit shifted or rotated out", ci, vi);
+                        chk_q(flags_out[PSW_OV] === m_ov,
+                              "the shift group's overflow", ci, vi);
+                        chk_q(flags_out[PSW_S] === m_s,
+                              "the MSB of a shifted result", ci, vi);
+                        chk_q(flags_out[PSW_Z] === m_z,
+                              "a shifted result being zero", ci, vi);
+                    end
+                end
+            end
+        end
+    end
+
+    // The sentences that a sweep cannot say out loud, spelled out once each.
+    opbytes = 4'd1; flags_in = 4'b0000;
+    op = ALU_SHL; y = 32'h81; x = 32'd0; #1;
+    chk(result === 32'h81,          "a shift count of zero leaves the value");
+    chk(flags_out[PSW_CY] === 1'b0, "and clears CY, which the block says");
+    chk(flags_out[PSW_S] === 1'b1,  "and still updates the other flags");
+    x = 32'd100; #1;
+    chk(result === 32'h00,
+        "a count past the operand's length shifts everything out");
+    op = ALU_SHA; y = 32'h81; x = 32'hFF & (-32'sd100); #1;
+    chk(result === 32'hFF,
+        "an arithmetic shift right past it leaves the sign, not zero");
+    op = ALU_SHL; #1;
+    chk(result === 32'h00, "where a logical one leaves zero");
+    op = ALU_SHA; y = 32'h40; x = 32'd1; #1;
+    chk(flags_out[PSW_OV] === 1'b1,
+        "an arithmetic shift that changes the sign overflows");
+    op = ALU_SHL; #1;
+    chk(flags_out[PSW_OV] === 1'b0, "where a logical one never does");
+    op = ALU_ROT; y = 32'h81; x = 32'd1; #1;
+    chk(result === 32'h03,     "a rotate brings the MSB round to the LSB");
+    op = ALU_ROTC; y = 32'h81; x = 32'd1; flags_in = 4'b0000; #1;
+    chk(result === 32'h02,     "and a rotate through carry brings CY instead");
+    chk(flags_out[PSW_CY] === 1'b1, "leaving the MSB in the carry");
 
     $display("V60 ALU: %0d checks", checked);
     if (errors == 0) $display("V60 ALU PASS");

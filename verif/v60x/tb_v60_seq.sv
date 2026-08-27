@@ -389,10 +389,22 @@ initial begin
     mem[11'h123] = 8'h80; mem[11'h124] = 8'hC0; mem[11'h125] = 8'h68;
     mem[11'h126] = 8'h89; mem[11'h127] = 8'h00;
     // SHL.b #1, R8          A9 A0 F4 01 68
-    //   A shift: decoded and addressed, and not one of the operations v60_alu
-    //   implements, so the sequencer stops rather than inventing one.
     mem[11'h128] = 8'hA9; mem[11'h129] = 8'hA0; mem[11'h12A] = 8'hF4;
     mem[11'h12B] = 8'h01; mem[11'h12C] = 8'h68;
+    // SHL.w #4, R9          AD A0 F4 04 69
+    //   The count is a BYTE and the destination is a WORD: the two operands of
+    //   one instruction at different widths, which nothing else in these
+    //   programs does.  The immediate is one byte long because the count is,
+    //   so an implementation that took the widths the other way round would
+    //   read four and every following instruction would decode from the wrong
+    //   place -- which the PC below would show.
+    mem[11'h12D] = 8'hAD; mem[11'h12E] = 8'hA0; mem[11'h12F] = 8'hF4;
+    mem[11'h130] = 8'h04; mem[11'h131] = 8'h69;
+    // MUL.b #2, R8          81 A0 F4 02 68
+    //   Decoded and addressed, and not one of the operations v60_alu
+    //   implements, so the sequencer stops rather than inventing one.
+    mem[11'h132] = 8'h81; mem[11'h133] = 8'hA0; mem[11'h134] = 8'hF4;
+    mem[11'h135] = 8'h02; mem[11'h136] = 8'h68;
 
     // A second program, in Format I -- one mod field and one register, with
     // `d` saying which way round.  R8 is set up as a pointer, R9 and R10 hold
@@ -607,14 +619,27 @@ initial begin
         "0x5B + 0x5B is negative AT BYTE WIDTH, which is the width that counts");
     chk(seq_psw[PSW_CY] === 1'b0, "and does not carry out of a byte");
 
-    // ---- 8. something it cannot execute -----------------------------------------
+    // ---- 8. a shift, whose two operands are different widths ---------------------
+    step;
+    chk(rf.gpr[8] === 32'h0000_00B6, "SHL.b shifted the register left one bit");
+    chk(seq_psw[PSW_CY] === 1'b0,
+        "and 0x5B's bit 7 was clear, so no bit was shifted out set");
+    chk(seq_psw[PSW_S] === 1'b1,   "the result's MSB is set at byte width");
+    chk(seq_psw[PSW_OV] === 1'b0,  "and a logical shift clears OV");
+    chk(seq_pc === 32'h0000012D,   "the count operand's immediate is one byte");
+    step;
+    chk(rf.gpr[9] === 32'h0000_6100, "SHL.w shifted a WORD by a BYTE count");
+    chk(seq_pc === 32'h00000132,
+        "and its immediate is one byte too, because the COUNT is the byte");
+
+    // ---- 9. something it cannot execute -----------------------------------------
     step;
     chk(stopped === 1'b1,
-        "a shift is decoded and addressed and not executed");
+        "a multiply is decoded and addressed and not executed");
     chk(stop_reason === 2'd0,
         "and it says why: the table has the opcode, v60_alu does not have the operation");
 
-    // ---- 9. a format whose semantics are not documented --------------------------
+    // ---- 10. a format whose semantics are not documented -------------------------
     // Format I's `d` bit decides which operand is the destination and no page
     // held here says what it means, so a Format I instruction stops the
     // machine for a different reason than a missing operation does.  A reset

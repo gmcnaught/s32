@@ -67,9 +67,14 @@ What is still not raised anywhere: every exception that needs a pin (`berr`,
 
 ## 3. Three recorded gaps, each small
 
-- **The shifts and rotates.** `SHA`, `SHL`, `ROT`, `ROTC` are in the table with
-  their formats and widths; what is missing is their Condition Codes blocks,
-  which have not been read off the page. `v60_alu` says so in its header.
+- ~~The shifts and rotates~~ — **done.** All four Condition Codes blocks are
+  read and implemented, and `tb_v60_alu` holds them against a model that
+  shifts one bit at a time: 132,135 checks over three widths, counts from -34
+  to +34 and both states of the incoming carry. `docs/v60/SHIFTS.md` has the
+  pages. Doing it turned up a table defect — the group's two operand widths
+  were the wrong way round, the count taking the size field where the syntax
+  lines give it `.b` in all three variants — which nothing could notice while
+  nothing executed them.
 - **The extending moves.** `MOVS.*` and `MOVZ.*` sign- and zero-extend, and
   `MOVT.*` truncates — distinct operations `v60_alu` does not have. Adding them
   would also make one thing observable that is not today: `tb_v60_seq` records

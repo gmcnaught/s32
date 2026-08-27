@@ -154,6 +154,9 @@ register file, the address unit and the ALU, and retires it.
 | that R31 and its stack pointer register may differ mid-program | PgmRef §8 | `tb_v60_regfile` |
 | the LDPR / STPR permission per privileged register id | PgmRef Fig 3-2 | `tb_v60_regfile` |
 | CY / OV / S / Z for eleven operations, byte width exhaustively | PgmRef §7 blocks, p. 3.296 | `tb_v60_alu` |
+| SHL / SHA / ROT / ROTC against a one-bit-per-step model, 132,135 checks | PgmRef §7 blocks | `tb_v60_alu` |
+| a signed byte count, a zero count clearing CY, and counts past the width | PgmRef §7 | `tb_v60_alu` |
+| an instruction whose two operands are at different widths | PgmRef §7 syntax lines | `tb_v60_seq` |
 | the SBT read at `SBR + 4 × vector`, and the frame BRKV prints | PgmRef §8 | `tb_v60_exc` |
 | execution level 0 and the interrupt-enable rules for a handler | PgmRef §8 | `tb_v60_exc` |
 | a program: immediate, add, compare, store, read-modify-write | all of the above | `tb_v60_seq` |
@@ -220,8 +223,9 @@ System 32 still needs:
   MAME's V60 core by way of the Sega System 32 core's `s32_v60.sv`, which the
   README already admits as an architectural oracle for execution semantics.
   Marked at the point of decision in `v60_seq.sv`.
-- **The multiplies, divides, shifts and rotates**, and everything outside the
-  integer set. The generated table returns `ALU_NONE` for them.
+- **The multiplies and divides**, and everything outside the integer set. The
+  generated table returns `ALU_NONE` for them. ~~The shifts and rotates~~ are
+  **done** — see `docs/v60/SHIFTS.md`.
 - ~~Wiring `v60_exc` in~~ — **done** for the three Instruction Exceptions this
   stage can raise (reserved opcode, reserved addressing mode, immediate
   destination). `v60_dmux` is the data-unit mux the plan asked for rather than

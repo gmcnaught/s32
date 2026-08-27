@@ -312,8 +312,11 @@ DATA_TYPE = {
     'AND': ('siz', 'siz'), 'OR': ('siz', 'siz'),
     'XOR': ('siz', 'siz'), 'NOT': ('siz', 'siz'),
 
-    # Shift and rotate: the count is a byte, the datum takes the siz field.
-    'SHA': ('siz', 1), 'SHL': ('siz', 1), 'ROT': ('siz', 1), 'ROTC': ('siz', 1),
+    # Shift and rotate: the count is a byte, the datum takes the siz field --
+    # and the count is the SOURCE, so it is the first of the pair.  The syntax
+    # lines are "sha.b count.b.r, dst.b.rw / sha.h count.b.r, dst.h.rw /
+    # sha.w count.b.r, dst.w.rw": .b on the count in all three.
+    'SHA': (1, 'siz'), 'SHL': (1, 'siz'), 'ROT': (1, 'siz'), 'ROTC': (1, 'siz'),
 
     # Floating point: the s bit.
     'MOVF': ('s', 's'), 'ADDF': ('s', 's'), 'SUBF': ('s', 's'),
@@ -387,6 +390,10 @@ EXEC_OP = {
     'CMP': 'CMP', 'TEST': 'TEST', 'NEG': 'NEG',
     'AND': 'AND', 'OR': 'OR', 'XOR': 'XOR', 'NOT': 'NOT',
     'MOV.B': 'MOV', 'MOV.H': 'MOV', 'MOV.W': 'MOV', 'MOV.D': 'MOV',
+    # The shift group.  Their source operand is the count and their
+    # destination is what moves, which is the pairing v60_alu's x and y
+    # already are.  See docs/v60/SHIFTS.md.
+    'SHL': 'SHL', 'SHA': 'SHA', 'ROT': 'ROT', 'ROTC': 'ROTC',
 }
 
 
