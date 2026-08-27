@@ -32,6 +32,7 @@
 package v60_op_pkg;
 
 import v60_fmt_pkg::*;
+import v60_alu_pkg::*;
 
 // The opcode byte alone.  Anything the table does not list is a reserved
 // opcode -- "Reserved opcode exceptions occur when an attempt is made to
@@ -968,6 +969,58 @@ function automatic logic [3:0] op_data_bytes(input logic [7:0] op,
         else
             r = op_data_bytes_first(op, second);
         op_data_bytes = r;
+    end
+endfunction
+
+// What the instruction does, for the ones v60_alu implements.  ALU_NONE means
+// the sequencer can decode and address it but not execute it.
+function automatic alu_op_e op_alu(input logic [7:0] op);
+    alu_op_e r;
+    begin
+        case (op)
+            8'h09: r = ALU_MOV;  // MOV.B
+            8'h1B: r = ALU_MOV;  // MOV.H
+            8'h2D: r = ALU_MOV;  // MOV.W
+            8'h38: r = ALU_NOT;  // NOT
+            8'h39: r = ALU_NEG;  // NEG
+            8'h3A: r = ALU_NOT;  // NOT
+            8'h3B: r = ALU_NEG;  // NEG
+            8'h3C: r = ALU_NOT;  // NOT
+            8'h3D: r = ALU_NEG;  // NEG
+            8'h3F: r = ALU_MOV;  // MOV.D
+            8'h80: r = ALU_ADD;  // ADD
+            8'h82: r = ALU_ADD;  // ADD
+            8'h84: r = ALU_ADD;  // ADD
+            8'h88: r = ALU_OR;   // OR
+            8'h8A: r = ALU_OR;   // OR
+            8'h8C: r = ALU_OR;   // OR
+            8'h90: r = ALU_ADDC; // ADDC
+            8'h92: r = ALU_ADDC; // ADDC
+            8'h94: r = ALU_ADDC; // ADDC
+            8'h98: r = ALU_SUBC; // SUBC
+            8'h9A: r = ALU_SUBC; // SUBC
+            8'h9C: r = ALU_SUBC; // SUBC
+            8'hA0: r = ALU_AND;  // AND
+            8'hA2: r = ALU_AND;  // AND
+            8'hA4: r = ALU_AND;  // AND
+            8'hA8: r = ALU_SUB;  // SUB
+            8'hAA: r = ALU_SUB;  // SUB
+            8'hAC: r = ALU_SUB;  // SUB
+            8'hB0: r = ALU_XOR;  // XOR
+            8'hB2: r = ALU_XOR;  // XOR
+            8'hB4: r = ALU_XOR;  // XOR
+            8'hB8: r = ALU_CMP;  // CMP
+            8'hBA: r = ALU_CMP;  // CMP
+            8'hBC: r = ALU_CMP;  // CMP
+            8'hF0: r = ALU_TEST; // TEST
+            8'hF1: r = ALU_TEST; // TEST
+            8'hF2: r = ALU_TEST; // TEST
+            8'hF3: r = ALU_TEST; // TEST
+            8'hF4: r = ALU_TEST; // TEST
+            8'hF5: r = ALU_TEST; // TEST
+            default: r = ALU_NONE;
+        endcase
+        op_alu = r;
     end
 endfunction
 

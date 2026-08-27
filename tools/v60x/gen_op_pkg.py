@@ -13,7 +13,7 @@ Usage:  python3 tools/v60x/gen_op_pkg.py [outfile]
 
 import sys
 
-from insn_table import TABLE, DATA_TYPE, expand, check_table
+from insn_table import TABLE, DATA_TYPE, EXEC_OP, expand, check_table
 
 HEADER = '''//============================================================================
 //  v60_op_pkg -- which instruction format an opcode is.
@@ -49,6 +49,7 @@ HEADER = '''//==================================================================
 package v60_op_pkg;
 
 import v60_fmt_pkg::*;
+import v60_alu_pkg::*;
 '''
 
 FOOTER = '''
@@ -95,6 +96,7 @@ def build():
     who = {}
     width = {}        # opcode byte      -> (w1, w2)
     width_esc = {}    # (opcode, subop)  -> (w1, w2)
+    execop = {}       # opcode byte      -> the ALU operation, or None
 
     def put(store, key, value, mnemonic, other):
         # Two instructions on one key must agree about the operand widths.
@@ -117,6 +119,7 @@ def build():
             if subop is None:
                 first[b] = SV_FMT[fmt]
                 who[b] = mnemonic
+                execop[b] = EXEC_OP.get(mnemonic)
                 put(width, b, widths, mnemonic, who)
             else:
                 first[b] = 'FMT_ESCAPE'
@@ -126,7 +129,7 @@ def build():
                                     'the base word gives it' % (mnemonic, s))
                     escape[(b, s)] = (SV_FMT[fmt], mnemonic)
                     put(width_esc, (b, s), widths, mnemonic, who_esc)
-    return first, escape, who, width, width_esc, who_esc
+    return first, escape, who, width, width_esc, who_esc, execop
 
 
 def emit(out):
@@ -134,7 +137,7 @@ def emit(out):
     if errors or collisions:
         raise SystemExit('table does not validate; run insn_table.py')
 
-    first, escape, who, width, width_esc, who_esc = build()
+    first, escape, who, width, width_esc, who_esc, execop = build()
     w = out.write
     w(HEADER)
 
@@ -238,6 +241,23 @@ function automatic logic [3:0] op_data_bytes(input logic [7:0] op,
     end
 endfunction
 
+// What the instruction does, for the ones v60_alu implements.  ALU_NONE means
+// the sequencer can decode and address it but not execute it.
+function automatic alu_op_e op_alu(input logic [7:0] op);
+    alu_op_e r;
+    begin
+        case (op)
+''')
+    for b in range(256):
+        if execop.get(b):
+            w('            8\'h%02X: r = ALU_%-5s // %s\n'
+              % (b, execop[b] + ';', who[b]))
+    w('''            default: r = ALU_NONE;
+        endcase
+        op_alu = r;
+    end
+endfunction
+
 // Format IV's displacement width, which is in the opcode and in two
 // documents.  The databook prints Bcc as `011 b cccc` with the branch
 // displacement table on p.3.295 giving "b = 0 byte / b = 1 halfword"; the
@@ -280,9 +300,11 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else 'rtl/cpu/v60x/v60_op_pkg.sv'
     with open(path, 'w') as out:
         emit(out)
-    first, escape, _, width, width_esc, _w = build()
-    print('%s: %d opcode bytes, %d escape encodings, %d widths (%d by subop)'
-          % (path, len(first), len(escape), len(width), len(width_esc)))
+    first, escape, _, width, width_esc, _w, execop = build()
+    print('%s: %d opcode bytes, %d escape encodings, %d widths (%d by subop), '
+          '%d executable'
+          % (path, len(first), len(escape), len(width), len(width_esc),
+             len([v for v in execop.values() if v])))
 
 
 if __name__ == '__main__':

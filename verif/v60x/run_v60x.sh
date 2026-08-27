@@ -13,11 +13,11 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
      rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_ea.sv \
      rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
-     rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
-     rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
      rtl/cpu/v60x/v60_psw_pkg.sv rtl/cpu/v60x/v60_regfile.sv \
      rtl/cpu/v60x/v60_alu_pkg.sv rtl/cpu/v60x/v60_alu.sv \
-     rtl/cpu/v60x/v60_exc.sv"
+     rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
+     rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
+     rtl/cpu/v60x/v60_exc.sv rtl/cpu/v60x/v60_seq.sv"
 WORK="${WORK:-/tmp/v60x}"
 mkdir -p "$WORK"
 pass=0; fail=0
@@ -71,6 +71,7 @@ run tb_v60_psw         "V60 PSW PASS"
 run tb_v60_regfile     "V60 REGFILE PASS"
 run tb_v60_alu         "V60 ALU PASS"
 run tb_v60_exc         "V60 EXC PASS"
+run tb_v60_seq         "V60 SEQ PASS"
 
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"

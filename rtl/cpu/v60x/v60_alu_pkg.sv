@@ -23,7 +23,12 @@ typedef enum logic [3:0] {
     ALU_AND  = 4'd7,
     ALU_OR   = 4'd8,
     ALU_XOR  = 4'd9,
-    ALU_NOT  = 4'd10
+    ALU_NOT  = 4'd10,
+    // MOV: the source, passed through.  Its flags column on p.3.296 is blank
+    // -- it leaves the condition codes as it found them.
+    ALU_MOV  = 4'd11,
+    // Not one of the operations implemented here.
+    ALU_NONE = 4'd15
 } alu_op_e;
 
 endpackage

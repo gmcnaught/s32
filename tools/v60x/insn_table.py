@@ -372,6 +372,24 @@ DATA_TYPE = {
 }
 
 
+# ---------------------------------------------------------------------------
+# What an instruction DOES, for the ones v60_alu implements.
+# ---------------------------------------------------------------------------
+# The mnemonic is the operation -- that is what a mnemonic is -- and v60_alu
+# implements eleven of them plus the move.  Everything else is None: the
+# sequencer can decode and address it but cannot execute it, and says so
+# rather than doing something arbitrary.
+#
+# MOV is here because its flags column on p.3.296 is blank: it moves and
+# leaves the condition codes alone.
+EXEC_OP = {
+    'ADD': 'ADD', 'ADDC': 'ADDC', 'SUB': 'SUB', 'SUBC': 'SUBC',
+    'CMP': 'CMP', 'TEST': 'TEST', 'NEG': 'NEG',
+    'AND': 'AND', 'OR': 'OR', 'XOR': 'XOR', 'NOT': 'NOT',
+    'MOV.B': 'MOV', 'MOV.H': 'MOV', 'MOV.W': 'MOV', 'MOV.D': 'MOV',
+}
+
+
 def _split(pattern):
     """['0','1','{siz}',...] -- one entry per printed position."""
     out, i = [], 0

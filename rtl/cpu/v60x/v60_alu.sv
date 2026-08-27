@@ -130,15 +130,18 @@ always_comb begin
         ALU_OR:  raw = ym | xm;
         ALU_XOR: raw = ym ^ xm;
         ALU_NOT: raw = ~xm;
+        ALU_MOV: raw = xm;
         default: ;
     endcase
 end
 
 // S and Z are read at the operand's width, which is the decision above.
+// MOV is the exception: its flags column on p.3.296 is blank, so it leaves all
+// four as it found them.
 assign result    = raw & mask;
 assign f_s       = sign_of(raw, msb);
 assign f_z       = ((raw & mask) == 32'd0);
-assign flags_out = {f_cy, f_ov, f_s, f_z};
+assign flags_out = (op == ALU_MOV) ? flags_in : {f_cy, f_ov, f_s, f_z};
 
 // synthesis translate_off
 always_comb begin

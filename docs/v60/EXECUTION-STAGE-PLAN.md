@@ -1,8 +1,19 @@
 # The execution stage: what it needs, and in what order
 
-**Written 2026-08-27**, after the front end was finished (`v60_pfu` →
-`v60_fmt_decode` → `v60_idu` → `v60_am_decode` → `v60_ea` → `v60_dxu` →
-`v60_biu`). This is a plan, not a boundary statement: nothing below is built.
+**Written 2026-08-27**, after the front end was finished. **All six increments
+below are now built** — see `rtl/cpu/v60x/README.md` for what they assert and
+`git log` for what each one turned up. Kept as written, because what a plan got
+wrong is worth keeping next to what it got right:
+
+- E1's "type the variable-length instructions from the extension field" was
+  wrong: p. 3.261's unit size and the extension field's length are different
+  quantities, and only the first is `opbytes`.
+- E3's "R31 read and written at all eight {IS, EL} combinations resolves to the
+  documented pointer" describes an alias model the Programmer's Reference rules
+  out in as many words: the two "can differ during the execution of a program".
+- §4.7's integer-overflow silence was not one — BRKV raises it.
+- The vector numbering here was off by one for the reserved opcode: Figure 8-2
+  puts it at offset +64, so vector 16.
 
 Drafted by a scoping pass over the two documents and reviewed against them.
 Claims marked **verified** were re-read on the page while reviewing; the rest

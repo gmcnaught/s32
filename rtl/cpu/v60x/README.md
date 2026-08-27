@@ -127,6 +127,24 @@ plan and runs `v60_am_decode` once per mod field.
 | a conversion instruction's two operands having different widths | p. 3.261 | `tb_v60_idu` |
 | each instruction's PC is the last one's PC plus its length | — | `tb_v60_idu`, across all ten |
 
+### The execution stage
+
+**Instructions execute.** `v60_seq` sequences a fetched instruction through the
+register file, the address unit and the ALU, and retires it.
+
+| | source | checked by |
+|---|---|---|
+| the PSW's twenty fields, from two independent renderings that agree | p. 3.248, PgmRef §3 | `tb_v60_psw` |
+| all 16 conditions over all 16 flag combinations, twice over | p. 3.295 + PgmRef §7 Bcc | `tb_v60_psw` |
+| 32 registers, and R31 as five stack pointers switched on {IS, EL} | p. 3.249, PgmRef §8 | `tb_v60_regfile` |
+| that R31 and its stack pointer register may differ mid-program | PgmRef §8 | `tb_v60_regfile` |
+| the LDPR / STPR permission per privileged register id | PgmRef Fig 3-2 | `tb_v60_regfile` |
+| CY / OV / S / Z for eleven operations, byte width exhaustively | PgmRef §7 blocks, p. 3.296 | `tb_v60_alu` |
+| the SBT read at `SBR + 4 × vector`, and the frame BRKV prints | PgmRef §8 | `tb_v60_exc` |
+| execution level 0 and the interrupt-enable rules for a handler | PgmRef §8 | `tb_v60_exc` |
+| a program: immediate, add, compare, store, read-modify-write | all of the above | `tb_v60_seq` |
+| an indirect destination costing one pointer read, not two | p. 3.294 | `tb_v60_seq` |
+
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.
@@ -152,31 +170,41 @@ exception model. What exists is the bus and the operand vocabulary that sits
 directly on top of it; nothing yet issues a bus cycle on an instruction's
 behalf.
 
-No execution: no register file, no PSW, no ALU, no MMU, no FPU, no exception
-model. What exists is a bus, the operand vocabulary above it, the machinery
-that turns one operand reference into bus cycles, an instruction stream
-arriving a byte at a time, and a decoder that turns that stream into
-instructions with described operands.
+No MMU, no FPU, no control flow, no task or context switching, no address
+traps, no emulation mode. What exists is a bus, the operand vocabulary above
+it, the machinery that turns one operand reference into bus cycles, an
+instruction stream, a decoder, and enough architectural state and datapath to
+execute the integer two-operand instructions of Format II and retire them.
 
-The next stage is **execution**: the register file, the PSW, the ALU and the
-exception model. Everything below it now exists — an instruction arrives,
-decodes, and its operands can be resolved to addresses and fetched (see
-`tb_v60_front`) — so what is missing is the part that does something with them.
-`docs/v60/EXECUTION-STAGE-PLAN.md` scopes it: six increments, what each one's
-bench would assert, what has to change in the modules that exist, and the
-traps — including that both PSW *figures* are unreadable at scan resolution
-while both bit *lists* survive and agree.
+`docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are **done**: the operand
+data type, the PSW package, the register file, the ALU, the exception unit and
+the sequencer. What that plan did not scope, and what a machine that could run
+System 32 still needs:
+
+- **Control flow.** Nothing redirects the prefetch unit. `v60_pfu.redirect`
+  exists and no branch drives it, so the PC advances by the instruction's
+  length and no other way.
+- **Format I**, whose `d` bit decides which of its two operands is the
+  destination. p. 3.293's legend says "d : direction field" and no page held
+  here says more. `v60_seq` decodes and addresses a Format I instruction and
+  refuses to execute it, saying which of its three reasons that was.
+- **The multiplies, divides, shifts and rotates**, and everything outside the
+  integer set. The generated table returns `ALU_NONE` for them.
+- **Wiring `v60_exc` in.** It works and is benched, and connecting it needs the
+  data-unit mux the plan describes — `v60_ea` holds `v60_dxu` today.
+- **The externally raised exceptions.** `v60_biu` has `ready_n`, `bmode` and
+  `hldrq_n` and no `berr`, `int` or `nmi`: the bus error, NMI and maskable
+  interrupt families cannot be driven end to end whatever the units above do.
 
 Two smaller things are open and neither blocks that:
 
 - **Three subops in the bit-string group** could not be read off the scan
   (`ORNBS`, `XORNBS`, `SCH1BS`). Their format is not in doubt; see
   `docs/v60/INSTRUCTION-DECODE.md`.
-**E1 of that plan is done**: the operand data type comes from the same
-generated table as the format, per operand and — for the escape opcodes — per
-subop, and `v60_idu`'s `reserved` is now the two flags the two exception codes
-need. What is left open is E2 onward: the PSW, the register file, the ALU, the
-exception unit and the sequencer.
+One thing the plan called for is deliberately not done: `v60_exc` sets EL and
+the interrupt enable and leaves TE, TP, AE, EM and ASA alone, because Table
+8-1's columns for them have not been read off the scan. Guessing them would
+have been the easy half of the work.
 
 That closes the loop on `docs/v60/v60_operand_access.csv`: 220 instruction
 variants, 118 mnemonics, each with its read/write/RMW counts and total data bus

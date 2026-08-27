@@ -61,6 +61,17 @@ module v60_ea
     input               we,          // the operand is a destination
     input        [63:0] wdata,
 
+    // A read-modify-write operand: ADD's destination is read, combined and
+    // written back, and the address is computed ONCE.  With `rmw` set the read
+    // happens, `rmw_pending` rises, and the write goes to the same effective
+    // address when `rmw_go` arrives -- so an indirect destination reads its
+    // pointer once, which is what the operand-access counts in
+    // docs/v60/v60_operand_access.csv assume.
+    input               rmw,
+    output logic        rmw_pending,
+    input               rmw_go,
+    input        [63:0] rmw_data,
+
     // ---- results -----------------------------------------------------------
     output logic [31:0] ea,          // the effective address (32 bits)
     output logic [63:0] rdata,       // the operand, however it was obtained
@@ -82,11 +93,14 @@ module v60_ea
     input         [3:0] dx_cycles
 );
 
-typedef enum logic [1:0] {
+typedef enum logic [2:0] {
     S_IDLE,
     S_PTR,      // reading the pointer an indirect mode needs
     S_ISSUE,    // one cycle with dx_req low, so the next access has an edge
-    S_ACC       // the operand's own access
+    S_ACC,      // the operand's own access
+    S_RMW,      // read done; waiting for what to write back
+    S_RMW_GO,   // one cycle with dx_req low, then the write
+    S_ACC2      // the write-back access
 } state_e;
 
 state_e      state;
@@ -94,7 +108,7 @@ am_mode_e    mode_r;
 logic [31:0] scaled_r;    // the index contribution, added last
 logic [31:0] outer_r;
 logic  [3:0] size_r;
-logic        we_r;
+logic        we_r, rmw_r;
 logic [63:0] wdata_r;
 
 assign busy = (state != S_IDLE);
@@ -132,9 +146,11 @@ always_ff @(posedge clk) begin
         rdata      <= 64'd0;
         rn_wb      <= 1'b0;
         rn_wb_val  <= 32'd0;
-        illegal    <= 1'b0;
-        bus_cycles <= 4'd0;
-        mode_r     <= AM_RESERVED;
+        illegal     <= 1'b0;
+        rmw_pending <= 1'b0;
+        rmw_r       <= 1'b0;
+        bus_cycles  <= 4'd0;
+        mode_r      <= AM_RESERVED;
         scaled_r   <= 32'd0;
         outer_r    <= 32'd0;
         size_r     <= 4'd0;
@@ -150,10 +166,12 @@ always_ff @(posedge clk) begin
             scaled_r   <= scaled;
             outer_r    <= disp_outer;
             size_r     <= opbytes;
-            we_r       <= we;
-            wdata_r    <= wdata;
-            illegal    <= 1'b0;
-            bus_cycles <= 4'd0;
+            we_r        <= we;
+            rmw_r       <= rmw;
+            wdata_r     <= wdata;
+            illegal     <= 1'b0;
+            rmw_pending <= 1'b0;
+            bus_cycles  <= 4'd0;
 
             if (am_is_reg_direct(mode)) begin
                 // The operand is the register.  Nothing reaches the bus.
@@ -222,6 +240,32 @@ always_ff @(posedge clk) begin
 
         S_ACC: if (dx_done) begin
             if (!we_r) rdata <= dx_rdata;
+            dx_req     <= 1'b0;
+            bus_cycles <= bus_cycles + dx_cycles;
+            if (rmw_r) begin
+                // The address is already computed; hold it and wait to be told
+                // what to put there.
+                rmw_pending <= 1'b1;
+                state       <= S_RMW;
+            end else begin
+                done  <= 1'b1;
+                state <= S_IDLE;
+            end
+        end
+
+        S_RMW: if (rmw_go) begin
+            rmw_pending <= 1'b0;
+            dx_wdata    <= rmw_data;
+            dx_we       <= 1'b1;
+            state       <= S_RMW_GO;
+        end
+
+        S_RMW_GO: begin
+            dx_req <= 1'b1;
+            state  <= S_ACC2;
+        end
+
+        S_ACC2: if (dx_done) begin
             dx_req     <= 1'b0;
             bus_cycles <= bus_cycles + dx_cycles;
             done       <= 1'b1;
