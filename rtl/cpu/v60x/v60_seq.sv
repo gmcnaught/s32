@@ -917,8 +917,16 @@ wire [15:0] chlvl_code = {4'h1, 2'b10, chlvl_lvl, 8'h00};
 // forbids the only thing the instruction is for.  The Reference PDF is not
 // held, only its OCR text layer, so this cannot be checked on a plate.
 // Recorded as OCR-suspect in docs/v60/TRANCHE-TWO.md rather than resolved.
+// DEFECT this fixes (audit D2).  The range test read val1[31:2] -- the whole
+// register -- where `level` is a BYTE: "chlvl level.b.r, arg.b.r".  A memory
+// source arrives zero-extended so the check behaved, but a REGISTER source
+// carries whatever the register holds, and `chlvl R5, R6` with R5 = 0x00000102
+// raised Illegal Data Field on a level of 2 that the page permits.  The
+// argument operand was already masked, one screen away, at
+// `exc_param0 <= {24'd0, val2[7:0]}` -- one of the two byte operands was
+// truncated and the other was not.
 wire        chlvl_bad = is_chlvl &&
-                        ((val1[31:2] != 30'd0) ||
+                        ((val1[7:2] != 6'd0) ||
                          (psw[PSW_EL_HI:PSW_EL_LO] < chlvl_lvl));
 
 wire        is_xch = (aop == ALU_XCH);
@@ -1159,6 +1167,24 @@ always_ff @(posedge clk) begin
     end else begin
         idu_start <= 1'b0;
         ea_start  <= 1'b0;
+        // `ea_io` and `ea_lock` are properties of ONE access, and v60_ea
+        // latches them on `start`.  Defaulting them off every cycle and
+        // asserting them only in the states that pulse `ea_start` is what
+        // makes a leak impossible rather than merely absent: there is no path
+        // that can inherit them, because inheriting requires an assignment
+        // that is not there.
+        //
+        // DEFECT this replaces (audit D1, and P1 beside it).  They were set in
+        // the descriptor block instead -- one state out of nine for the lock,
+        // six of nine for the space -- so every access after a TASI or a CAXI
+        // ran with BLOCK* asserted, claiming to other bus masters that an
+        // indivisible read-modify-write was in progress when it was not.
+        // Scattering a clear across the other eight paths would have fixed the
+        // symptom; eleven of the thirteen clears that took turned out to be
+        // untestable individually, which is the argument for not doing it that
+        // way.
+        ea_io     <= 1'b0;
+        ea_lock   <= 1'b0;
         ea_rmw_go <= 1'b0;
         rf_wr_en  <= 1'b0;
         rf_pr_wr  <= 1'b0;
@@ -1448,9 +1474,22 @@ always_ff @(posedge clk) begin
                 // was missed; it survived because no test had a memory source
                 // in the instruction immediately after a control transfer.
                 ea_addr_only  <= src_addr_only;
+                // DEFECT this fixes (audit D1/P1).  `ea_io` and `ea_lock` are
+                // properties of the ACCESS, and v60_ea latches them on `start`
+                // -- so a state that describes an access and does not say what
+                // address space it is in, or whether it is interlocked,
+                // inherits whatever the last instruction left.  Only S_OP2 set
+                // ea_lock, so every access after a TASI or CAXI -- a source
+                // read, a push, a JSR's stack write -- ran with BLOCK*
+                // asserted, which is exactly the claim p.3.236 says the pin
+                // makes to other bus masters.  ea_io leaked the same way into
+                // the control-transfer and stack-engine accesses.
+                //
+                // Every descriptor now states both.  A source is never
+                // interlocked: TASI's and CAXI's locked operand is the
+                // DESTINATION.
                 // IN reads its port here; every other instruction's source is
                 // memory.
-                ea_io         <= io_src;
                 ea_pc_val     <= idu_pc;
                 state         <= S_OP1R;
             end
@@ -1477,6 +1516,10 @@ always_ff @(posedge clk) begin
 
         S_OP1S: begin
             ea_start <= 1'b1;
+            // IN reads its port here; every other instruction's source is
+            // memory, and no source is ever interlocked -- TASI's and CAXI's
+            // locked operand is the DESTINATION.
+            ea_io    <= io_src;
             state    <= S_OP1W;
         end
 
@@ -1571,11 +1614,9 @@ always_ff @(posedge clk) begin
                 // write to it.
                 ea_addr_only  <= 1'b0;
                 // OUT writes its port here.
-                ea_io         <= io_dst;
                 // And TASI and CAXI lock the bus around theirs.  v60_ea holds
                 // it across the gap between the read and the write, which is
                 // the part that matters -- see v60_bus_arb.
-                ea_lock       <= is_lockop;
                 ea_pc_val     <= idu_pc;
                 state         <= S_OP2R;
             end
@@ -1609,6 +1650,16 @@ always_ff @(posedge clk) begin
 
         S_OP2S: begin
             ea_start <= 1'b1;
+            // No `ea_io` here, and that is a statement rather than an
+            // omission: this state starts the destination's READ, and the only
+            // instruction with an I/O destination is OUT, whose port is
+            // write-only ("out.b src.b.r, port.b.w").  So it never reaches
+            // this state at all -- it goes through dst_write_only to S_WB,
+            // where the space is set on that access instead.  A read-modify-
+            // write against a port would need it back; nothing in the set has
+            // one.  Proved dead by mutation: setting it changes nothing.
+            ea_lock  <= is_lockop;   // TASI's and CAXI's `rwi`
+
             state    <= S_OP2W;
         end
 
@@ -1750,6 +1801,10 @@ always_ff @(posedge clk) begin
                 ea_we    <= 1'b1;
                 ea_wdata <= dst_is_dbl ? {eff_hi, eff_result}
                                        : {32'd0, eff_result};
+                // A write-only destination is a SECOND `start`, so v60_ea
+                // latches the space again here -- which is how OUT's port
+                // write stays an I/O cycle.
+                ea_io    <= io_dst;
                 ea_start <= 1'b1;
                 state    <= S_WBW;
             end
@@ -2356,7 +2411,6 @@ always_ff @(posedge clk) begin
             ea_opbytes    <= 4'd4;      // "Push Word" / "Pop Word"
             ea_rmw        <= 1'b0;
             ea_addr_only  <= 1'b0;
-            ea_io         <= 1'b0;
             // AM_RN_IND moves no pointer, so this access raises no
             // addressing-mode writeback and R31 is this module's to write.
             ea_rn_sel     <= 5'd0;
@@ -2517,7 +2571,6 @@ always_ff @(posedge clk) begin
             ea_opbytes    <= 4'd4;
             ea_rmw        <= 1'b0;
             ea_addr_only  <= 1'b0;
-            ea_io         <= 1'b0;
             ea_rn_sel     <= 5'd0;
             ea_pc_val     <= idu_pc;
             if (is_pushm) begin

@@ -418,6 +418,17 @@ end
 always @(posedge clk) if (!rst && biu_lock && block_armed)
     chk(block_n === 1'b0, "BLOCK* was released inside an indivisible operation");
 
+// And the other half, which is the one the tranche-two audit found missing.
+// Asserting BLOCK* is a CLAIM to other bus masters -- "an indivisible
+// read-modify-write bus cycle (TASI, CAXI instructions) is taking place" -- so
+// it must be false on every access that is neither.  Every earlier check here
+// was about the pin being asserted when it should be; nothing said it was
+// clear when it should be, which is exactly the half a leaked `ea_lock` falls
+// in.
+always @(posedge clk) if (!rst && biu_ack && !block_n && !is_iack)
+    chk(seq.is_lockop === 1'b1,
+        "BLOCK* was asserted on an access that is not interlocked");
+
 wire       is_io      = ({mrq_n, st} === 4'b1011);
 wire       is_mem_sgl = ({mrq_n, st} === 4'b0011);
 integer    n_io = 0, n_io_wr = 0, n_mem_sgl = 0;
@@ -1266,6 +1277,26 @@ initial begin
     //   -- which is the only way that path's pair read and pair writeback are
     //   exercised at all.
     mem[11'h178] = 8'hA6; mem[11'h179] = 8'h4C; mem[11'h17A] = 8'h69;
+
+    // MOV.W [R8], R9   2D A0 68 69   -- a MEMORY SOURCE, whose read runs
+    //   through S_OP1S.  That path is reached BEFORE S_OP2 gets a chance to
+    //   set the lock, so it is the only shape in which a leaked ea_lock is
+    //   visible at all: an immediate source makes no bus access, and by the
+    //   destination S_OP2 has already cleared it.
+    mem[11'h724] = 8'h2D; mem[11'h725] = 8'hA0; mem[11'h726] = 8'h68;
+    mem[11'h727] = 8'h69;
+    // CALL [R10], [R9]  49 80 6A 69   -- the stack ENGINE's own accesses
+    mem[11'h728] = 8'h49; mem[11'h729] = 8'h80; mem[11'h72A] = 8'h6A;
+    mem[11'h72B] = 8'h69;
+    // BSR +2            48 02 00      -- the control transfer's push
+    mem[11'h72C] = 8'h48; mem[11'h72D] = 8'h02; mem[11'h72E] = 8'h00;
+    mem[11'h72F] = 8'hCD;              // NOP, where both of the above land
+
+    // CHLVL R5, R6    4B E0 65 66   -- both operands in REGISTERS, which is the
+    //   only way a byte operand arrives unmasked: a memory source is
+    //   zero-extended by the address unit and a register source is not.
+    mem[11'h17B] = 8'h4B; mem[11'h17C] = 8'hE0; mem[11'h17D] = 8'h65;
+    mem[11'h17E] = 8'h66;
 
     // CAXI R9, [R8]   4C 09 68   -- Format I, d = 0 (the page requires it),
     //   so the register field is Rn and the mod field is the destination.
@@ -3025,6 +3056,58 @@ initial begin
     chk(mem[11'h700] === 8'hFF,
         "the store happens either way -- TASI is not conditional");
 
+    // And the lock must not outlive the instruction.  BLOCK* is a CLAIM to
+    // other bus masters -- "an indivisible read-modify-write bus cycle (TASI,
+    // CAXI instructions) is taking place" -- so an ordinary access after one
+    // must not still be making it.
+    //
+    // Both shapes are needed and neither is obvious.  A MEMORY SOURCE reaches
+    // the bus at S_OP1S, before the destination state that clears the lock; an
+    // immediate source makes no access at all and would pass whatever the RTL
+    // did.  And PUSH's stack access is described in a state of its own that
+    // shares nothing with either.
+    // Four shapes, because there are four places an access is described and a
+    // leak in any of them is invisible from the others.  Each runs IMMEDIATELY
+    // after a TASI: the first instruction to reach S_OP2 clears the lock, so a
+    // test that puts anything in between proves nothing.
+    @(negedge clk);
+    put_word(13'h700, 32'h1234_5678);
+    rf.gpr[10] = 32'h0000_072F;
+    rf.gpr[9]  = 32'h0000_0700;
+    repeat (2) @(negedge clk);
+
+    n_block = 0;
+    jump(32'h00000724);                      // MOV.W [R8], R9 -- a memory SOURCE
+    step;
+    chk(rf.gpr[9] === 32'h1234_5678, "the instruction after a TASI runs");
+    chk(n_block == 0,
+        "and its memory SOURCE read is not interlocked -- the lock did not leak");
+
+    jump(32'h00000650); step;                // TASI again
+    n_block = 0;
+    jump(32'h00000620);                      // PUSH R9
+    step;
+    chk(n_block == 0,
+        "nor is a PUSH's stack access, described in a state of its own");
+
+    jump(32'h00000650); step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_072F;
+    rf.gpr[9]  = 32'h0000_0700;
+    repeat (2) @(negedge clk);
+    n_block = 0;
+    jump(32'h00000728);                      // CALL -- the stack ENGINE
+    step;
+    chk(n_block == 0,
+        "nor the stack engine's, which CALL and RET share");
+
+    jump(32'h00000650); step;
+    n_block = 0;
+    jump(32'h0000072C);                      // BSR -- a control transfer's push
+    step;
+    chk(n_block == 0,
+        "nor a control transfer's push");
+
     // =======================================================================
     // CHLVL.  "This instruction provides a protected method of accessing more
     // privileged execution levels" -- the only exception in this tree whose
@@ -3128,6 +3211,30 @@ initial begin
     step;
     chk(mem[11'h700] === 8'hE2, "and the level 2 handler runs");
 
+    // A REGISTER source, whose upper bytes are not the operand.  `level` is a
+    // byte, so 0x00000102 is level 2 -- and an implementation that
+    // range-checked the whole register would raise Illegal Data Field on a
+    // level the page permits.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd3; pr_wdata = 32'h0000_0760; pr_wr = 1'b1;   // PR_L2SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    rf.gpr[5]  = 32'h0000_0102;              // level 2, with rubbish above it
+    rf.gpr[6]  = 32'h0000_0077;              // the argument
+    rf.gpr[31] = 32'h0000_05A0;
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h0000017B);
+    step;
+    chk(seq_pc === 32'h00000150,
+        "CHLVL with a register level operand reads it as a BYTE and is permitted");
+    chk(mem_word(13'h75C) === 32'h0000_0077,
+        "and the argument is the byte too, not the register");
+
     // And the NEXT exception must go back to level 0.  CHLVL is the only
     // instruction that sets a non-zero target, so the target has to be cleared
     // again -- otherwise every exception after a CHLVL inherits its level and
@@ -3168,6 +3275,7 @@ initial begin
     chk(rf.gpr[9] === 32'h1234_5678, "leaving Rn alone on a match");
     chk(n_block == 4,
         "with BLOCK* over all four cycles: a word read and a word write, interlocked");
+
 
     // Now the destination no longer matches -- which is the case a retry loop
     // is built on.  The word there is a THIRD value, equal to neither R28 nor
