@@ -105,13 +105,18 @@ leaked into the *next* exception (a `BRK` after a `CHLVL #2` landed at level 2
 on the wrong stack), and `insn_table.py` had `CHLVL`'s second operand as a word
 where the syntax line says byte.
 
-What is left, in rough order of how much machinery each needs:
+**The `X` forms are done too**, 2026-08-28 — `MULX` `MULUX` `DIVX` `DIVUX`,
+and with them **item 4 below**, the doubleword register pair. `v60_regfile`'s
+`ra_pair` has a caller, `v60_ea` takes `rn1_val` and reports `rn_wb_pair`, and
+`v60_muldiv` has a second result port — because `DIVX`'s destination is not a
+64-bit result but two independent 32-bit ones sharing an operand.
 
-- **The `X` forms of the multiplies and divides** — `MULX`, `MULUX`, `DIVX`,
-  `DIVUX`. The other six are done (see *What this replaced*); these four are
-  waiting on item 4 below, because their destination is a doubleword. `DIVX`
-  is the one that needs it most visibly: it writes a quotient into the low word
-  of its destination and a remainder into the high word.
+A scope correction while doing it: **`CVT.WL` and `CVT.LW` are floating
+point**, not doubleword-integer conversions. "Long" in those mnemonics means
+**long real** — an IEEE double — and each page pairs the form with a short-real
+one. They need the FP datapath and belong with that group below.
+
+What is left, in rough order of how much machinery each needs:
 - **The bit-string group.** All ten subops are read (see
   `docs/v60/INSTRUCTION-DECODE.md`) and none is executed. They are the first
   instructions here that are *interruptible mid-execution* — "to minimize the
@@ -120,13 +125,18 @@ What is left, in rough order of how much machinery each needs:
 - **The floating point group**, the MMU, task and context switching, address
   traps and emulation mode. Each is its own subsystem.
 
-## 4. A doubleword operand is a register PAIR
+## 4. A doubleword operand is a register PAIR — **done**
 
-`v60_ea` takes `rn_val` as 32 bits and warns when it is asked for an
-eight-byte register-direct operand, because "a doubleword operand is a
-register pair, low register first" (§3). `v60_regfile` already has `ra_pair`
-for this; nothing uses it. It matters for `MOV.D`, the `X` multiplies and
-divides, and the doubleword floating point.
+Closed 2026-08-28 with the `X` forms; see above. `docs/v60/DOUBLEWORD.md` is
+the research and the one thing worth carrying forward from it is the negative:
+**there is no evenness constraint on the pair.** Both sentences that state the
+rule say "Rn and Rn+1" for the specified `Rn` with no restriction on `n`, so
+`R9`/`R10` is as legal as `R8`/`R9`, and an implementation that masked the low
+bit to "align" the pair would be wrong on every odd `n`. That is the opposite
+of the convention on most machines with register pairs.
+
+`MOV.D` gets the same datapath for free; the doubleword floating point will
+want it.
 
 ---
 
