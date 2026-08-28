@@ -144,9 +144,34 @@ What is left, in rough order of how much machinery each needs:
 
   **Recommendation, and it is a recommendation rather than a page fact:** ship
   the eighteen **non-interruptible** and record it, as `s32_v60.sv` already
-  does. Reopen if a plate of any one of the eighteen §7 pages settles the
-  residual count — the Reference PDF is not held, only its OCR, and that is a
-  cheap bounded check that should happen before any RTL does.
+  does.
+
+  **The bounded check has now been done and the search is exhausted**
+  (`INTERRUPTIBILITY.md`'s addendum). All four held books were searched and two
+  of them are not independent sources at all: `1987_Microcomputer_Products_Vol_2`
+  carries four pages of V60 front matter and no instruction material, and
+  `NEC_Microprocessor_Peripherals_DataBook_1986` is a **second scan of the same
+  73-page V60 databook**. The strongest negative is that the Reference's OCR
+  contains no sentence about a remaining length *to* be garbled — `R25`/`R24`
+  appear only in register-list tables, `residual` and `count register` not at
+  all — so a plate could not have helped. **Reopening now requires acquiring a
+  scan of the µPD70616 Programmer's Reference §7**, which is not on this
+  machine.
+
+  The one refinement worth carrying: the count is probably **derivable** rather
+  than stored — `SCHC`'s R27 is an elapsed count, and elsewhere the residual is
+  the re-read length minus how far R28 has moved. That explains why no count
+  register is ever named. Its hole is that several of the eighteen permit
+  `[Rn+]` on their string operands, so re-decoding on resume would step `Rn` a
+  second time and compute a different start address — breaking the derivation
+  in exactly the case that needs it.
+- **The bit field group is done**, 2026-08-28 — `EXTBF` `INSBF` `CMPBF`, eight
+  operations because the sub-op's `ext` field picks a variant of each. It was
+  the first **Format VII** work here, and the front end needed nothing: `v60_idu`
+  has produced both extension bytes since it was written and nothing had
+  consumed them. It also brought bit addressing into `v60_ea` — base shifted
+  left by three, offset added signed and unscaled — which the bit *string* group
+  will reuse whole.
 - **The floating point group**, the MMU, task and context switching, address
   traps and emulation mode. Each is its own subsystem.
 
