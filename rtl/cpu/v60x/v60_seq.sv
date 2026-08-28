@@ -479,6 +479,9 @@ typedef enum logic [5:0] {
     // slot stays free for the operand's own mode.  Without that, `push [R5+]`
     // would be two writebacks and stop the sequencer.
     S_PSH_R, S_PSH_SP, S_PSH_S, S_PSH_W, S_PSH_FIN, S_PSH_FIN2,
+    // XCH's second write: dst2 goes out through the ordinary destination
+    // path and dst1, which the page guarantees is a register, is written here.
+    S_XCH,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -813,6 +816,27 @@ wire        is_disp = (aop == ALU_DISPOSE);
 // Which of the four write the stack rather than read it.
 wire        stk_is_write = is_push || is_prep;
 
+// XCH, whose two operands are both ".rw" and whose FIRST must be a general
+// purpose register: "In the uPD70616 microprocessor, a Reserved Addressing
+// Mode exception will occur if the first destination operand is not a general
+// purpose register."
+//
+// The Addressing Modes table is finer than that sentence.  dst1's column is
+// `O` for Rn, `A` for all fourteen memory modes and `X` for both immediates,
+// and the page's own legend gives the letters: A is Reserved Addressing Mode
+// and X is Illegal Addressing Mode.  So the same operand column raises TWO
+// different exceptions depending on what was wrong with it, which is exactly
+// the "1, 3" p.3.296 prints on this row -- the 1 from the immediates and the
+// 3 from the memory modes.
+wire        is_xch = (aop == ALU_XCH);
+// Format I with d = 0 puts dst1 in the register field, where it cannot be
+// anything else.  Every other encoding puts it in op1's addressing mode.
+wire        xch_d1_reg = src_is_reg || (op1_mode == AM_RN);
+wire        xch_d1_imm = is_xch && !src_is_reg && am_is_immediate(op1_mode);
+wire        xch_d1_mem = is_xch && !xch_d1_reg && !am_is_immediate(op1_mode);
+wire  [4:0] xch_rn     = src_is_reg ? idu_reg : op1_rn;
+
+
 wire        movea_src_bad = src_addr_only &&
                             (src_is_reg || (op1_mode == AM_RN) ||
                              am_is_immediate(op1_mode));
@@ -858,6 +882,12 @@ wire [3:0] w_dst = fmt_iii ? w_src : w_dst_raw;
 wire  [3:0] alu_flags;
 wire [31:0] alu_result;
 wire        alu_writes;
+
+// dst1's half of the exchange, masked the way v60_alu masks dst2's -- both
+// operands are the same size, the syntax line printing ".b.rw" or ".w.rw" on
+// each.
+wire [31:0] xch_wdata  = (w_dst == 4'd1) ? {24'd0, val2[7:0]}  :
+                         (w_dst == 4'd2) ? {16'd0, val2[15:0]} : val2[31:0];
 
 wire [3:0] alu_bytes = ((w_dst == 4'd1) || (w_dst == 4'd2) ||
                         (w_dst == 4'd4)) ? w_dst : 4'd4;
@@ -1208,7 +1238,22 @@ always_ff @(posedge clk) begin
 
         // ---- the source ------------------------------------------------------
         S_OP1: begin
-            if (io_src_bad || movea_src_bad) begin
+            if (xch_d1_mem) begin
+                // `A` in the table, and the sentence on the page: a Reserved
+                // Addressing Mode exception, not an Illegal one.
+                exc_vec_r  <= VEC_RESERVED_MODE;
+                exc_code_r <= CODE_RESERVED_MODE;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (xch_d1_imm) begin
+                // `X` in the same column of the same table.  An immediate
+                // cannot be a destination at all, which is a different
+                // complaint from "this one has to be a register".
+                exc_vec_r  <= VEC_ILLEGAL_MODE;
+                exc_code_r <= CODE_ILLEGAL_MODE;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (io_src_bad || movea_src_bad) begin
                 // A source operand whose addressing mode the page marks X:
                 // IN's port named a register, or MOVEA was asked for the
                 // address of something that has none.  Raised before the
@@ -1471,7 +1516,8 @@ always_ff @(posedge clk) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= reg_operand;
                 rf_wr_data <= eff_result;
-                state      <= S_RETIRE;
+                if (is_xch) state <= S_XCH;
+                else        state <= S_RETIRE;
             end else if (ea_rmw_pending) begin
                 ea_rmw_data <= {32'd0, eff_result};
                 ea_rmw_go   <= 1'b1;
@@ -1496,9 +1542,24 @@ always_ff @(posedge clk) begin
                 exc_kind  <= EK_BERR;
                 exc_vec_r <= VEC_BUS_FAULT;
                 state     <= S_EXC_SW;
+            end else if (is_xch) begin
+                state <= S_XCH;
             end else begin
                 state <= S_RETIRE;
             end
+        end
+
+        // The other half of the exchange.  dst2 has just been written with
+        // what dst1 held; this puts what dst2 held into dst1.  A state of its
+        // own because the register file has one write port and dst2 may have
+        // taken it -- and because dst2's write may have been a bus cycle, in
+        // which case this waits for it, so an XCH that faults on its memory
+        // operand does not half-complete.
+        S_XCH: begin
+            rf_wr_en   <= 1'b1;
+            rf_wr_sel  <= xch_rn;
+            rf_wr_data <= xch_wdata;
+            state      <= S_RETIRE;
         end
 
         // ---- retire ----------------------------------------------------------

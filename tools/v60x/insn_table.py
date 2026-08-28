@@ -533,6 +533,11 @@ EXEC_OP = {
     # adjusted by the specified number of bytes" -- and DISPOSE is Format V
     # because SP <- FP discards the frame whatever size it was.
     'PREPARE': 'PREPARE', 'DISPOSE': 'DISPOSE',
+    # "dst1 <-> dst2".  dst1 must be a general purpose register: its column is
+    # O for Rn, A (Reserved Addressing Mode) for all fourteen memory modes and
+    # X (Illegal Addressing Mode) for both immediates -- which is exactly the
+    # "1, 3" p.3.296 prints on this row.
+    'XCH': 'XCH',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

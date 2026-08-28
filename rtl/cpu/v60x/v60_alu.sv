@@ -353,6 +353,10 @@ always_comb begin
         ALU_POP: raw = x;
         // Both do all their work on R30 and R31, in the sequencer.
         ALU_PREPARE, ALU_DISPOSE: writes = 1'b0;
+        // Half of the exchange: dst2 takes what dst1 held, presented as x.
+        // The other half is the sequencer's, because it needs a second write
+        // port's worth of work and the page constrains it to a register.
+        ALU_XCH: raw = x;
         // "test1 offset.w.r, base.w.r" -- both operands read, nothing written.
         ALU_TEST1: begin writes = 1'b0; f_cy = bit_old; end
         ALU_SET1:  begin raw = y |  bit_one; f_cy = bit_old; end
@@ -434,7 +438,8 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR) ||
                 (op == ALU_HALT)   || (op == ALU_IN)    || (op == ALU_OUT) ||
                 (op == ALU_PUSH)   || (op == ALU_POP)   ||
-                (op == ALU_PREPARE) || (op == ALU_DISPOSE);
+                (op == ALU_PREPARE) || (op == ALU_DISPOSE) ||
+                (op == ALU_XCH);
 wire keep_but_ov = (op == ALU_MOVT);
 // "CY Set if the designated bit is 1, otherwise cleared / OV Unchanged /
 // S Unchanged / Z Set if the designated bit is 0, otherwise cleared" -- the

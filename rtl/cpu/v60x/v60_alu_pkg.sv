@@ -138,6 +138,12 @@ typedef enum logic [5:0] {
     // be remembered anywhere.
     ALU_PREPARE = 6'd51,
     ALU_DISPOSE = 6'd52,
+    // "dst1 <-> dst2", and the syntax line names NEITHER a source: both are
+    // ".rw", both read and both written, which is the page's way of saying the
+    // two roles are symmetric.  The ALU produces the half that goes to dst2;
+    // the sequencer writes the other half back to dst1, which the page
+    // guarantees is a register.
+    ALU_XCH     = 6'd53,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

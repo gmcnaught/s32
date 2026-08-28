@@ -1135,6 +1135,22 @@ initial begin
     // DISPOSE       CC   -- Format V, one byte
     mem[11'h62C] = 8'hCC;
 
+    // XCH, Format II.  dst1 must be a general purpose register; the same
+    // column raises two DIFFERENT exceptions for the two ways it can not be.
+    // XCH.w R9, R10    45 E0 69 6A
+    mem[11'h630] = 8'h45; mem[11'h631] = 8'hE0; mem[11'h632] = 8'h69;
+    mem[11'h633] = 8'h6A;
+    // XCH.w R9, [R8]   45 C0 69 68   -- the legal memory case: dst2, not dst1
+    mem[11'h634] = 8'h45; mem[11'h635] = 8'hC0; mem[11'h636] = 8'h69;
+    mem[11'h637] = 8'h68;
+    // XCH.w [R8], R9   45 A0 68 69   -- dst1 in MEMORY: `A`, Reserved
+    mem[11'h638] = 8'h45; mem[11'h639] = 8'hA0; mem[11'h63A] = 8'h68;
+    mem[11'h63B] = 8'h69;
+    // XCH.w #5, R9     45 A0 F4 05 00 00 00 69   -- dst1 IMMEDIATE: `X`, Illegal
+    mem[11'h63C] = 8'h45; mem[11'h63D] = 8'hA0; mem[11'h63E] = 8'hF4;
+    mem[11'h63F] = 8'h05; mem[11'h640] = 8'h00; mem[11'h641] = 8'h00;
+    mem[11'h642] = 8'h00; mem[11'h643] = 8'h69;
+
     // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
     //   at [R10] is read from MEMORY and only the operand it names is an I/O
     //   access: an addressing mode's own accesses are not the instruction's.
@@ -2729,6 +2745,69 @@ initial begin
         "DISPOSE put SP back above the frame, whatever size the frame was");
     chk(rf.gpr[30] === 32'h0000_05A0,
         "and restored the old frame pointer -- read at FP, not at SP");
+
+    // =======================================================================
+    // XCH.  "dst1 <-> dst2", both operands ".rw" -- the syntax line names
+    // neither a source, which is the page's way of saying the roles are
+    // symmetric.  What is NOT symmetric is where dst1 may live.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[9]  = 32'hAAAA_1111;
+    rf.gpr[10] = 32'hBBBB_2222;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h00000630);
+    step;
+    chk(rf.gpr[9] === 32'hBBBB_2222 && rf.gpr[10] === 32'hAAAA_1111,
+        "XCH exchanged two registers -- BOTH writes landed");
+    chk(seq_psw === psw_before, "with every flag Unchanged");
+
+    // The legal memory case: dst2 may be anywhere, and the two halves are
+    // written through different paths -- one a bus cycle, one the register
+    // file.
+    @(negedge clk);
+    rf.gpr[9] = 32'hAAAA_1111;
+    put_word(13'h700, 32'hCCCC_3333);
+    repeat (2) @(negedge clk);
+    jump(32'h00000634);
+    step;
+    chk(rf.gpr[9] === 32'hCCCC_3333,
+        "XCH with a memory dst2 put the memory word into the register");
+    chk(mem_word(13'h700) === 32'hAAAA_1111,
+        "and the register's old contents into memory");
+
+    // dst1 in memory: `A` in the table, and the page's own sentence.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h1234_5678;
+    put_word(13'h700, 32'hCCCC_3333);
+    repeat (2) @(negedge clk);
+    jump(32'h00000638);
+    step;
+    chk(seq_pc === 32'h000007B0,
+        "XCH with dst1 in memory is the RESERVED Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h12000004, "with vector 18's code");
+    chk(rf.gpr[9] === 32'h1234_5678 && mem_word(13'h700) === 32'hCCCC_3333,
+        "and nothing was exchanged");
+
+    // dst1 immediate: `X` in the same column, and a DIFFERENT exception.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h1234_5678;
+    repeat (2) @(negedge clk);
+    jump(32'h0000063C);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "but with dst1 IMMEDIATE it is the ILLEGAL Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004,
+        "vector 19 -- the same operand column, two different complaints");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

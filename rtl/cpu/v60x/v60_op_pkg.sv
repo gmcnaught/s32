@@ -1030,8 +1030,11 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h3D: r = ALU_NEG;  // NEG
             8'h3F: r = ALU_MOV;  // MOV.D
             8'h40: r = ALU_MOVEA; // MOVEA
+            8'h41: r = ALU_XCH;  // XCH
             8'h42: r = ALU_MOVEA; // MOVEA
+            8'h43: r = ALU_XCH;  // XCH
             8'h44: r = ALU_MOVEA; // MOVEA
+            8'h45: r = ALU_XCH;  // XCH
             8'h47: r = ALU_SETF; // SETF
             8'h4A: r = ALU_UPDPSWH; // UPDPSW.H
             8'h50: r = ALU_REM;  // REM
