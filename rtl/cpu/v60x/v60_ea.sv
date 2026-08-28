@@ -116,7 +116,7 @@ module v60_ea
     // The bit-within-byte the operand starts at, 0..7.  Meaningless unless
     // `bit_mode` was set.  "the lower three bits identifying the bit offset
     // within the byte" (§3).
-    output              [2:0] bit_resid,   // combinational -- see below
+    output logic        [2:0] bit_resid,
     output logic [63:0] rdata,       // the operand, however it was obtained
     output logic        rn_wb,       // Rn takes rn_wb_val
     output logic [31:0] rn_wb_val,
@@ -168,6 +168,12 @@ logic        we_r, rmw_r, addr_r;
 // indirect mode is still the I/O one the instruction asked for.
 logic        io_r;
 logic        lock_r;
+// The index UNSCALED.  p.3.261's bit index modes make Rx "a bit displacement",
+// and §6 points out this is not a special case -- "the index register is scaled
+// to the size of the data, which in this case is a single bit".  scaled_r is
+// the byte-mode scaling and is the wrong quantity here.
+logic [31:0] rx_r;
+logic        bit_r;
 logic [63:0] wdata_r;
 
 assign busy = (state != S_IDLE);
@@ -241,13 +247,21 @@ wire [34:0] bit_addr      = {bit_byte_base, 3'b000} +
 
 // The access is still byte-addressed; the residual is what the datapath needs.
 wire [31:0] bit_byte_addr = bit_addr[34:3];
-// COMBINATIONAL, deliberately.  The sequencer has to test "the sum of the bit
-// offset and the bit field length must not exceed thirty-two" BEFORE starting
-// the access, because the exception is an Instruction Exception -- Current PC,
-// and the handler restarts the instruction -- so nothing may be committed and
-// no access may be left open when it is raised.  A registered residual would
-// only be readable after the access it is meant to prevent.
-assign bit_resid = bit_addr[2:0];
+
+// The same computation over the POINTER, for an indirect bit-addressed
+// operand.  The pointer is the byte base; the bit offset is the outer
+// displacement, or Rx unscaled when the mode has an index.
+// UNTESTED, and said so rather than left silent: the `has_index` arm needs
+// p.3.261's Direct Address Deferred Indexed mode (`Rx@[/addr]`), which nothing
+// in verif/v60x encodes.  A mutation scaling the index here passes.  The
+// `outer_r` arm IS covered, by the indirect case in tb_v60_seq.
+wire [31:0] ptr_bit_off  = has_index ? rx_r : outer_r;
+wire [34:0] ptr_bit_addr = {dx_rdata[31:0], 3'b000} +
+                           {{3{ptr_bit_off[31]}}, ptr_bit_off};
+// REGISTERED, and it has to be.  An INDIRECT mode's operand address is not
+// known until the pointer has been read, so a residual computed from the
+// pre-pointer registers is not the operand's -- see S_PTR below, and
+// docs/v60/TRANCHE-THREE-AUDIT.md's D1, which is what this replaces.
 
 always_ff @(posedge clk) begin
     if (rst) begin
@@ -277,6 +291,9 @@ always_ff @(posedge clk) begin
         we_r       <= 1'b0;
         io_r       <= 1'b0;
         lock_r     <= 1'b0;
+        rx_r       <= 32'd0;
+        bit_r      <= 1'b0;
+        bit_resid  <= 3'd0;
         wdata_r    <= 64'd0;
     end else begin
         done  <= 1'b0;
@@ -292,6 +309,8 @@ always_ff @(posedge clk) begin
             we_r        <= we;
             io_r        <= io;
             lock_r      <= lock;
+            rx_r        <= rx_val;
+            bit_r       <= bit_mode;
             rmw_r       <= rmw;
             addr_r      <= addr_only;
             wdata_r     <= wdata;
@@ -342,6 +361,7 @@ always_ff @(posedge clk) begin
                     state     <= S_PTR;
                 end else begin
                     ea        <= bit_mode ? bit_byte_addr : (addr1 + scaled);
+                    bit_resid <= bit_addr[2:0];
                     if (addr_only) begin
                         // The address is the answer; nothing is read.
                         done <= 1'b1;
@@ -363,8 +383,23 @@ always_ff @(posedge clk) begin
             // "[disp[Rn]](Rx)" indexes the result of the indirection, so the
             // scaled index goes on here and not before.  A double displacement
             // adds its outer displacement to the pointer.
-            ea         <= dx_rdata[31:0] + outer_r + scaled_r;
-            dx_addr    <= dx_rdata[23:0] + outer_r[23:0] + scaled_r[23:0];
+            //
+            // A BIT-addressed operand does the same sum in bit space, and this
+            // branch had none of it -- docs/v60/TRANCHE-THREE-AUDIT.md's D1.
+            // p.3.261's Bit Addressing Modes table lists six indirect modes and
+            // three of them carry a non-zero bit offset: the two double
+            // displacements use the OUTER displacement as the bit offset, and
+            // Direct Address Deferred Indexed uses Rx UNSCALED.  Added as bytes
+            // and scaled by four respectively, which is what the byte path
+            // does, both are wrong by a factor of eight.
+            if (bit_r) begin
+                ea         <= ptr_bit_addr[34:3];
+                dx_addr    <= ptr_bit_addr[26:3];
+                bit_resid  <= ptr_bit_addr[2:0];
+            end else begin
+                ea         <= dx_rdata[31:0] + outer_r + scaled_r;
+                dx_addr    <= dx_rdata[23:0] + outer_r[23:0] + scaled_r[23:0];
+            end
             dx_nbytes  <= size_r;
             dx_we      <= we_r;
             dx_io      <= io_r;

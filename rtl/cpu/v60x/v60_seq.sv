@@ -1019,8 +1019,16 @@ wire  [4:0] bf_len_rn   = bf_ext_raw[4:0];
 // after the 35-bit bit address is split -- which is the only reading under
 // which both this sentence and the addressing model hold, and it is exactly
 // what makes a field always reachable in one 32-bit access.
+// Read from the LATCHED residual, not from v60_ea's live one.  For an indirect
+// mode the operand's address -- and therefore its residual -- is not known
+// until the pointer has been read, so this cannot be tested before the access
+// starts.  The check therefore moves to after the operand's READ, which costs
+// nothing architecturally: an Illegal Data Field exception carries the Current
+// PC and the handler restarts the instruction, and a read has no effect to
+// undo.  What must not have happened is a WRITE or a register writeback, and
+// neither has at the points below.
 wire        bf_addr_bad = is_bf &&
-                          (({4'd0, ea_bit_resid} + {1'b0, bf_len_r}) > 7'd32);
+                          (({4'd0, bf_resid_r} + {1'b0, bf_len_r}) > 7'd32);
 
 // The decimal group.  Format VIIc again, and the SAME extension byte -- but
 // carrying a mask PATTERN rather than a length, which §6 admits in one clause:
@@ -1658,30 +1666,12 @@ always_ff @(posedge clk) begin
         end
 
         S_OP1S: begin
-            // EXTBF's and CMPBF's bit-addressed operand is this one.  The
-            // residual is combinational off the descriptor, so the address
-            // check happens BEFORE the access rather than after it -- an
-            // Illegal Data Field exception carries the Current PC and the
-            // handler restarts the instruction, so nothing may be committed
-            // and no access may be left open.
-            if (bf_src_is_bit && bf_addr_bad) begin
-                exc_vec_r  <= VEC_ILLEGAL_DATA;
-                exc_code_r <= CODE_ILLEGAL_DATA;
-                exc_kind   <= EK_INSN;
-                state      <= S_EXC_SW;
-            end else begin
-            // Only when THIS operand is the bit-addressed one.  CMPBF's second
-            // operand also runs through the address unit, and capturing there
-            // too would overwrite the residual with the one belonging to a
-            // byte-addressed access -- which is zero, and looks plausible.
-            if (bf_src_is_bit) bf_resid_r <= ea_bit_resid;
             ea_start <= 1'b1;
             // IN reads its port here; every other instruction's source is
             // memory, and no source is ever interlocked -- TASI's and CAXI's
             // locked operand is the DESTINATION.
             ea_io    <= io_src;
             state    <= S_OP1W;
-            end
         end
 
         S_OP1W: begin
@@ -1696,6 +1686,10 @@ always_ff @(posedge clk) begin
                 end else begin
                     // MOVEA wants the address, not what is at it.
                     val1  <= src_addr_only ? {32'd0, ea_ea} : ea_rdata;
+                    // EXTBF's and CMPBF's bit-addressed operand is this one,
+                    // and its residual is final only now -- an indirect mode
+                    // computes it from the pointer.
+                    if (bf_src_is_bit) bf_resid_r <= ea_bit_resid;
                     if      (aop == ALU_STPR) state <= S_PR_SEL;
                     else if (is_push || is_prep)   state <= S_PSH_R;
                     else if (is_pushm || is_popm)  state <= S_PSM_R;
@@ -1811,16 +1805,6 @@ always_ff @(posedge clk) begin
         end
 
         S_OP2S: begin
-            // INSBF's bit-addressed operand is the DESTINATION, so its check
-            // belongs here -- and here is still before the access, which is
-            // what keeps the restart honest.
-            if (bf_dst_is_bit && bf_addr_bad) begin
-                exc_vec_r  <= VEC_ILLEGAL_DATA;
-                exc_code_r <= CODE_ILLEGAL_DATA;
-                exc_kind   <= EK_INSN;
-                state      <= S_EXC_SW;
-            end else begin
-            if (bf_dst_is_bit) bf_resid_r <= ea_bit_resid;
             ea_start <= 1'b1;
             // No `ea_io` here, and that is a statement rather than an
             // omission: this state starts the destination's READ, and the only
@@ -1832,7 +1816,6 @@ always_ff @(posedge clk) begin
             // one.  Proved dead by mutation: setting it changes nothing.
             ea_lock  <= is_lockop;   // TASI's and CAXI's `rwi`
             state    <= S_OP2W;
-            end
         end
 
         S_OP2W: begin
@@ -1841,6 +1824,7 @@ always_ff @(posedge clk) begin
                 // still open and closing it is the only way out, so a fault
                 // here is taken one bus cycle later, at S_WBW.
                 val2  <= ea_rdata;
+                if (bf_dst_is_bit) bf_resid_r <= ea_bit_resid;
                 if (fmt_iii && !dst_write_only) val1 <= ea_rdata;
                 state <= S_EXEC;
             end else if (ea_done) begin
@@ -1867,7 +1851,7 @@ always_ff @(posedge clk) begin
             // instruction, so nothing may have been committed.  LDPR writes no
             // operand, so what is being protected here is the privileged
             // register itself.
-            if (ldpr_id_bad || chlvl_bad) begin
+            if ((bf_src_is_bit && bf_addr_bad) || ldpr_id_bad || chlvl_bad) begin
                 // CHLVL's level operand is out of range, or asks for a level
                 // the caller may not reach.  Illegal Data Field either way --
                 // NOT a Privileged Instruction exception, and not a silent
@@ -1910,7 +1894,22 @@ always_ff @(posedge clk) begin
         end
 
         S_WB: begin
-            if (is_caxi) begin
+            if (bf_dst_is_bit && bf_addr_bad) begin
+                // INSBF's bit-addressed operand is its DESTINATION, whose
+                // read-modify-write is still open here -- v60_ea takes `start`
+                // only from its idle state, so abandoning it would wedge the
+                // address unit.  It is closed with what was already there,
+                // which is the same thing the zero divide does and for the same
+                // sentence: "the destination will remain unchanged".
+                bf_bad_r <= 1'b1;
+                if (ea_rmw_pending) begin
+                    ea_rmw_data <= val2;
+                    ea_rmw_go   <= 1'b1;
+                    state       <= S_WBW;
+                end else begin
+                    state <= S_WBW;
+                end
+            end else if (is_caxi) begin
                 // One write either way, and which VALUE it carries is the
                 // whole instruction: R28 on a match, the destination's own
                 // contents on a mismatch.  Writing the original back is not a
@@ -2004,6 +2003,16 @@ always_ff @(posedge clk) begin
                 state     <= S_EXC_SW;
             end else if (is_xch) begin
                 state <= S_XCH;
+            end else if (bf_bad_r) begin
+                // Raised HERE and not at S_RETIRE: the addressing mode's
+                // register writeback is applied at S_RETIRE, and an
+                // instruction the handler will restart must not have stepped
+                // it.
+                bf_bad_r   <= 1'b0;
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
             end else if (is_caxi && !caxi_match) begin
                 state <= S_CAXI_W;
             end else begin

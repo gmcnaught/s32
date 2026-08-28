@@ -1375,6 +1375,13 @@ initial begin
     mem[11'h189] = 8'h59; mem[11'h18A] = 8'h18; mem[11'h18B] = 8'h6A;
     mem[11'h18C] = 8'h68; mem[11'h18D] = 8'h30;
 
+    // EXTBFZ [4[R10]], #8, R9   5D A9 8A 04 08 69   -- an INDIRECT bit-addressed
+    //   operand.  Six of p.3.261's sixteen bit addressing modes are indirect and
+    //   none was exercised until now, which is how the address unit came to do
+    //   no bit arithmetic at all on that path.
+    mem[11'h764] = 8'h5D; mem[11'h765] = 8'hA9; mem[11'h766] = 8'h8A;
+    mem[11'h767] = 8'h04; mem[11'h768] = 8'h08; mem[11'h769] = 8'h69;
+
     // SBT entry 23, Decimal Arithmetic (Figure 8-2's +92) -> 0x1C0, which is
     // vector 21's handler -- the two share a frame and this reuses it.
     mem[11'h05C] = 8'hC0; mem[11'h05D] = 8'h01;
@@ -3717,6 +3724,36 @@ initial begin
         "with code 0x1780 beside a parameter count of 8 -- the Arithmetic frame");
     chk(mem[11'h700] === 8'hCC,
         "and the destination remains unchanged, which every one of the five promises");
+
+    // An INDIRECT bit-addressed operand, which nothing exercised before.  The
+    // pointer is at 4[R10] and the operand at the pointer, so the bit address
+    // must be built from the POINTER -- and the residual with it.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0710;
+    put_word(13'h714, 32'h0000_0700);        // the pointer
+    put_word(13'h700, 32'h0000_0098);        // the field's word
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    // Run a DIRECT bit-field instruction first, whose residual is 3.  Without
+    // it the previous residual happens to be 0, which is also the right answer
+    // here -- so "the indirect path recomputes the residual" and "the indirect
+    // path leaves the last one alone" would agree, and the test would prove
+    // nothing.
+    jump(32'h000006B4);                      // EXTBFZ 3[R8], #5, R9
+    step;
+    chk(seq.bf_resid_r === 3'd3, "the direct instruction leaves a residual of 3 behind");
+    @(negedge clk);
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h00000764);
+    step;
+    chk(rf.gpr[9] === 32'h0000_0098,
+        "an indirect bit operand reads at the POINTER, with a residual taken from it");
+    chk(seq.bf_resid_r === 3'd0,
+        "and the residual is RECOMPUTED from the pointer, not left at the last one");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
