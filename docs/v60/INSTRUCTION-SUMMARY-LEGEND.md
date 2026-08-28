@@ -7,7 +7,7 @@ of p. 3.299, under the Privileged Instructions block. Read off that plate:
 | | exception |
 |---|---|
 | 1 | Illegal Addressing Mode |
-| 2 | Illegal Data Type |
+| 2 | Illegal Data Type — but see the caveat below |
 | 3 | Reserved Addressing Mode |
 | 4 | Integer Zero Divide |
 | 5 | Illegal Decimal Format |
@@ -18,6 +18,27 @@ of p. 3.299, under the Privileged Instructions block. Read off that plate:
 | 10 | Invalid Floating Point Operation |
 | 11 | Floating Point Zero Divide |
 | 12 | Privileged Instruction |
+
+## The caveat on entry 2, added later
+
+`docs/v60/TRANCHE-ONE.md` found that **"Illegal Data Type" appears nowhere in
+the Programmer's Reference** except where its appendix reprints this same
+legend verbatim — same twelve entries, same "Undeflow" typo, so that reprint is
+this table again and not a second source. What the Reference's own
+per-instruction Exceptions blocks name instead is **Illegal Data Field**, which
+§8 defines ("an error is detected in the size of an operand") and places at
+`#20`, offset +80.
+
+The two do not line up cleanly. `TEST1`/`SET1`/`CLR1`/`NOT1` print `1, 2` and
+name Illegal Data Field; `LDPR` prints `2, 12` and names Privileged Instruction
+and Illegal Data Field — both consistent with `2 = Illegal Data Field`. But the
+character manipulation group also names Illegal Data Field on every page and
+prints **`1, 3`**, verified at 600 dpi on both plates.
+
+So this column is right about privilege and addressing and **unreliable about
+operand-size faults**, and the Reference's per-instruction blocks are the better
+source for those. Recorded rather than resolved: nothing held here reconciles
+the two.
 
 That one table makes the summary's last column readable for every instruction
 in the book, and it is a second source for things this tree had only from the
