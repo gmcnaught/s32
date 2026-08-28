@@ -467,6 +467,7 @@ endtask
 // Run one instruction and stop on its retirement.
 reg [31:0] last_pc;
 reg [31:0] psw_before;
+reg [31:0] pop_sp_result;
 
 // Place the program counter, the way a debugger would: the prefetch unit takes
 // a redirect from the bench on the same input the sequencer drives.
@@ -1392,6 +1393,12 @@ initial begin
     //   depends on the stack pointer, which is the case that makes POP's
     //   "the stack pointer is THEN incremented" observable.
     mem[11'h772] = 8'hE6; mem[11'h773] = 8'h1F; mem[11'h774] = 8'h00;
+
+    // POP R31            E7 7F        -- the aliasing case
+    mem[11'h775] = 8'hE7; mem[11'h776] = 8'h7F;
+    // MOV.W [R31+], R31  2D E0 9F 7F  -- the form POP's page says it IS
+    mem[11'h777] = 8'h2D; mem[11'h778] = 8'hE0; mem[11'h779] = 8'h9F;
+    mem[11'h77A] = 8'h7F;
 
     // MOVF.s [R10], R9    5C A8 6A 69   -- a NaN through this raises
     mem[11'h76E] = 8'h5C; mem[11'h76F] = 8'hA8; mem[11'h770] = 8'h6A;
@@ -3846,6 +3853,34 @@ initial begin
     chk(mem_word(13'h604) === 32'h0000_0000,
         "and not four bytes up, which incrementing first would have done");
     chk(rf.gpr[31] === 32'h00000604, "with the stack pointer incremented after");
+
+    // And the aliasing case, which is what D3 was originally about: POP's page
+    // says it is "a shorter encoding of the more general instruction
+    // mov.w [ sp+ ], dst", so the two must agree even when dst IS the stack
+    // pointer.  No page addresses that collision -- but the equivalence is
+    // itself a claim, and it is testable.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600
+    @(negedge clk);
+    put_word(13'h600, 32'hC0DE_C0DE);
+    repeat (2) @(negedge clk);
+    jump(32'h00000775);
+    step;
+    pop_sp_result = rf.gpr[31];
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h600, 32'hC0DE_C0DE);
+    repeat (2) @(negedge clk);
+    jump(32'h00000777);
+    step;
+    chk(rf.gpr[31] === pop_sp_result,
+        "`pop sp` and `mov.w [sp+], sp` now agree, which is the equivalence the page claims");
+    chk(pop_sp_result === 32'h00000604,
+        "and both leave SP one word up: the increment is written last and wins");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
