@@ -55,7 +55,7 @@ v60_exc dut (
     .req(e_req), .vector(e_vec), .ret_pc(e_ret), .psw_in(e_psw),
     .sp_in(e_sp), .sbr(e_sbr),
     .nparams(e_np), .code(e_code), .param0(e_p0), .param1(e_p1),
-    .is_interrupt(e_int), .disable_ie(e_dis), .int_stack(e_ist),
+    .is_interrupt(e_int), .disable_ie(e_dis), .int_stack(e_ist), .new_el(2'd0),
     .ack_vector(e_ackv),
     .sp_out(e_sp_out), .psw_out(e_psw_out), .handler_pc(e_handler),
     .busy(e_busy), .done(e_done), .bus_cycles(e_cycles),

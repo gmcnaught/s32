@@ -299,6 +299,13 @@ DISAGREEMENTS = {
     # digits are individually plausible; it is the whole column repeated.
     # See docs/v60/TRANCHE-ONE.md.  IN is 20/22/24, which is what this table
     # has always had.
+    'XCH': 'the databook p.3.296 prints Format "I, II"; the Programmer\'s '
+           'Reference S7 page says Format I only.  Left as I,II -- the plate '
+           'is the source this table is built from and the encoding works '
+           'either way -- but note that XCH\'s first operand is '
+           'register-only, which is the same constraint that makes CAXI '
+           'EXPLICITLY "not allowed to use Format II", so the Reference may '
+           'be right.  See docs/v60/TRANCHE-TWO.md.',
     'MOVCS': 'the databook prints only the c=0 form (58); the Programmer\'s '
              'Reference gives 58-0C and 5A-0C, so the c bit is live.  Taken '
              'from the Reference.',
@@ -454,7 +461,12 @@ DATA_TYPE = {
     # operands are full words in BOTH forms.  The `.h` names which HALF OF THE
     # PSW the instruction may modify, not the size of anything it reads.
     'UPDPSW.H': (4, 4), 'UPDPSW.W': (4, 4),
-    'CHLVL': (1, 4), 'CHKAR': (4, 1), 'CHKAW': (4, 1), 'CHKAE': (4, 1),
+    # DEFECT corrected: this was (1, 4).  The syntax line is
+    # "chlvl level.b.r, arg.b.r" -- BOTH operands are bytes.  The argument is a
+    # byte that the instruction zero-extends to word length when it pushes it,
+    # which is a property of the push and not of the operand fetch; reading it
+    # as a word would fetch three bytes that are not the operand's.
+    'CHLVL': (1, 1), 'CHKAR': (4, 1), 'CHKAW': (4, 1), 'CHKAE': (4, 1),
     'TASI': (1, None), 'CAXI': (4, 4), 'SETF': (1, 1),
     'LDPR': (4, 4), 'STPR': (4, 4),
     'CLRTLB': (4, None), 'CLRTLBA': (None, None),
@@ -546,6 +558,10 @@ EXEC_OP = {
     # architecture's own mark for what needs a bus lock -- and it and CAXI are
     # the only two instructions in the set carrying it.
     'TASI': 'TASI',
+    # The execution-level gateway.  Not privileged -- that is the point of it:
+    # a level-3 program may call UP, but only through this gate and onto a
+    # handler the operating system installed.
+    'CHLVL': 'CHLVL',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

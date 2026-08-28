@@ -160,6 +160,11 @@ typedef enum logic [5:0] {
     // exactly when the byte was ALREADY 0FFH -- that is, when the lock was
     // already held.  The four condition codes are a SUBTRACT's, not a test's.
     ALU_TASI    = 6'd56,
+    // "This instruction provides a protected method of accessing more
+    // privileged execution levels."  Both operands are read and neither is
+    // written; the whole effect is an exception, and the ONLY one in the set
+    // whose handler does not run at execution level 0.
+    ALU_CHLVL   = 6'd57,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

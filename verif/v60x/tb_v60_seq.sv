@@ -112,6 +112,7 @@ reg  [31:0] pr_wdata = 32'd0;
 wire  [4:0] rf_ra_sel, rf_rb_sel, rf_wr_sel;
 wire        rf_stack_switch, rf_new_is;
 wire  [1:0] rf_new_el;
+wire  [1:0] seq_exc_new_el;
 wire [31:0] rf_sbr;
 wire [31:0] rf_ra, rf_rb, rf_wr_data;
 wire        rf_wr_en;
@@ -202,7 +203,7 @@ v60_exc exc (
     .nparams(exc_nparams), .code(exc_code),
     .param0(exc_param0), .param1(exc_param1),
     .is_interrupt(exc_is_int), .disable_ie(exc_dis_ie),
-    .int_stack(exc_int_stack), .ack_vector(exc_ack_vector),
+    .int_stack(exc_int_stack), .new_el(seq_exc_new_el), .ack_vector(exc_ack_vector),
     .sp_out(exc_sp_out), .psw_out(exc_psw_out), .handler_pc(exc_handler_pc),
     .busy(), .done(exc_done), .bus_cycles(exc_cycles),
     .int_vector(exc_int_vector), .invalid_int(exc_invalid_int),
@@ -291,6 +292,7 @@ v60_seq seq (
     .exc_handler_pc(exc_handler_pc), .exc_done(exc_done),
     .exc_bus_cycles(exc_cycles),
     .rf_stack_switch(rf_stack_switch), .rf_new_el(rf_new_el),
+    .exc_new_el(seq_exc_new_el),
     .rf_new_is(rf_new_is),
     .redirect(seq_redirect), .redirect_pc(seq_redirect_pc),
     .pc(seq_pc), .psw(seq_psw), .retired(retired), .insn_cycles(insn_cycles),
@@ -377,6 +379,9 @@ always @(*) d_in = is_iack ? {8'h00, (iack_n == 0) ? iack_first : iack_second}
 
 integer n_writes = 0;
 always @(posedge clk) if (!rst && biu_ack && !rw_n) n_writes = n_writes + 1;
+// TEMP: catch whoever writes the CHLVL program
+always @(posedge clk) if (!rst && biu_ack && !rw_n && (bank_even == 11'h730))
+    $display("DBG CLOBBER a=%06x d=%04x t=%0t", a, d_out, $time);
 
 // The I/O address space, watched at the PINS.  "MRQ*,ST2-ST0 = 1011" is a
 // single mode I/O access (p.3.233), and MRQ is the bit that says I/O at all --
@@ -1188,6 +1193,37 @@ initial begin
     mem[11'h647] = 8'h0E; mem[11'h648] = 8'h00; mem[11'h649] = 8'h80;
     mem[11'h64A] = 8'hE4; mem[11'h64B] = 8'hF4; mem[11'h64C] = 8'h00;
     mem[11'h64D] = 8'h0E; mem[11'h64E] = 8'h00; mem[11'h64F] = 8'h80;
+
+    // CHLVL, Format II, two BYTE immediates.
+    // SBT entry 24, Change to Execution Level 0 (Figure 8-2's +96) -> 0x2E8
+    mem[11'h060] = 8'hE8; mem[11'h061] = 8'h02;
+    // handler 24: MOV.B #0xC5, [R8]
+    mem[11'h2E8] = 8'h09; mem[11'h2E9] = 8'h80; mem[11'h2EA] = 8'hF4;
+    mem[11'h2EB] = 8'hC5; mem[11'h2EC] = 8'h68;
+    // CHLVL #0, #0x5A   4B 80 F4 00 F4 5A   -- calling UP to level 0
+    mem[11'h730] = 8'h4B; mem[11'h731] = 8'h80; mem[11'h732] = 8'hF4;
+    mem[11'h733] = 8'h00; mem[11'h734] = 8'hF4; mem[11'h735] = 8'h5A;
+    // CHLVL #2, #0x5A   -- from level 0, asking for a LESS privileged level
+    mem[11'h736] = 8'h4B; mem[11'h737] = 8'h80; mem[11'h738] = 8'hF4;
+    mem[11'h739] = 8'h02; mem[11'h73A] = 8'hF4; mem[11'h73B] = 8'h5A;
+    // CHLVL #5, #0x5A   -- a level that does not exist
+    mem[11'h73C] = 8'h4B; mem[11'h73D] = 8'h80; mem[11'h73E] = 8'hF4;
+    mem[11'h73F] = 8'h05; mem[11'h740] = 8'hF4; mem[11'h741] = 8'h5A;
+    // CHLVL #4, #0x5A   -- out of range, and chosen so that the RANGE check is
+    //   the only thing that can catch it: 4's low two bits are 00, so the
+    //   privilege comparison against a level 0 caller passes.
+    mem[11'h742] = 8'h4B; mem[11'h743] = 8'h80; mem[11'h744] = 8'hF4;
+    mem[11'h745] = 8'h04; mem[11'h746] = 8'hF4; mem[11'h747] = 8'h5A;
+    // CHLVL #2, #0x77   -- a SUCCESSFUL call to a non-zero level, which is the
+    //   only case where "24 + level", the second-nibble code, the target
+    //   level's stack and the handler's PSW.EL are each distinguishable.
+    mem[11'h748] = 8'h4B; mem[11'h749] = 8'h80; mem[11'h74A] = 8'hF4;
+    mem[11'h74B] = 8'h02; mem[11'h74C] = 8'hF4; mem[11'h74D] = 8'h77;
+    // SBT entry 26, Change to Execution Level 2 (Figure 8-2's +104) -> 0x150
+    mem[11'h068] = 8'h50; mem[11'h069] = 8'h01;
+    // handler 26: MOV.B #0xE2, [R8]
+    mem[11'h150] = 8'h09; mem[11'h151] = 8'h80; mem[11'h152] = 8'hF4;
+    mem[11'h153] = 8'hE2; mem[11'h154] = 8'h68;
 
     // TASI [R8]   E0 68   -- Format III, m = 0, a byte through a pointer
     mem[11'h650] = 8'hE0; mem[11'h651] = 8'h68;
@@ -2939,6 +2975,126 @@ initial begin
     chk(seq_psw[PSW_CY] === 1'b0, "and no borrow, 0xFF - 0xFF being zero");
     chk(mem[11'h700] === 8'hFF,
         "the store happens either way -- TASI is not conditional");
+
+    // =======================================================================
+    // CHLVL.  "This instruction provides a protected method of accessing more
+    // privileged execution levels" -- the only exception in this tree whose
+    // handler does not run at level 0, and the only one whose frame goes
+    // somewhere other than L0SP or the interrupt stack.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    pr_id = 5'd1; pr_wdata = 32'h0000_0680; pr_wr = 1'b1;   // PR_L0SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    // Drop to level 3 with a stack of its own, the way a user program runs.
+    rf.gpr[31] = 32'h0000_05A0;
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h00000730);
+    step;
+
+    chk(seq_pc === 32'h000002E8,
+        "CHLVL #0 from level 3 vectors through SBT entry 24 -- 24 + level");
+    chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b00,
+        "and the handler runs at the TARGET level, not at the caller's");
+    chk(rf.gpr[31] === 32'h00000670,
+        "its frame went on the target level's stack -- L0SP, not the level 3 one");
+    chk(mem_word(13'h67C) === 32'h0000_005A,
+        "the byte argument, zero extended, is the frame's parameter");
+    chk(mem_word(13'h678) === 32'h18000008,
+        "with code 0x1800 for level 0 and a parameter count of 8");
+    chk(mem_word(13'h674) === psw_before, "then the caller's PSW");
+    chk(mem_word(13'h670) === 32'h00000736,
+        "and the NEXT PC, so the handler returns past the CHLVL");
+    step;
+    chk(mem[11'h700] === 8'hC5, "and the level 0 handler runs");
+
+    // Asking for a LESS privileged level than the caller already has.  "the
+    // current execution level is less than the level operand" -- level 0 is
+    // the most privileged, so this instruction only ever goes one way.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    jump(32'h00000736);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "CHLVL #2 from level 0 is the Illegal Data Field exception");
+    chk(mem_word(13'h5FC) === 32'h14000004,
+        "vector 20's code -- not a Privileged Instruction exception, and not a no-op");
+
+    // And a level that is not a level at all.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    jump(32'h0000073C);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "and a level operand of 5 raises it too: the range is 0 to 3");
+
+    // A level of 4, which the PRIVILEGE test cannot catch -- its low two bits
+    // are 00, so a caller at level 0 passes "EL < level".  Only the range
+    // check sees this one.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    jump(32'h00000742);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "a level operand of 4 is caught by the RANGE check, which nothing else can do");
+
+    // A SUCCESSFUL call to a non-zero level.  Everything about CHLVL that is
+    // indistinguishable at level 0 -- the vector's base, the code's second
+    // nibble, whose stack the frame lands on and what PSW.EL the handler runs
+    // with -- is distinguishable here and nowhere else.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd3; pr_wdata = 32'h0000_0760; pr_wr = 1'b1;   // PR_L2SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    rf.gpr[31] = 32'h0000_05A0;
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;                   // a level 3 caller
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h00000748);
+    step;
+    chk(seq_pc === 32'h00000150,
+        "CHLVL #2 from level 3 vectors through SBT entry 26 -- 24 + level, not 24");
+    chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b10,
+        "and the handler runs at level TWO: PSW.EL is the target, not zero");
+    chk(rf.gpr[31] === 32'h00000750,
+        "its frame went on L2SP -- the TARGET level's stack");
+    chk(mem_word(13'h75C) === 32'h0000_0077, "the argument is the parameter");
+    chk(mem_word(13'h758) === 32'h1A000008,
+        "and the code is 0x1A00 -- the level is the SECOND NIBBLE, not an addend");
+    chk(mem_word(13'h754) === psw_before, "then the caller's PSW");
+    chk(mem_word(13'h750) === 32'h0000074E, "and the Next PC");
+    step;
+    chk(mem[11'h700] === 8'hE2, "and the level 2 handler runs");
+
+    // And the NEXT exception must go back to level 0.  CHLVL is the only
+    // instruction that sets a non-zero target, so the target has to be cleared
+    // again -- otherwise every exception after a CHLVL inherits its level and
+    // lands on the wrong stack.  A BRK is the cheapest thing that raises.
+    @(negedge clk);
+    pr_id = 5'd1; pr_wdata = 32'h0000_0680; pr_wr = 1'b1;   // PR_L0SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    repeat (2) @(negedge clk);
+    jump(32'h0000027C);
+    step;
+    chk(seq_pc === 32'h000001A0, "a BRK after a CHLVL reaches its own handler");
+    chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b00,
+        "at level 0 -- CHLVL's target level did not leak into the next exception");
+    chk(rf.gpr[31] === 32'h00000674,
+        "and its frame went on L0SP, not on the level 2 stack");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

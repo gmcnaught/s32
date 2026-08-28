@@ -152,6 +152,11 @@ module v60_exc
     input               ack_vector,
 
     output logic [31:0] sp_out,
+    // Step (i) in full: "PSW.EL <- 00 (If a CHLVL instruction exception or an
+    // Asynchronous Task Trap then the specified execution level is set)".
+    // Everything else leaves this at zero; CHLVL is the one caller that does
+    // not, which is what makes it a gateway rather than a trap.
+    input         [1:0] new_el,
     output logic [31:0] psw_out,
     output logic [31:0] handler_pc,
     output logic        busy,
@@ -191,6 +196,7 @@ logic  [1:0] phase;         // 0: parameters, 1: the PSW, 2: the return PC
 logic [31:0] sp;
 logic [31:0] p0, p1;
 logic        int_r, dis_r, ist_r;
+logic  [1:0] el_r;
 
 assign busy = (state != S_IDLE);
 
@@ -225,7 +231,8 @@ endfunction
 function automatic logic [31:0] psw_upd(input logic [31:0] p,
                                         input logic        is_int,
                                         input logic        dis,
-                                        input logic        on_ist);
+                                        input logic        on_ist,
+                                        input logic  [1:0] el);
     logic [31:0] r;
     begin
         // The eight step recognition sequence, which the DATABOOK prints with
@@ -243,7 +250,7 @@ function automatic logic [31:0] psw_upd(input logic [31:0] p,
         // "an asynchronous system trap will be disregarded while the PSW.ASA
         // field indicates an earlier AST is being serviced".
         r                        = p;
-        r[PSW_EL_HI:PSW_EL_LO]   = 2'b00;              // execution level 0
+        r[PSW_EL_HI:PSW_EL_LO]   = el;                 // 00, or CHLVL's target
         if (is_int || dis) r[PSW_IE] = 1'b0;           // and Note 2
         r[PSW_TE]                = 1'b0;
         r[PSW_TP]                = 1'b0;
@@ -282,6 +289,7 @@ always_ff @(posedge clk) begin
         int_r       <= 1'b0;
         dis_r       <= 1'b0;
         ist_r       <= 1'b0;
+        el_r        <= 2'd0;
         dx_intack   <= 1'b0;
         int_vector  <= 8'd0;
         invalid_int <= 1'b0;
@@ -297,6 +305,7 @@ always_ff @(posedge clk) begin
             int_r       <= is_interrupt;
             dis_r       <= disable_ie;
             ist_r       <= int_stack;
+            el_r        <= new_el;
             sp          <= sp_in;
             bus_cycles  <= 4'd0;
             code_r      <= code;
@@ -421,7 +430,7 @@ always_ff @(posedge clk) begin
         S_FIN: begin
             // "transferred to the ... vector at execution level 0", and for an
             // interrupt "further maskable interrupts will be disabled".
-            psw_out <= psw_upd(psw_in, int_r, dis_r, ist_r);
+            psw_out <= psw_upd(psw_in, int_r, dis_r, ist_r, el_r);
             sp_out  <= sp;
             done    <= 1'b1;
             state   <= S_IDLE;

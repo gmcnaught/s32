@@ -483,7 +483,7 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h094: r = 4'd4 ;  // UPDPSW.H
             9'h095: r = 4'd4 ;  // UPDPSW.H (operand 2)
             9'h096: r = 4'd1 ;  // CHLVL
-            9'h097: r = 4'd4 ;  // CHLVL (operand 2)
+            9'h097: r = 4'd1 ;  // CHLVL (operand 2)
             9'h098: r = 4'd4 ;  // CAXI
             9'h099: r = 4'd4 ;  // CAXI (operand 2)
             9'h09A: r = 4'd4 ;  // CHKAR
@@ -1037,6 +1037,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h45: r = ALU_XCH;  // XCH
             8'h47: r = ALU_SETF; // SETF
             8'h4A: r = ALU_UPDPSWH; // UPDPSW.H
+            8'h4B: r = ALU_CHLVL; // CHLVL
             8'h50: r = ALU_REM;  // REM
             8'h51: r = ALU_REMU; // REMU
             8'h52: r = ALU_REM;  // REM

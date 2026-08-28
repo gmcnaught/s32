@@ -365,6 +365,8 @@ always_comb begin
         ALU_XCH: raw = x;
         // The mask walk is entirely the sequencer's.
         ALU_PUSHM, ALU_POPM: writes = 1'b0;
+        // Both operands ".b.r"; the effect is entirely an exception.
+        ALU_CHLVL: writes = 1'b0;
         // "dst <- 0FFH" -- unconditionally, whatever the comparison said.
         // The flags are the comparison's and the result is the constant, which
         // is why this cannot be CMP with a different writeback.
@@ -456,7 +458,8 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_HALT)   || (op == ALU_IN)    || (op == ALU_OUT) ||
                 (op == ALU_PUSH)   || (op == ALU_POP)   ||
                 (op == ALU_PREPARE) || (op == ALU_DISPOSE) ||
-                (op == ALU_XCH)    || (op == ALU_PUSHM) || (op == ALU_POPM);
+                (op == ALU_XCH)    || (op == ALU_PUSHM) || (op == ALU_POPM) ||
+                (op == ALU_CHLVL);
 wire keep_but_ov = (op == ALU_MOVT);
 // "CY Set if the designated bit is 1, otherwise cleared / OV Unchanged /
 // S Unchanged / Z Set if the designated bit is 0, otherwise cleared" -- the

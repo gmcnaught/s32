@@ -316,6 +316,7 @@ module v60_seq
     // register file switches R31 before v60_exc pushes anything.
     output logic        rf_stack_switch,
     output logic  [1:0] rf_new_el,
+    output logic  [1:0] exc_new_el,
     output logic        rf_new_is,
 
     // ---- the externally raised conditions, from v60_biu -----------------------
@@ -375,6 +376,11 @@ localparam logic [7:0] VEC_BREAKPOINT    = 8'd13;
 // that reaches it, and it shares the Arithmetic Exceptions frame with the
 // integer overflow and the zero divide above.
 localparam logic [7:0] VEC_FP_ARITH      = 8'd22;
+// +96..+108  Change to Execution Level 0..3   vectors 24..27
+// The databook's p.3.270 SBT plate prints these individually --
+// "24 Change to Execution Level 0" through "27 ... Level 3" -- immediately
+// above "23 Decimal Arithmetic Exception".
+localparam logic [7:0] VEC_CHLVL_BASE    = 8'd24;
 localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
 localparam logic [15:0] CODE_PRIVILEGED    = 16'h1100;
 localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
@@ -420,6 +426,16 @@ localparam logic [2:0] EK_ARITH = 3'd3;
 // TRAP's own Operation block and Figure 8-5 agree here, which is worth stating
 // because its neighbour BRK's do not (docs/v60/BREAK-AND-TRAP.md).
 localparam logic [2:0] EK_TRAP = 3'd4;
+// CHLVL's frame, which is the Arithmetic Exceptions SHAPE with a different
+// occupant of the parameter slot: "+12 zero_extended(arg) / +8 Exception Code
+// | 8 / +4 PSW / PC (Next PC)".  Its own Operation block lists the four pushes
+// in execution order, and they pre-decrement, so the first pushed ends up
+// highest -- which is the argument.
+//
+// What makes it its own kind rather than EK_ARITH with a different parameter
+// is step (i): the handler runs at the TARGET execution level and its frame
+// goes on that level's stack, not on L0SP.
+localparam logic [2:0] EK_CHLVL = 3'd5;
 
 // Table 8-1's Serious System Exceptions, all thirteen, keyed by the bus status
 // of the cycle that failed and its direction.  The group is one code per KIND
@@ -522,6 +538,7 @@ logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
 logic  [7:0] exc_vec_r;   // the exception being raised, and its code
 logic [15:0] exc_code_r;
 logic  [2:0] exc_kind;    // which of the shapes of frame it wants
+logic  [1:0] exc_el_r;    // and the execution level its handler runs at
 logic        exc_ack_r;   // and whether its vector comes off the bus
 logic [31:0] sp_r;        // the stack pointer the stack engine is walking
 logic [31:0] fp_r;        // and the frame pointer, for PREPARE and DISPOSE
@@ -634,7 +651,9 @@ wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
                             // "test1 offset.w.r, base.w.r" -- the only one of
                             // the four bit instructions that writes nothing.
                             // Its three siblings print "base.w.rw".
-                            (aop == ALU_TEST1);
+                            (aop == ALU_TEST1) ||
+                            // "chlvl level.b.r, arg.b.r" -- both read.
+                            (aop == ALU_CHLVL);
 
 // And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
 // line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
@@ -848,6 +867,34 @@ wire        is_popm  = (aop == ALU_POPM);
 wire        is_tasi = (aop == ALU_TASI);
 wire        is_lockop = is_tasi;
 
+// CHLVL, the execution-level gateway and the only exception in this tree whose
+// handler does NOT run at level 0.
+wire        is_chlvl   = (aop == ALU_CHLVL);
+wire  [1:0] chlvl_lvl  = val1[1:0];
+// Vector 24 + level, off the p.3.270 plate.
+wire  [7:0] chlvl_vec  = VEC_CHLVL_BASE + {6'd0, chlvl_lvl};
+// Databook p.3.272's Change Execution Level block: 1800, 1900, 1A00, 1B00.
+// The level moves the SECOND NIBBLE -- it is NOT 0x1800 + level, which is what
+// s32_v60.sv builds.  Same indexing as the Software Traps group; there is no
+// group in that table indexed in the low byte.
+wire [15:0] chlvl_code = {4'h1, 2'b10, chlvl_lvl, 8'h00};
+// "An Illegal Data Field exception will occur if the level operand is not in
+// the range 0 <= level <= 3 or the current execution level is less than the
+// level operand."
+//
+// The page then prints that second condition as an expression the OCR renders
+// "level < PSW.EL", which is the NEGATION of its own prose.  The prose is the
+// reading that survives: §3 numbers level 0 most privileged, and the
+// Description's first sentence says the instruction exists "to provide a
+// protected method of accessing MORE PRIVILEGED execution levels" -- so under
+// the printed inequality, asking for a lower-numbered level would raise, which
+// forbids the only thing the instruction is for.  The Reference PDF is not
+// held, only its OCR text layer, so this cannot be checked on a plate.
+// Recorded as OCR-suspect in docs/v60/TRANCHE-TWO.md rather than resolved.
+wire        chlvl_bad = is_chlvl &&
+                        ((val1[31:2] != 30'd0) ||
+                         (psw[PSW_EL_HI:PSW_EL_LO] < chlvl_lvl));
+
 wire        is_xch = (aop == ALU_XCH);
 // Format I with d = 0 puts dst1 in the register field, where it cannot be
 // anything else.  Every other encoding puts it in op1's addressing mode.
@@ -1018,6 +1065,8 @@ always_ff @(posedge clk) begin
         exc_int_stack   <= 1'b0;
         exc_ack_vector  <= 1'b0;
         exc_kind        <= EK_INSN;
+        exc_el_r        <= 2'd0;
+        exc_new_el      <= 2'd0;
         exc_ack_r       <= 1'b0;
         nmi_take        <= 1'b0;
         halted_r        <= 1'b0;
@@ -1542,7 +1591,13 @@ always_ff @(posedge clk) begin
             // instruction, so nothing may have been committed.  LDPR writes no
             // operand, so what is being protected here is the privileged
             // register itself.
-            if (ldpr_id_bad) begin
+            if (ldpr_id_bad || chlvl_bad) begin
+                // CHLVL's level operand is out of range, or asks for a level
+                // the caller may not reach.  Illegal Data Field either way --
+                // NOT a Privileged Instruction exception, and not a silent
+                // no-op.  An Instruction Exception, so the Current PC and a
+                // restart, so nothing may be committed: checked here, with
+                // both operands read and the exception frame not yet begun.
                 exc_vec_r  <= VEC_ILLEGAL_DATA;
                 exc_code_r <= CODE_ILLEGAL_DATA;
                 exc_kind   <= EK_INSN;
@@ -1666,6 +1721,14 @@ always_ff @(posedge clk) begin
                 exc_vec_r  <= VEC_INT_ARITH;
                 exc_code_r <= CODE_ZERO_DIVIDE;
                 exc_kind   <= EK_ARITH;
+                state      <= S_EXC_SW;
+            end else if (is_chlvl) begin
+                // The instruction's whole effect is the exception, and it
+                // succeeds -- the failure cases were caught at S_EXEC.
+                exc_vec_r  <= chlvl_vec;
+                exc_code_r <= chlvl_code;
+                exc_el_r   <= chlvl_lvl;
+                exc_kind   <= EK_CHLVL;
                 state      <= S_EXC_SW;
             end else if (trap_taken) begin
                 // Raised here rather than at S_EXEC for the reason above: the
@@ -2380,7 +2443,21 @@ always_ff @(posedge clk) begin
             // S_IDLE's three branches because every one of them arrives here.
             halted_r        <= 1'b0;
             rf_stack_switch <= 1'b1;
-            rf_new_el       <= 2'd0;
+            // Step (i): "PSW.EL <- 00 (If a CHLVL instruction exception or an
+            // Asynchronous Task Trap then the specified execution level is
+            // set)".  So the level is ZERO unless this particular exception is
+            // one of the two that name their own, and the kind is what decides
+            // -- not a register that happens to be left over.
+            //
+            // DEFECT this replaces.  It was `rf_new_el <= exc_el_r` with
+            // exc_el_r cleared in this same state, which is one exception too
+            // late: the clear is a non-blocking assignment, so the raise after
+            // a CHLVL still read the level CHLVL had left behind and switched
+            // to the wrong stack.  Found by asking what a BRK does immediately
+            // after a successful CHLVL #2 -- it landed at execution level 2 on
+            // the level 2 stack.
+            rf_new_el       <= (exc_kind == EK_CHLVL) ? exc_el_r : 2'd0;
+            exc_new_el      <= (exc_kind == EK_CHLVL) ? exc_el_r : 2'd0;
             // Step (vii) puts an exception's frame on the stack the new
             // execution level names -- L0SP, or IS if that is where it already
             // was -- and that covers the instruction exceptions and the
@@ -2475,6 +2552,21 @@ always_ff @(posedge clk) begin
                 // Step (ii) of the recognition sequence, databook p.3.269:
                 // only an INTERRUPT clears PSW.IE.  "exception ... PSW.IE
                 // unchanged".
+                exc_disable_ie   <= 1'b0;
+                exc_int_stack    <= 1'b0;
+                exc_ack_vector   <= 1'b0;
+            end
+            // CHLVL's frame: the zero-extended byte argument as the
+            // parameter, count 8, and the Next PC on top -- so a handler
+            // returns with RETIS #8 and lands after the CHLVL.
+            EK_CHLVL: begin
+                exc_ret_pc       <= idu_pc + {27'd0, idu_len};
+                exc_nparams      <= 2'd1;
+                exc_code         <= exc_code_r;
+                // "the byte argument is zero extended to word length pushed on
+                // the target execution level stack".
+                exc_param0       <= {24'd0, val2[7:0]};
+                exc_is_interrupt <= 1'b0;
                 exc_disable_ie   <= 1'b0;
                 exc_int_stack    <= 1'b0;
                 exc_ack_vector   <= 1'b0;
