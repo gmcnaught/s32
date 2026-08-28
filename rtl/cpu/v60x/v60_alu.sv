@@ -273,21 +273,39 @@ wire  [7:0] dec_zp = {x[3:0], x[11:8]};
 // valid BCD representation exists" -- the ARITHMETIC three check the RESULT and
 // not their operands, which the page is explicit about and which is worth
 // stating because it is the reverse of the conversions.
-// UNREACHABLE BY CONSTRUCTION, and that is a finding rather than an oversight.
-// This adder works in VALUES -- both operands are converted to 0..99, the sum
-// is reduced modulo 100 and split back with /10 and %10 -- so dec_res is valid
-// BCD for every input, including an input whose own nibbles are not.  A
-// mutation deleting this check passes every test, and no test can be written
-// that makes it fire.
+// The OPERAND rule, which §3 states as a property of the DATA and not of any
+// instruction -- so it applies to all five, and the two conversions below
+// already follow it:
 //
-// The page's rule is nevertheless transcribed rather than dropped, because it
-// is a rule and because it constrains an adder built differently: "Following
-// the addition operation, the result is checked to verify that a valid BCD
-// representation exists in the unmasked portion of the result."  Note it checks
-// the RESULT and not the operands -- docs/v60/DECIMAL.md records the page's own
-// open question, whether a decimal adder can produce a valid-BCD result from
-// invalid-BCD inputs.  This one always can, so it always does.
-wire        dec_res_bad = (dec_res[7:4] > 4'd9) || (dec_res[3:0] > 4'd9);
+//   "When a nibble is expected to contain a digit, only the valid BCD values
+//    [0..9] can be specified.  ANY OTHER VALUE WILL CAUSE AN ILLEGAL DECIMAL
+//    FORMAT EXCEPTION TO OCCUR.  There is no restriction on the contents of
+//    the zone field."
+//
+// CORRECTION.  This check was absent and the commit that added the group
+// claimed the result check below was "unreachable by construction", on the
+// reasoning that a value-based adder always produces valid BCD.  THAT WAS
+// FALSE, and docs/v60/DECIMAL-AUDIT.md's D1 disproves it by construction:
+// dec_xv reaches 165 for an input of 0xFF, not 99, so dec_val is not bounded
+// by 99 either, and dec_res_hi -- a FOUR-bit wire taking dec_val/10 -- keeps a
+// non-digit for dec_val in 100..159 and folds one back to 0..9 above that.
+// ADDDC 0xA0 + 0xA0 raises today; ADDDC 0xF0 + 0xF0 does not and is silently
+// wrong.  Over all 131,072 (x, y, CY) triples the result check fires on 22.5%
+// of them and misses 81,600 cases with an invalid input nibble.
+//
+// So the same class of illegal input was caught about a quarter of the time,
+// by magnitude rather than by anything architectural.  The operand check is
+// TOTAL where the result check is partial.
+wire        dec_op_bad  = (dec_x_hi > 4'd9) || (dec_x_lo > 4'd9) ||
+                          (dec_y_hi > 4'd9) || (dec_y_lo > 4'd9);
+// And the page's own extra rule on the way out, kept because it is a rule and
+// because it constrains an adder built nibble-wise, which can produce a
+// non-digit from two digits: "Following the addition operation, the result is
+// checked to verify that a valid BCD representation exists in the unmasked
+// portion of the result."  With the operands rejected on the way in this IS
+// now unreachable -- which is what makes the claim true rather than assumed.
+wire        dec_res_bad = dec_op_bad ||
+                          (dec_res[7:4] > 4'd9) || (dec_res[3:0] > 4'd9);
 // CVTD.PZ checks its SOURCE, prior to the conversion.
 wire        dec_pz_bad  = (dec_x_hi > 4'd9) || (dec_x_lo > 4'd9);
 // CVTD.ZP checks two different things, and the zone check is the only place in

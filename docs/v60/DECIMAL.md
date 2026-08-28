@@ -323,11 +323,18 @@ rule from the exception's side:
 **All five can raise it.** All five print an `Exceptions` block whose only entry
 is `Decimal Format`, and all five carry `5` in the summary's Exceptions column.
 
-Note that the three arithmetic instructions check the **result** and not the
-operands. A pair of operand bytes containing `0xA`-`0xF` nibbles does not, by
-the letter of the page, trap on the way in — it traps only if what comes out is
-not valid BCD. Whether a decimal adder can produce a valid-BCD result from
-invalid-BCD inputs is an implementation question the page does not address.
+Note that the three arithmetic instructions' *per-instruction* sentence checks
+the **result** and not the operands. That is an *additional* check on the way
+out, and it makes sense for hardware whose adder is nibble-wise and can produce
+a non-digit from two digits.
+
+**It does not replace §3**, which states the operand rule as a property of the
+**data** — "Any other value will cause an illegal decimal format exception to
+occur" — and therefore covers all five. `docs/v60/DECIMAL-AUDIT.md`'s D1 is the
+correction: an earlier reading of this section treated the result check as the
+only one and concluded it was unreachable, which was false in both halves. The
+implementation now checks operands (total) and keeps the result check (the
+page's own extra rule), which is what makes the unreachability claim true.
 
 ### The vector and the code, both off plates
 

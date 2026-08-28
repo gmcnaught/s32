@@ -2088,6 +2088,10 @@ always_ff @(posedge clk) begin
                 psw <= updpsw_next;
             end else if (fp_resv) begin
                 // "the flags ... will remain unchanged".
+                //
+                // Note the contrast with the DECIMAL fault below, whose pages
+                // protect only the destination.  When NEC wants the flags
+                // preserved it says so in the same sentence, and here it does.
                 psw <= psw;
             end else if (is_fp) begin
                 // The FLOATING POINT condition codes, PSW[12:8], which nothing
@@ -2144,7 +2148,24 @@ always_ff @(posedge clk) begin
             end else if (dec_fault) begin
                 // "a Decimal Format exception will occur and the destination
                 // will remain unchanged" -- eff_writes above is what keeps the
-                // destination, and this is the exception.  Figure 8-5 puts #21,
+                // destination, and this is the exception.
+                //
+                // DECISION, marked because docs/v60/DECIMAL-AUDIT.md's S1 is
+                // right that it was not: THE FLAGS COMMIT.  Every page in the
+                // group protects the destination and says nothing about the
+                // flags, and the argument for committing them is that the same
+                // book says the other thing when it means it -- the floating
+                // point pages just above read "the flags AND destination will
+                // remain unchanged".  One sentence names both and the other
+                // names one.
+                //
+                // The consequence is real and is the reason this needed
+                // marking rather than assuming: the Arithmetic frame carries
+                // the NEXT PC, so a handler returns PAST the faulting
+                // instruction, and a multi-byte chain resumes with a CY
+                // computed from a result that was discarded -- CY being an
+                // INPUT is the whole design of this group.  The pages do not
+                // settle it.  Figure 8-5 puts #21,
                 // #22 and #23 under one Arithmetic Exceptions heading with ONE
                 // frame, so this is the frame the zero divide already builds:
                 // the Current PC as a parameter above the code word, count 8,

@@ -897,15 +897,40 @@ initial begin
     x = 32'h12; y = 32'h34;
     #1 chk(dec_bad === 1'b0, "a valid result raises nothing");
 
-    // And an INVALID input does not raise either, because the page checks the
-    // RESULT and this adder works in values -- 0x1A reads as twenty and comes
-    // back as valid BCD.  Pinning the behaviour rather than leaving it to be
-    // discovered: docs/v60/DECIMAL.md records the page's own open question
-    // about whether a decimal adder can produce invalid BCD at all.
+    // An INVALID INPUT raises, which §3 requires of the DATA rather than of any
+    // instruction: "When a nibble is expected to contain a digit, only the
+    // valid BCD values [0..9] can be specified.  Any other value will cause an
+    // illegal decimal format exception to occur."
+    //
+    // This assertion used to say the opposite -- that an input nibble of A does
+    // NOT raise -- which was true of the 0x1A it tested and false of 0xA0 two
+    // lines away.  See docs/v60/DECIMAL-AUDIT.md's D1.
     x = 32'h1A; y = 32'h00;
-    #1 chk(dec_bad === 1'b0,
-           "an input nibble of A does not raise: the check is on the result, not the operands");
-    #1 chk(result === 32'h20, "and it is read as the value twenty");
+    #1 chk(dec_bad === 1'b1, "an input nibble of A raises: §3 is an OPERAND rule");
+    x = 32'hA0; y = 32'hA0;
+    #1 chk(dec_bad === 1'b1, "and so does a high nibble of A on both operands");
+    // The case the result check alone MISSED: 0xF0 + 0xF0 gives dec_val 150,
+    // whose /10 is 15 -- but 0xFF + 0xFF reaches 165+165, and above 159 the
+    // four-bit quotient folds back into 0..9 and looks like a digit.
+    x = 32'hFF; y = 32'hFF;
+    #1 chk(dec_bad === 1'b1,
+           "including the magnitudes the result check folded back into looking valid");
+    // Each operand and each nibble on its own, because a check that reads only
+    // one of the four passes every test above -- they all have more than one
+    // bad nibble.
+    x = 32'h00; y = 32'h0A;
+    #1 chk(dec_bad === 1'b1, "a bad nibble in the DESTINATION alone raises");
+    x = 32'h0A; y = 32'h00;
+    #1 chk(dec_bad === 1'b1, "and in the SOURCE alone");
+    x = 32'hA0; y = 32'h00;
+    #1 chk(dec_bad === 1'b1, "a bad HIGH nibble raises");
+    x = 32'h0A; y = 32'h00;
+    #1 chk(dec_bad === 1'b1, "and a bad LOW one -- all four positions, not a subset");
+
+    x = 32'h99; y = 32'h99;
+    #1 chk(dec_bad === 1'b0, "while the largest VALID pair raises nothing");
+    #1 chk(result === 32'h98 && flags_out[PSW_CY] === 1'b1,
+           "and computes 99 + 99 = 198 correctly");
 
     // CVTD.PZ: the digit order CROSSES and `pat` supplies the zone by OR.
     // Its destination is a HALFWORD, which is what opbytes carries here -- the
