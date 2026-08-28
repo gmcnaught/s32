@@ -369,6 +369,17 @@ offset. Two things fall straight out of it, both consistent with this core:
 - CHLVL's `24 + level` maps to **Change to Execution Level 0–3 (vectors
   24–27)**. Correct.
 
+**Update, and the documents' half is now settled.** `docs/v60/EXCEPTIONS.md`
+reads the SBT off the databook's own p. 3.270 plate — which prints the vector
+NUMBER in a column beside the offset — and `docs/v60/MMU-AND-TASKS.md` reached
+the same place independently from §8: **Reserved Opcode is vector 16 and Area
+Not Present is vector 8**, and the V70 table quoted below agrees. `v60_seq`
+raises 16. So the documents are unanimous and the clean-room core follows them;
+what remains open is only whether MAME's 8 reflects real silicon, which no page
+held here can decide. It is the same shape as the `SCHC`/`SKPC` Z-sense
+divergence in `docs/v60/COSIM.md`: a MAME-against-the-pages conflict with game
+behaviour at stake, recorded rather than "fixed".
+
 But the same table assigns vector 8 to *Area Not Present* and vector 16 to
 *Reserved Opcode*, while this core uses vector 8 for reserved-opcode and
 illegal-addressing conditions because that is what MAME does. **That is worth
