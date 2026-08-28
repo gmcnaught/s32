@@ -13,7 +13,8 @@ Usage:  python3 tools/v60x/gen_op_pkg.py [outfile]
 
 import sys
 
-from insn_table import TABLE, DATA_TYPE, EXEC_OP, CTRL_OP, expand, check_table
+from insn_table import (TABLE, DATA_TYPE, EXEC_OP, EXEC_OP_ESCAPE, CTRL_OP,
+                        expand, check_table)
 
 HEADER = '''//============================================================================
 //  v60_op_pkg -- which instruction format an opcode is.
@@ -113,6 +114,7 @@ def build():
     who = {}
     width = {}        # opcode byte      -> (w1, w2)
     width_esc = {}    # (opcode, subop)  -> (w1, w2)
+    escalu   = []     # ((opcode, subop), alu_op, mnemonic)
     execop = {}       # opcode byte      -> the ALU operation, or None
     ctrlop = {}       # opcode byte      -> the control transfer, or None
 
@@ -147,8 +149,16 @@ def build():
                     assert s < 32, ('%s: subop %02X does not fit the five bits '
                                     'the base word gives it' % (mnemonic, s))
                     escape[(b, s)] = (SV_FMT[fmt], mnemonic)
+                    # And, where the sub-op picks the OPERATION rather than
+                    # only the format, the ALU op for this exact (op, subop).
+                    # `ext` is the sub-op's low two bits (p.3.295).
+                    if (mnemonic, s & 3) in EXEC_OP_ESCAPE:
+                        escalu.append(((b, s),
+                                       EXEC_OP_ESCAPE[(mnemonic, s & 3)],
+                                       mnemonic))
                     put(width_esc, (b, s), widths, mnemonic, who_esc)
-    return first, escape, who, width, width_esc, who_esc, execop, ctrlop
+    return (first, escape, who, width, width_esc, who_esc, execop, ctrlop,
+            escalu)
 
 
 def emit(out):
@@ -156,7 +166,8 @@ def emit(out):
     if errors or collisions:
         raise SystemExit('table does not validate; run insn_table.py')
 
-    first, escape, who, width, width_esc, who_esc, execop, ctrlop = build()
+    (first, escape, who, width, width_esc, who_esc, execop, ctrlop,
+     escalu) = build()
     w = out.write
     w(HEADER)
 
@@ -277,6 +288,39 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     end
 endfunction
 
+// The escape opcodes whose SUB-OP picks the OPERATION, not just the width.
+// 0x5D is EXTBF, INSBF and CMPBF together, and p.3.295's two-bit `ext` field in
+// the sub-op byte selects the variant of each -- so one opcode byte carries
+// eight operations and op_alu(), keyed by opcode alone, cannot express it.
+function automatic alu_op_e op_alu_escape(input logic [7:0] op,
+                                          input logic [4:0] subop);
+    alu_op_e r;
+    begin
+        case ({op, 3'b000, subop})
+''')
+    for (b, sb), aluop, mn in sorted(escalu):
+        w('            16\'h%02X%02X: r = ALU_%-8s // %s\n'
+          % (b, sb, aluop + ';', mn))
+    w('''            default: r = ALU_NONE;
+        endcase
+        op_alu_escape = r;
+    end
+endfunction
+
+// The whole answer.  The escape's operation if it has one, and the opcode's
+// otherwise -- the same shape as op_data_bytes() below, for the same reason.
+function automatic alu_op_e op_alu_all(input logic [7:0] op,
+                                       input logic [4:0] subop);
+    alu_op_e e;
+    begin
+        // if/else and not a ternary: a ternary between two enum values is not
+        // an enum to every tool, which this file's own dst_mode note records.
+        e = op_alu_escape(op, subop);
+        if (e != ALU_NONE) op_alu_all = e;
+        else               op_alu_all = op_alu(op);
+    end
+endfunction
+
 // Which control transfer an opcode is, if any.
 function automatic ctrl_op_e op_ctrl(input logic [7:0] op);
     ctrl_op_e r;
@@ -335,7 +379,7 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 else 'rtl/cpu/v60x/v60_op_pkg.sv'
     with open(path, 'w') as out:
         emit(out)
-    first, escape, _, width, width_esc, _w, execop, ctrlop = build()
+    (first, escape, _, width, width_esc, _w, execop, ctrlop, _e) = build()
     print('%s: %d opcode bytes, %d escape encodings, %d widths (%d by subop), '
           '%d executable, %d control'
           % (path, len(first), len(escape), len(width), len(width_esc),

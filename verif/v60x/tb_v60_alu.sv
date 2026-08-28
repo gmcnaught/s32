@@ -35,7 +35,11 @@ wire [31:0]  result;
 wire  [3:0]  flags_out;
 wire         writes;
 
+reg  [2:0] bf_resid = 3'd0;
+reg  [5:0] bf_len   = 6'd0;
+
 v60_alu dut (.op(op), .opbytes(opbytes), .xbytes(xbytes), .x(x), .y(y),
+             .bf_resid(bf_resid), .bf_len(bf_len),
              .flags_in(flags_in),
              .result(result), .flags_out(flags_out), .writes(writes));
 
@@ -702,6 +706,107 @@ initial begin
     y = 32'h0000_0000; x = 32'h0000_0008;
     #1 chk(result === 32'h0000_0100, "NOT1 of a clear bit sets it");
     #1 chk(flags_out[PSW_CY] === 1'b0 && flags_out[PSW_Z] === 1'b1, "reporting it clear");
+
+    // =======================================================================
+    // The bit field group.  One shift and one mask over the word the sequencer
+    // read, which is all "the sum of the bit offset and the bit field length
+    // must not exceed thirty-two" permits it to be.
+    //
+    // The word arrives as x for EXTBF and CMPBF, whose bit-addressed operand is
+    // the first, and as y for INSBF, whose bit-addressed operand is the
+    // destination.
+    // =======================================================================
+    opbytes = 4'd4; xbytes = 4'd4; flags_in = 4'b0000;
+
+    // A five-bit field at bit 3 of 0x98: (0x98 >> 3) & 0x1F = 0x13, whose own
+    // top bit -- bit 4, because the length says so -- is set.
+    bf_resid = 3'd3; bf_len = 6'd5; x = 32'h0000_0098; y = 32'd0;
+
+    op = ALU_EXTBFZ;
+    #1 chk(result === 32'h0000_0013, "EXTBFZ extracts the field and zero extends it");
+    #1 chk(writes === 1'b1 && flags_out === 4'b0000,
+           "writing its destination and moving no flag");
+
+    op = ALU_EXTBFS;
+    #1 chk(result === 32'hFFFF_FFF3,
+           "EXTBFS sign extends from the FIELD's top bit, which moves with the length");
+
+    op = ALU_EXTBFL;
+    #1 chk(result === 32'h9800_0000, "EXTBFL puts the field at the top of the word");
+
+    // A field whose own top bit is clear sign extends to itself.
+    bf_len = 6'd6;
+    op = ALU_EXTBFS;
+    #1 chk(result === 32'h0000_0013,
+           "a six-bit field of the same word has a clear top bit and does not extend");
+    bf_len = 6'd5;
+
+    // "If the bit field length is zero, zero will be stored in the destination
+    // operand."
+    bf_len = 6'd0;
+    op = ALU_EXTBFZ;  #1 chk(result === 32'd0, "a zero-length EXTBF stores zero");
+    op = ALU_EXTBFS;  #1 chk(result === 32'd0, "sign extended too");
+    op = ALU_EXTBFL;  #1 chk(result === 32'd0, "and left justified, which would shift by 32");
+
+    // The maximum: 32 bits at residual 0, which is the only place it fits.
+    bf_resid = 3'd0; bf_len = 6'd32; x = 32'hDEAD_BEEF;
+    op = ALU_EXTBFZ;
+    #1 chk(result === 32'hDEAD_BEEF, "a 32-bit field at residual 0 is the whole word");
+    op = ALU_EXTBFL;
+    #1 chk(result === 32'hDEAD_BEEF, "and left justifying it moves nothing");
+
+    // INSBF: the word is y and the source is x.
+    bf_resid = 3'd3; bf_len = 6'd5;
+    y = 32'hFFFF_FFFF; x = 32'h0000_0002;
+    op = ALU_INSBFR;
+    #1 chk(result === 32'hFFFF_FF17,
+           "INSBFR replaces just the field and leaves every neighbouring bit");
+    #1 chk(flags_out === 4'b0000, "moving no flag");
+
+    // "Insert Left Justified" takes the source's HIGH bits, not its low ones.
+    x = 32'hA000_0000;
+    op = ALU_INSBFL;
+    #1 chk(result === 32'hFFFF_FFA7,
+           "INSBFL takes the source's TOP bits, which is what distinguishes it from INSBFR");
+    op = ALU_INSBFR;
+    #1 chk(result === 32'hFFFF_FF07,
+           "where INSBFR of the same source takes its low ones -- here zero");
+
+    // "No transfer will occur if the bit field length is zero" -- which is a
+    // DIFFERENT rule from EXTBF's at zero length.
+    bf_len = 6'd0; x = 32'hFFFF_FFFF; y = 32'h1234_5678;
+    op = ALU_INSBFR;
+    #1 chk(result === 32'h1234_5678,
+           "a zero-length INSBF leaves the destination alone -- not zero, unlike EXTBF");
+
+    // CMPBF: "flags <- src - bitfield", the source being operand TWO.
+    bf_resid = 3'd3; bf_len = 6'd5;
+    x = 32'h0000_0098;                   // the word holding the field, 0x13
+    y = 32'h0000_0013;                   // the source: equal to it
+    op = ALU_CMPBFZ;
+    #1 chk(flags_out[PSW_Z] === 1'b1, "CMPBF of an equal source sets Z");
+    #1 chk(writes === 1'b0, "and writes nothing: three reads and no write");
+
+    y = 32'h0000_0014;
+    #1 chk(flags_out[PSW_Z] === 1'b0 && flags_out[PSW_CY] === 1'b0,
+           "a larger source neither equals it nor borrows");
+    y = 32'h0000_0012;
+    #1 chk(flags_out[PSW_CY] === 1'b1,
+           "and a smaller one borrows -- CY is a BORROW here, which is CMP's convention");
+
+    // The direction is fixed twice on the page, so a reversed subtraction is
+    // worth an assertion of its own.
+    y = 32'h0000_0000;
+    #1 chk(flags_out[PSW_S] === 1'b1,
+           "0 - field is negative: the subtraction is src - field, not field - src");
+
+    // "If the bit field length is zero, zero will be subtracted from the source
+    // operand."
+    bf_len = 6'd0; y = 32'h0000_0005;
+    #1 chk(flags_out[PSW_Z] === 1'b0 && flags_out[PSW_S] === 1'b0,
+           "a zero-length CMPBF subtracts zero, leaving the source's own sign");
+
+    bf_resid = 3'd0; bf_len = 6'd0;
 
     if (errors == 0) $display("V60 ALU PASS");
     else             $display("V60 ALU FAIL (%0d errors)", errors);

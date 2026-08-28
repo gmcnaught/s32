@@ -54,7 +54,7 @@ begin
 end
 endtask
 
-task run(input [4:0] o, input [3:0] w, input [31:0] xv, input [31:0] yv,
+task run(input [6:0] o, input [3:0] w, input [31:0] xv, input [31:0] yv,
          input [3:0] f);
 begin
     @(negedge clk);
@@ -109,7 +109,7 @@ reg        [63:0] ux, uy, uprod, uq, ur;
 logic [31:0] want;
 logic        want_ov, want_s, want_z, want_wr;
 
-task case_check(input [4:0] o, input [3:0] w, input [31:0] xv, input [31:0] yv,
+task case_check(input [6:0] o, input [3:0] w, input [31:0] xv, input [31:0] yv,
             input [3:0] f);
 begin
     mx = sx(xv, w);  my = sx(yv, w);
@@ -180,7 +180,7 @@ end
 endtask
 
 integer i, j;
-reg [4:0] ops [0:5];
+reg [6:0] ops [0:5];
 
 initial begin
     ops[0] = ALU_MUL;  ops[1] = ALU_MULU;

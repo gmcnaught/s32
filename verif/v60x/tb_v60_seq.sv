@@ -86,6 +86,9 @@ wire   [4:0] o1_rn, o1_rx, o2_rn, o2_rx;
 wire  [31:0] o1_disp, o1_douter, o2_disp, o2_douter;
 wire  [63:0] o1_imm, o2_imm;
 wire   [3:0] o1_bytes, o2_bytes;
+// Format VII's extension bytes -- the bit field group's length operand.
+wire         o1_ext_valid, o2_ext_valid;
+wire   [7:0] o1_ext, o2_ext;
 
 v60_idu idu (
     .clk(clk), .rst(rst),
@@ -98,10 +101,10 @@ v60_idu idu (
     .reserved_op(res_op), .reserved_mode(res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
-    .op1_imm(o1_imm), .op1_ext_valid(), .op1_ext(), .op1_bytes(o1_bytes),
+    .op1_imm(o1_imm), .op1_ext_valid(o1_ext_valid), .op1_ext(o1_ext), .op1_bytes(o1_bytes),
     .op2_valid(o2_valid), .op2_mode(o2_mode), .op2_rn(o2_rn), .op2_rx(o2_rx),
     .op2_index(o2_index), .op2_disp(o2_disp), .op2_disp_outer(o2_douter),
-    .op2_imm(o2_imm), .op2_ext_valid(), .op2_ext(), .op2_bytes(o2_bytes)
+    .op2_imm(o2_imm), .op2_ext_valid(o2_ext_valid), .op2_ext(o2_ext), .op2_bytes(o2_bytes)
 );
 
 // ---- registers ----------------------------------------------------------------
@@ -152,6 +155,8 @@ am_mode_e   ea_mode;
 wire [31:0] ea_disp, ea_douter, ea_rn_val, ea_rx_val, ea_pc_val, ea_ea;
 wire [31:0] ea_rn1_val, ea_rn_wb_hi;
 wire        ea_rn_wb_pair;
+wire        ea_bit_mode;
+wire  [2:0] ea_bit_resid;
 wire [63:0] ea_imm, ea_wdata, ea_rmw_data, ea_rdata;
 wire  [3:0] ea_opbytes, ea_cycles;
 wire        ea_done, ea_rn_wb;
@@ -187,11 +192,11 @@ v60_ea ea (
     .start(ea_start), .mode(ea_mode), .has_index(ea_index),
     .disp(ea_disp), .disp_outer(ea_douter), .imm(ea_imm),
     .rn_val(ea_rn_val), .rn1_val(ea_rn1_val), .rx_val(ea_rx_val), .pc_val(ea_pc_val),
-    .opbytes(ea_opbytes), .we(ea_we), .io(ea_io), .lock(ea_lock), .wdata(ea_wdata),
+    .opbytes(ea_opbytes), .we(ea_we), .io(ea_io), .lock(ea_lock), .bit_mode(ea_bit_mode), .wdata(ea_wdata),
     .addr_only(ea_addr_only),
     .rmw(ea_rmw), .rmw_pending(ea_rmw_pending), .rmw_go(ea_rmw_go),
     .rmw_data(ea_rmw_data),
-    .ea(ea_ea), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
+    .ea(ea_ea), .bit_resid(ea_bit_resid), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
     .rn_wb_pair(ea_rn_wb_pair), .rn_wb_hi(ea_rn_wb_hi),
     .illegal(), .busy(), .done(ea_done), .bus_cycles(ea_cycles),
     .dx_req(a_req), .dx_addr(a_addr), .dx_nbytes(a_nbytes), .dx_we(a_we),
@@ -264,17 +269,19 @@ v60_seq seq (
     .idu_res_op(res_op), .idu_res_mode(res_mode),
     .op1_valid(o1_valid), .op1_mode(o1_mode), .op1_rn(o1_rn), .op1_rx(o1_rx),
     .op1_index(o1_index), .op1_disp(o1_disp), .op1_disp_outer(o1_douter),
-    .op1_imm(o1_imm), .op1_bytes(o1_bytes),
+    .op1_imm(o1_imm), .op1_ext_valid(o1_ext_valid), .op1_ext(o1_ext),
+    .op1_bytes(o1_bytes),
     .op2_valid(o2_valid), .op2_mode(o2_mode), .op2_rn(o2_rn), .op2_rx(o2_rx),
     .op2_index(o2_index), .op2_disp(o2_disp), .op2_disp_outer(o2_douter),
-    .op2_imm(o2_imm), .op2_bytes(o2_bytes),
+    .op2_imm(o2_imm), .op2_ext_valid(o2_ext_valid), .op2_ext(o2_ext),
+    .op2_bytes(o2_bytes),
     .rf_ra_sel(rf_ra_sel), .rf_rb_sel(rf_rb_sel), .rf_ra(rf_ra),
     .rf_ra_pair(rf_ra_pair), .rf_rb(rf_rb),
     .rf_wr_en(rf_wr_en), .rf_wr_sel(rf_wr_sel), .rf_wr_data(rf_wr_data),
     .ea_start(ea_start), .ea_mode(ea_mode), .ea_index(ea_index),
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
     .ea_rn_val(ea_rn_val), .ea_rn1_val(ea_rn1_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
-    .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_io(ea_io), .ea_lock(ea_lock), .ea_wdata(ea_wdata),
+    .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_io(ea_io), .ea_lock(ea_lock), .ea_bit_mode(ea_bit_mode), .ea_bit_resid(ea_bit_resid), .ea_wdata(ea_wdata),
     .ea_addr_only(ea_addr_only),
     .ea_rmw(ea_rmw), .ea_rmw_go(ea_rmw_go), .ea_rmw_data(ea_rmw_data),
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
@@ -1291,6 +1298,68 @@ initial begin
     // BSR +2            48 02 00      -- the control transfer's push
     mem[11'h72C] = 8'h48; mem[11'h72D] = 8'h02; mem[11'h72E] = 8'h00;
     mem[11'h72F] = 8'hCD;              // NOP, where both of the above land
+
+    // The bit field group.  Format VII's base word is `1 m m' subop` over the
+    // opcode, so byte 1 is 0x80 | m<<6 | m'<<5 | subop -- and the sub-op's low
+    // two bits are the variant (00 signed, 01 unsigned, 10 left justified).
+    //
+    // A DISPLACEMENT mode is used for the bit-addressed operand on purpose:
+    // "the displacement field is interpreted as the bit offset from the base
+    // address", so 3[R8] gives a residual of 3, where [R8] would give 0 and
+    // the shift could not be seen.
+    //
+    // EXTBFZ 3[R8], #5, R9    5D A9 08 03 05 69
+    mem[11'h6B4] = 8'h5D; mem[11'h6B5] = 8'hA9; mem[11'h6B6] = 8'h08;
+    mem[11'h6B7] = 8'h03; mem[11'h6B8] = 8'h05; mem[11'h6B9] = 8'h69;
+    // EXTBFS 3[R8], #5, R9    5D A8 08 03 05 69   -- the signed variant
+    mem[11'h6BA] = 8'h5D; mem[11'h6BB] = 8'hA8; mem[11'h6BC] = 8'h08;
+    mem[11'h6BD] = 8'h03; mem[11'h6BE] = 8'h05; mem[11'h6BF] = 8'h69;
+    // CMPBFZ 3[R8], #5, R9    5D A1 08 03 05 69   -- three reads, no write
+    mem[11'h6C0] = 8'h5D; mem[11'h6C1] = 8'hA1; mem[11'h6C2] = 8'h08;
+    mem[11'h6C3] = 8'h03; mem[11'h6C4] = 8'h05; mem[11'h6C5] = 8'h69;
+    // INSBFR R9, 3[R8], #5    5D D8 69 08 03 05   -- Format VIIc: the length
+    //   is LAST, and the bit-addressed operand is the DESTINATION.
+    mem[11'h6C6] = 8'h5D; mem[11'h6C7] = 8'hD8; mem[11'h6C8] = 8'h69;
+    mem[11'h6C9] = 8'h08; mem[11'h6CA] = 8'h03; mem[11'h6CB] = 8'h05;
+    // EXTBFZ 3[R8], #31, R9   5D A9 08 03 1F 69   -- 3 + 31 = 34 > 32, so the
+    //   Illegal Data Field exception, which is the only thing these can raise.
+    mem[11'h6CC] = 8'h5D; mem[11'h6CD] = 8'hA9; mem[11'h6CE] = 8'h08;
+    mem[11'h6CF] = 8'h03; mem[11'h6D0] = 8'h1F; mem[11'h6D1] = 8'h69;
+    // EXTBFZ 3[R8], R7, R9    5D A9 08 03 87 69   -- the length in a REGISTER,
+    //   which bit 7 of the ext byte selects.
+    mem[11'h6D2] = 8'h5D; mem[11'h6D3] = 8'hA9; mem[11'h6D4] = 8'h08;
+    mem[11'h6D5] = 8'h03; mem[11'h6D6] = 8'h87; mem[11'h6D7] = 8'h69;
+
+    // EXTBFZ -8[R8], #5, R9   5D A9 08 F8 05 69   -- a NEGATIVE bit offset.
+    //   "the 32-bit bit offset is SIGN extended to 35-bit length", so this
+    //   addresses bits BELOW the base byte.  Zero extension would land 4 GB
+    //   away instead, which is the only way to tell the two apart.
+    mem[11'h6D8] = 8'h5D; mem[11'h6D9] = 8'hA9; mem[11'h6DA] = 8'h08;
+    mem[11'h6DB] = 8'hF8; mem[11'h6DC] = 8'h05; mem[11'h6DD] = 8'h69;
+    // INSBFR 8[R10], 3[R8], #5   5D 98 0A 08 08 03 05   -- a memory source
+    //   WITH A DISPLACEMENT.  Without one the two readings agree: a bit
+    //   address with a zero offset divides back to the same byte, so treating
+    //   this operand as bit-addressed would be invisible.  With +8 they differ
+    //   -- 0x710+8 byte-addressed against ((0x710<<3)+8)>>3 = 0x711.
+    mem[11'h6DE] = 8'h5D; mem[11'h6DF] = 8'h98; mem[11'h6E0] = 8'h0A;
+    mem[11'h6E1] = 8'h08; mem[11'h6E2] = 8'h08; mem[11'h6E3] = 8'h03;
+    mem[11'h6E4] = 8'h05;
+    // EXTBFZ 0[R8], #40, R9   5D A9 08 00 28 69   -- a length above 32 with a
+    //   residual of ZERO, so only the length can make the sum exceed it.
+    mem[11'h6E5] = 8'h5D; mem[11'h6E6] = 8'hA9; mem[11'h6E7] = 8'h08;
+    mem[11'h6E8] = 8'h00; mem[11'h6E9] = 8'h28; mem[11'h6EA] = 8'h69;
+    // EXTBFZ 3[R8], #40, R9   5D A9 08 03 28 69   -- the SAME over-long length
+    //   at a NON-ZERO residual, which is the only shape in which the sum's
+    //   width matters: an over-long length is stored as 63, and 3 + 63 is 66,
+    //   which is 2 in six bits and passes a six-bit check.
+    mem[11'h6EB] = 8'h5D; mem[11'h6EC] = 8'hA9; mem[11'h6ED] = 8'h08;
+    mem[11'h6EE] = 8'h03; mem[11'h6EF] = 8'h28; mem[11'h6F0] = 8'h69;
+    // EXTBFZ 0[R8], #96, R9   5D A9 08 00 60 69   -- an ext byte whose LOW SIX
+    //   BITS look legal.  96 is 0x60, and 0x60 & 0x3F is exactly 32, which
+    //   passes every check; the length field is seven bits and only the full
+    //   seven say it is out of range.
+    mem[11'h6F1] = 8'h5D; mem[11'h6F2] = 8'hA9; mem[11'h6F3] = 8'h08;
+    mem[11'h6F4] = 8'h00; mem[11'h6F5] = 8'h60; mem[11'h6F6] = 8'h69;
 
     // CHLVL R5, R6    4B E0 65 66   -- both operands in REGISTERS, which is the
     //   only way a byte operand arrives unmasked: a memory source is
@@ -3377,6 +3446,165 @@ initial begin
         "an X divide by zero reaches the Integer Arithmetic handler");
     chk(mem_word(13'h700) === 32'd12345 && mem_word(13'h704) === 32'd99,
         "and NEITHER half of the destination changed");
+
+    // =======================================================================
+    // The bit field group, end to end.  Format VII has never been executed
+    // here -- v60_idu has produced its ext bytes all along and nothing
+    // consumed them.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0098);        // the word holding the field
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h000006B4);
+    step;
+    chk(rf.gpr[9] === 32'h0000_0013,
+        "EXTBFZ took the five bits at bit offset 3 -- the displacement IS the bit offset");
+    chk(seq_psw === psw_before, "with every flag Unchanged");
+    chk(seq_pc === 32'h000006BA, "and six bytes consumed: op, base word, mod, disp, ext, mod'");
+
+    // The signed variant of the same field, whose top bit is set.
+    step;
+    chk(rf.gpr[9] === 32'hFFFF_FFF3,
+        "EXTBFS sign extends the same field from ITS top bit, not from bit 31");
+
+    // CMPBF reads three operands and writes none.
+    @(negedge clk);
+    rf.gpr[9] = 32'h0000_0013;               // equal to the field
+    repeat (2) @(negedge clk);
+    n_writes = 0;
+    jump(32'h000006C0);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b1, "CMPBF against an equal source sets Z");
+    chk(rf.gpr[9] === 32'h0000_0013, "leaving its source alone");
+    chk(n_writes == 0, "and putting no write on the bus at all");
+
+    // INSBF, whose bit-addressed operand is the destination and whose length
+    // is the LAST field rather than the middle one.
+    @(negedge clk);
+    put_word(13'h700, 32'hFFFF_FFFF);
+    rf.gpr[9] = 32'h0000_0002;
+    repeat (2) @(negedge clk);
+    jump(32'h000006C6);
+    step;
+    chk(mem_word(13'h700) === 32'hFFFF_FF17,
+        "INSBFR replaced the five bits at offset 3 and left every neighbour");
+
+    // "The sum of the bit offset and the bit field length must not exceed
+    // thirty-two, otherwise an Illegal Data Field exception will occur."
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0098);
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    n_writes = 0;
+    jump(32'h000006CC);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "3 + 31 exceeds thirty-two, and that is the Illegal Data Field exception");
+    chk(mem_word(13'h5FC) === 32'h14000004, "vector 20's code");
+    chk(rf.gpr[9] === 32'hDEAD_BEEF,
+        "with the destination untouched -- the handler restarts the instruction");
+    chk(seq.bf_len_r === 6'd31,
+        "the length was taken, so the check is on the SUM and not on the length alone");
+
+    // The length in a register, which bit 7 of the ext byte selects.  The word
+    // is chosen so that the register's 5 and the ext byte's own low bits -- 7,
+    // from 0x87 -- give DIFFERENT fields: 0x398 >> 3 is 0x73, which is 0x13 at
+    // five bits and 0x73 at seven.  With 0x98 the two agree and the register
+    // form cannot be told from the immediate one.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0398);
+    rf.gpr[7] = 32'h0000_0005;
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h000006D2);
+    step;
+    chk(rf.gpr[9] === 32'h0000_0013,
+        "an ext byte with bit 7 set names a REGISTER holding the length");
+
+    // A NEGATIVE bit offset, which the sign extension is there for.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h6FC, 32'h0000_0000);
+    put_word(13'h700, 32'h0000_0000);
+    mem[11'h6FF] = 8'hAA;                    // one byte below R8
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h000006D8);
+    step;
+    chk(rf.gpr[9] === 32'h0000_000A,
+        "an offset of -8 bits addresses the byte BELOW the base: the offset is signed");
+
+    // INSBF with a memory source, so that which operand is bit-addressed is
+    // observable rather than hidden by a register operand having no address.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'hFFFF_FFFF);        // the destination
+    put_word(13'h718, 32'h0000_0002);        // the source, at 8[R10]
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    jump(32'h000006DE);
+    step;
+    chk(mem_word(13'h700) === 32'hFFFF_FF17,
+        "INSBF's bit-addressed operand is its DESTINATION, and its source is an ordinary read");
+
+    // A length above 32 at residual zero, where only the length can fail the
+    // sum -- and where a six-bit sum would have wrapped and let it through.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0098);
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h000006E5);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "a length of 40 raises Illegal Data Field even with a residual of zero");
+    chk(rf.gpr[9] === 32'hDEAD_BEEF, "leaving the destination alone");
+
+    // And the same length at a non-zero residual, where the sum's WIDTH is
+    // what decides: 3 + 63 is 66, which wraps to 2 in six bits.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0098);
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h000006EB);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "an over-long length at residual 3 raises too -- the sum must not wrap");
+    chk(rf.gpr[9] === 32'hDEAD_BEEF, "with the destination untouched");
+
+    // An ext byte of 96, whose low six bits are exactly 32 and therefore look
+    // legal.  The length field is SEVEN bits and only the whole of it says so.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0098);
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h000006F1);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "a length of 96 raises, though its low six bits are a legal 32");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

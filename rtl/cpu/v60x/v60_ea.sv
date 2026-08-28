@@ -85,6 +85,12 @@ module v60_ea
     // everything else that reads then writes (INC, DEC, SET1, CLR1, NOT1) is
     // plain `rw`.
     input               lock,
+    // A BIT-addressed operand -- the bit field and bit string data types,
+    // "which unlike the other data types can be aligned on an arbitrary bit
+    // boundary" (databook p.3.261).  The access this module issues is still a
+    // byte-addressed one; what changes is how the address is computed and that
+    // the leftover bits within the byte are reported rather than discarded.
+    input               bit_mode,
     input        [63:0] wdata,
 
     // A read-modify-write operand: ADD's destination is read, combined and
@@ -107,6 +113,10 @@ module v60_ea
 
     // ---- results -----------------------------------------------------------
     output logic [31:0] ea,          // the effective address (32 bits)
+    // The bit-within-byte the operand starts at, 0..7.  Meaningless unless
+    // `bit_mode` was set.  "the lower three bits identifying the bit offset
+    // within the byte" (§3).
+    output              [2:0] bit_resid,   // combinational -- see below
     output logic [63:0] rdata,       // the operand, however it was obtained
     output logic        rn_wb,       // Rn takes rn_wb_val
     output logic [31:0] rn_wb_val,
@@ -188,6 +198,56 @@ wire [31:0] base = am_base_is_pc(mode)   ? pc_val
                  : (mode == AM_RN_DEC)   ? (rn_val - {28'd0, opbytes})
                                          : rn_val;
 wire [31:0] addr1 = base + disp;
+
+// ---------------------------------------------------------------------------
+// Bit addressing, databook p.3.261 and PgmRef §6.
+// ---------------------------------------------------------------------------
+// "To compute a bit address, the 32-bit base address is zero extended on the
+// right to 35 bit length.  Next the 32-bit bit offset is sign extended to
+// 35-bit length and the sum of these two identify the starting address of the
+// bit field or bit string."
+//
+// So the base is SHIFTED LEFT BY THREE -- a byte address becoming a bit
+// address -- and the offset is added unscaled and SIGNED.  A negative offset
+// addresses bits below the base byte, which the sign extension is there for.
+//
+// Which quantity is the offset depends on the mode, and §6 says so twice:
+//
+//   "The bit displacement modes are re-interpretations of the byte
+//    displacement addressing modes.  The displacement field is interpreted as
+//    the bit offset from the base address.  In the case of instructions with
+//    no displacement field, an offset of [zero] is substituted."
+//
+//   "The bit index modes are re-interpretations of the scaled index addressing
+//    modes.  When used where a bit address is required, the index register Rx
+//    is interpreted as a bit displacement and any base register and
+//    displacement fields form the byte base address."
+//
+// So with an index the displacement joins the BYTE base and Rx is the bit
+// offset; without one the displacement IS the bit offset.  Note the index is
+// unscaled here, and §6 points out that this is not a special case at all --
+// "the index register is scaled to the size of the data, which in this case is
+// a single bit".
+wire [31:0] bit_byte_base = has_index ? (base + disp) : base;
+wire [31:0] bit_offset    = has_index ? rx_val        : disp;
+wire [34:0] bit_addr      = {bit_byte_base, 3'b000} +
+                            {{3{bit_offset[31]}}, bit_offset};
+// NOT OBSERVABLE on this bus, and recorded rather than left to be rediscovered:
+// zero extension instead of sign extension differs only in bits 34:32, which
+// the shift right by three moves to bits 31:29 of the byte address -- above the
+// 24-bit address bus.  A mutation swapping them passes every test, and no test
+// here can catch it.  The extension is written the way p.3.261 states it
+// because the page states it, not because this target can tell.
+
+// The access is still byte-addressed; the residual is what the datapath needs.
+wire [31:0] bit_byte_addr = bit_addr[34:3];
+// COMBINATIONAL, deliberately.  The sequencer has to test "the sum of the bit
+// offset and the bit field length must not exceed thirty-two" BEFORE starting
+// the access, because the exception is an Instruction Exception -- Current PC,
+// and the handler restarts the instruction -- so nothing may be committed and
+// no access may be left open when it is raised.  A registered residual would
+// only be readable after the access it is meant to prevent.
+assign bit_resid = bit_addr[2:0];
 
 always_ff @(posedge clk) begin
     if (rst) begin
@@ -281,12 +341,13 @@ always_ff @(posedge clk) begin
                     dx_req    <= 1'b1;
                     state     <= S_PTR;
                 end else begin
-                    ea <= addr1 + scaled;
+                    ea        <= bit_mode ? bit_byte_addr : (addr1 + scaled);
                     if (addr_only) begin
                         // The address is the answer; nothing is read.
                         done <= 1'b1;
                     end else begin
-                        dx_addr   <= addr1[23:0] + scaled[23:0];
+                        dx_addr   <= bit_mode ? bit_byte_addr[23:0]
+                                              : (addr1[23:0] + scaled[23:0]);
                         dx_nbytes <= opbytes;
                         dx_we     <= we;
                         dx_io     <= io;

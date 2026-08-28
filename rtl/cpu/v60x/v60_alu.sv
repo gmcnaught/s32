@@ -89,6 +89,11 @@ module v60_alu
     input                 [3:0] xbytes,
     input                [31:0] x,         // src1 / the source
     input                [31:0] y,         // src2 / the destination
+    // The bit field group's two extra inputs: where the field starts within
+    // the word the sequencer read, and how long it is.  `bf_len` is six bits
+    // because a length of 32 is legal and 32 does not fit in five.
+    input                 [2:0] bf_resid,
+    input                 [5:0] bf_len,
     input                 [3:0] flags_in,  // {CY, OV, S, Z} as the PSW holds them
 
     output logic         [31:0] result,
@@ -149,6 +154,64 @@ wire [31:0] bit_one  = 32'd1 << bit_sel;
 // clear bit leaves CY = 0 and Z = 1 having set it.  CY and Z are always
 // complements here; there is no input for which they agree.
 wire        bit_old  = |(y & bit_one);
+
+// ---------------------------------------------------------------------------
+// The bit field group.
+// ---------------------------------------------------------------------------
+// One shift and one mask over the word the sequencer read, which is all the
+// "must not exceed thirty-two" constraint permits it to be.
+//
+// The mask is built in 33 bits so that a length of 32 -- legal, and the
+// maximum -- does not shift a 32-bit one off its own top.  `bf_len` is
+// likewise six bits wide for the same reason.
+wire [32:0] bf_mask33 = (33'd1 << bf_len) - 33'd1;
+wire [31:0] bf_mask   = bf_mask33[31:0];
+
+// WHICH operand carries the bit-addressed word differs across the group, and
+// it is the syntax lines that say so rather than a convention:
+//
+//   extbfs bsrc.w.r, blen.b.r, dst.w.w    -- the field is operand ONE
+//   cmpbfs bsrc.w.r, blen.b.r, src.w.r    -- the field is operand ONE
+//   insbfr src.w.r,  bdst.w.rw, blen.b.r  -- the field is operand TWO
+//
+// INSBF is the odd one because its bit-addressed operand is the DESTINATION,
+// and a destination is operand two everywhere in this sequencer.
+wire        bf_is_ins = (op == ALU_INSBFR) || (op == ALU_INSBFL);
+wire [31:0] bf_word   = bf_is_ins ? y : x;
+
+// The field, right justified, as it sits in memory.
+wire [31:0] bf_field  = (bf_word >> bf_resid) & bf_mask;
+// Its sign bit is the field's own top bit, which moves with the length.
+wire        bf_sign   = (bf_len == 6'd0) ? 1'b0 : bf_field[bf_len - 6'd1];
+// "Extract Sign Extended": everything above the field takes that bit.
+wire [31:0] bf_sx     = bf_sign ? (bf_field | ~bf_mask) : bf_field;
+// "Left Justified": the field is moved to the TOP of the word.  A length of
+// zero would shift by 32, so it is special-cased rather than left to the
+// simulator -- and zero is a legal length that both pages discuss.
+wire [31:0] bf_left   = (bf_len == 6'd0) ? 32'd0 : (bf_field << (6'd32 - bf_len));
+
+// INSBF takes its source from opposite ends for its two variants: "Insert
+// Right Justified" uses the source's low `len` bits and "Insert Left
+// Justified" its high ones.
+wire [31:0] bf_ins_r  = x & bf_mask;
+wire [31:0] bf_ins_l  = (bf_len == 6'd0) ? 32'd0 : ((x >> (6'd32 - bf_len)) & bf_mask);
+
+// CMPBF's subtraction runs the OTHER WAY from CMP's.  Its Operation block is
+// "flags <- src - bitfield" and its Description says the same in words -- "The
+// comparison is made by subtracting the bit field data from the word length
+// source operand" -- where CMP's is dst - src.  The ALU's own `diff` is
+// ym - xa, so this cannot reuse it: the source here is x and the field is not
+// an operand at all.
+//
+// "If the bit field length is zero, zero will be subtracted from the source
+// operand", which falls out of a zero-length mask.
+wire [31:0] bf_cmp_val = (op == ALU_CMPBFS) ? bf_sx   :
+                         (op == ALU_CMPBFL) ? bf_left : bf_field;
+// The source is operand TWO here -- "cmpbfs bsrc.w.r, blen.b.r, src.w.r" --
+// because the field is operand one.
+wire [32:0] bf_cmp     = {1'b0, y} - {1'b0, bf_cmp_val};
+wire        bf_cmp_ov  = (y[31] != bf_cmp_val[31]) && (bf_cmp[31] != y[31]);
+
 wire        cy_in = flags_in[PSW_CY];
 
 // The addend.  "The INC instruction is a shorter encoding for the more general
@@ -381,6 +444,27 @@ always_comb begin
         // "dst <- 0FFH" -- unconditionally, whatever the comparison said.
         // The flags are the comparison's and the result is the constant, which
         // is why this cannot be CMP with a different writeback.
+        // "The designated bit field is extracted using the specified mode and
+        // stored in the destination operand."  All four flags Unchanged --
+        // p.3.297's row is blank for both EXTBF and INSBF.
+        //
+        // "If the bit field length is zero, zero will be stored in the
+        // destination operand", which falls out: a zero-length mask is zero.
+        // "Three reads, no write -- the result is the flags."
+        ALU_CMPBFS, ALU_CMPBFZ, ALU_CMPBFL: writes = 1'b0;
+        ALU_EXTBFS: raw = bf_sx;
+        ALU_EXTBFZ: raw = bf_field;
+        ALU_EXTBFL: raw = bf_left;
+        // "The source operand is converted to a bit field of specified length
+        // and stored in the destination operand" -- so the word read is
+        // rewritten with the field replaced, and everything outside it kept.
+        //
+        // "No transfer will occur if the bit field length is zero", which is a
+        // DIFFERENT rule from EXTBF's at zero length: there the destination
+        // takes zero, here it is untouched.  A zero-length mask makes the
+        // merge below the identity, so that falls out too.
+        ALU_INSBFR: raw = (bf_word & ~(bf_mask << bf_resid)) | (bf_ins_r << bf_resid);
+        ALU_INSBFL: raw = (bf_word & ~(bf_mask << bf_resid)) | (bf_ins_l << bf_resid);
         ALU_TASI: begin
             raw  = 32'h0000_00FF;
             f_cy = carry_of(diff, opbytes);          // "Set if a borrow"
@@ -467,6 +551,8 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_BRKV)  || (op == ALU_BRK)    || (op == ALU_TRAP) ||
                 (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR) ||
                 (op == ALU_HALT)   || (op == ALU_IN)    || (op == ALU_OUT) ||
+                (op == ALU_EXTBFS) || (op == ALU_EXTBFZ) || (op == ALU_EXTBFL) ||
+                (op == ALU_INSBFR) || (op == ALU_INSBFL) ||
                 (op == ALU_PUSH)   || (op == ALU_POP)   ||
                 (op == ALU_PREPARE) || (op == ALU_DISPOSE) ||
                 (op == ALU_XCH)    || (op == ALU_PUSHM) || (op == ALU_POPM) ||
@@ -485,6 +571,11 @@ wire bit_op = (op == ALU_TEST1) || (op == ALU_SET1) ||
 // which takes both from `raw`, would report S = 1 and Z = 0 every time.
 wire tasi_op = (op == ALU_TASI);
 
+// CMPBF's four flags are an ordinary subtract's -- "Set if a BORROW is
+// generated", which is CMP's convention and not ADD's -- but over its own
+// subtraction rather than the ALU's, so it takes its own branch.
+wire cmpbf_op = (op == ALU_CMPBFS) || (op == ALU_CMPBFZ) || (op == ALU_CMPBFL);
+
 assign result    = raw & mask;
 assign f_s       = sign_of(raw, msb);
 assign f_z       = ((raw & mask) == 32'd0);
@@ -493,6 +584,8 @@ always_comb begin
     else if (keep_but_ov)  begin
         flags_out           = flags_in;
         flags_out[PSW_OV]   = f_ov;
+    end else if (cmpbf_op) begin
+        flags_out = {bf_cmp[32], bf_cmp_ov, bf_cmp[31], (bf_cmp[31:0] == 32'd0)};
     end else if (tasi_op)  begin
         flags_out = {f_cy, f_ov, sign_of(diff[31:0], msb),
                      ((diff[31:0] & mask) == 32'd0)};

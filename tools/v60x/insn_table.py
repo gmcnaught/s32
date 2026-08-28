@@ -589,6 +589,29 @@ EXEC_OP = {
 
 
 # ---------------------------------------------------------------------------
+# The escape opcodes whose SUB-OP picks the operation, not just the width.
+# ---------------------------------------------------------------------------
+# 0x5D is EXTBF, INSBF and CMPBF together, and each of those is three (or two)
+# instructions again: p.3.295's two-bit `ext` field in the sub-op byte selects
+# "00 signed / 01 unsigned / 10 right justified / 11 reserved".
+#
+# So one opcode byte carries eight operations and EXEC_OP, which is keyed by
+# opcode alone, cannot express it.  Keyed by (mnemonic, ext) here and emitted
+# as op_alu_escape().
+#
+# Careful with the name: this `ext` is the two-bit field IN THE SUB-OP BYTE
+# (p.3.295).  Format VII's `ext` is a BYTE IN THE OPERAND STREAM carrying the
+# field's length (p.3.293).  Two fields, one name, one page apart.
+EXEC_OP_ESCAPE = {
+    ('CMPBF', 0): 'CMPBFS', ('CMPBF', 1): 'CMPBFZ', ('CMPBF', 2): 'CMPBFL',
+    ('EXTBF', 0): 'EXTBFS', ('EXTBF', 1): 'EXTBFZ', ('EXTBF', 2): 'EXTBFL',
+    # INSBF has only two: the Reference prints insbfr and insbfl and no third,
+    # which is why p.3.297 leaves its ext=10 cell blank.
+    ('INSBF', 0): 'INSBFR', ('INSBF', 1): 'INSBFL',
+}
+
+
+# ---------------------------------------------------------------------------
 # The control transfers.
 # ---------------------------------------------------------------------------
 # Kept apart from EXEC_OP because these do not go through the ALU: they change

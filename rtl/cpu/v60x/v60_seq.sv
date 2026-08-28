@@ -227,6 +227,8 @@ module v60_seq
     input        [31:0] op1_disp,
     input        [31:0] op1_disp_outer,
     input        [63:0] op1_imm,
+    input               op1_ext_valid,
+    input         [7:0] op1_ext,
     input         [3:0] op1_bytes,
 
     input               op2_valid,
@@ -237,6 +239,8 @@ module v60_seq
     input        [31:0] op2_disp,
     input        [31:0] op2_disp_outer,
     input        [63:0] op2_imm,
+    input               op2_ext_valid,
+    input         [7:0] op2_ext,
     input         [3:0] op2_bytes,
 
     // ---- the register file --------------------------------------------------
@@ -267,6 +271,8 @@ module v60_seq
     output logic        ea_io,
     // The `rwi` access type: TASI and CAXI, and nothing else in the set.
     output logic        ea_lock,
+    output logic        ea_bit_mode,
+    input         [2:0] ea_bit_resid,
     output logic [31:0] ea_rn1_val,
     output logic [63:0] ea_wdata,
     output logic        ea_addr_only,
@@ -510,6 +516,9 @@ typedef enum logic [5:0] {
     // CAXI: fetch the implicit R28, then -- on a mismatch -- give Rn what the
     // destination held, which is what makes a retry loop possible.
     S_CAXI_R, S_CAXI_W,
+    // The bit field group's length, when the ext byte names a register rather
+    // than carrying the value.
+    S_BF_LEN,
     // The upper word of a doubleword REGISTER destination.  Two registers, one
     // write port -- the same reason the frame pair and the stack engine need
     // extra states.
@@ -568,6 +577,11 @@ logic  [4:0] idx_r;       // and the register it is working on
 // destination" -- R28 appears nowhere in the syntax line, so it is fetched
 // here rather than through the operand path.
 logic [31:0] r28_r;
+// The bit field's length, and whether its address is legal.  Six bits: a
+// length of 32 is the maximum and does not fit in five.
+logic  [5:0] bf_len_r;
+logic        bf_bad_r;    // INSBF's check, latched so the open access can close
+logic  [2:0] bf_resid_r;  // where the field starts within the word read
 logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
                           // or -- for CALL, before either -- the argument list
 logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
@@ -598,6 +612,17 @@ wire fmt_ii  = (idu_fmt == FMT_II);
 // straight to the destination path below.
 wire fmt_iii = (idu_fmt == FMT_III);
 
+// ---------------------------------------------------------------------------
+// The bit field group.
+// ---------------------------------------------------------------------------
+// Format VIIb is `op subop mod ext mod'` and VIIc is `op subop mod mod' ext'`,
+// which p.3.293's figure draws and the syntax lines confirm from the other
+// book: EXTBF and CMPBF print their length SECOND and INSBF prints it THIRD.
+// v60_idu already produces both ext bytes and nothing has consumed them until
+// now.
+wire fmt_viib = (idu_fmt == FMT_VIIB);
+wire fmt_viic = (idu_fmt == FMT_VIIC);
+
 wire        src_is_reg  = fmt_i && !idu_d;   // d = 0: the register is the source
 wire        dst_is_reg  = (fmt_i &&  idu_d) ||          // d = 1: it is the dest
                           (fmt_ii  && (op2_mode == AM_RN)) ||
@@ -616,7 +641,9 @@ wire  [4:0] reg_operand = fmt_iii ? op1_rn : (fmt_i ? idu_reg : op2_rn);
 
 // The mod field that is NOT the register operand.  Format I has only one, and
 // it is whichever side `d` did not take.
-wire        dst_am_is_op2 = fmt_ii;
+// Format VII puts its destination in mod' too -- `op subop mod ext mod'` for
+// VIIb and `op subop mod mod' ext'` for VIIc -- so both join Format II here.
+wire        dst_am_is_op2 = fmt_ii || fmt_viib || fmt_viic;
 
 // Which operations WRITE their destination without reading it first.  It is
 // the syntax line that says so: MOV's is "dst.w" where ADD's is "dst.rw", and
@@ -639,6 +666,9 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              // "out.b src.b.r, port.b.w" -- in both, the
                              // SECOND operand is written and not read.
                              (aop == ALU_IN) || (aop == ALU_OUT) ||
+                             // "extbfs bsrc.w.r, blen.b.r, dst.w.w"
+                             (aop == ALU_EXTBFS) || (aop == ALU_EXTBFZ) ||
+                             (aop == ALU_EXTBFL) ||
                              // "dst <- [SP+]": POP's one encoded operand is
                              // written and never read.
                              (aop == ALU_POP);
@@ -677,7 +707,11 @@ wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
                             // Its three siblings print "base.w.rw".
                             (aop == ALU_TEST1) ||
                             // "chlvl level.b.r, arg.b.r" -- both read.
-                            (aop == ALU_CHLVL);
+                            (aop == ALU_CHLVL) ||
+                            // "cmpbfs bsrc.w.r, blen.b.r, src.w.r" -- three
+                            // reads and no write; the result is the flags.
+                            (aop == ALU_CMPBFS) || (aop == ALU_CMPBFZ) ||
+                            (aop == ALU_CMPBFL);
 
 // And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
 // line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
@@ -929,6 +963,52 @@ wire        chlvl_bad = is_chlvl &&
                         ((val1[7:2] != 6'd0) ||
                          (psw[PSW_EL_HI:PSW_EL_LO] < chlvl_lvl));
 
+wire        is_extbf = (aop == ALU_EXTBFS) || (aop == ALU_EXTBFZ) ||
+                       (aop == ALU_EXTBFL);
+wire        is_cmpbf = (aop == ALU_CMPBFS) || (aop == ALU_CMPBFZ) ||
+                       (aop == ALU_CMPBFL);
+wire        is_insbf = (aop == ALU_INSBFR) || (aop == ALU_INSBFL);
+wire        is_bf    = is_extbf || is_cmpbf || is_insbf;
+
+// Which operand is bit-addressed.  EXTBF's and CMPBF's `bsrc` is operand one;
+// INSBF's `bdst` is operand two, because it is the destination.
+wire        bf_src_is_bit = is_extbf || is_cmpbf;
+wire        bf_dst_is_bit = is_insbf;
+
+// The length byte, from whichever ext field the format carries.
+//
+// "bit 7 (ext) = 0 -> bits 6:0 (ext) are the operand length / bit 7 (ext) = 1
+// -> bits 6:0 (ext) contain a pointer (register ID) to the general purpose
+// register containing the operand length" (p.3.293).
+wire  [7:0] bf_ext_raw  = fmt_viic ? op2_ext : op1_ext;
+wire        bf_len_in_r = bf_ext_raw[7];
+wire  [4:0] bf_len_rn   = bf_ext_raw[4:0];
+
+// "The sum of the bit offset and the bit field length must not exceed
+// thirty-two, otherwise an Illegal Data Field exception will occur", on all
+// three pages.
+//
+// SEVEN bits, and the width is the whole correctness of it.  The residual is
+// 0..7 and the length reaches 63 in the sentinel S_FETCH stores for an
+// over-long one, so a six-bit sum WRAPS -- 7 + 63 is 70, which is 6 in six
+// bits, which passes.  A mutation removing the separate length test is what
+// found that: the test was redundant only because the sum was wrong.
+//
+// With the sum widened, §3's "any length between [0] and 32 bits" and §8's
+// "Should a length greater than 32 bits be specified, an illegal data field
+// exception will occur" need no separate check -- the residual is never
+// negative, so a length above 32 always makes the sum exceed 32.
+//
+// WHICH offset the sum is over is not stated.  The addressing model's offset is
+// a signed 32-bit quantity that can be far larger than 32, so the raw offset
+// would make almost every bit field illegal.  DECISION, recorded in
+// docs/v60/BIT-FIELD.md: it is the RESIDUAL offset within the byte, 0..7, left
+// after the 35-bit bit address is split -- which is the only reading under
+// which both this sentence and the addressing model hold, and it is exactly
+// what makes a field always reachable in one 32-bit access.
+wire        bf_addr_bad = is_bf &&
+                          (({4'd0, ea_bit_resid} + {1'b0, bf_len_r}) > 7'd32);
+
 wire        is_xch = (aop == ALU_XCH);
 // Format I with d = 0 puts dst1 in the register field, where it cannot be
 // anything else.  Every other encoding puts it in op1's addressing mode.
@@ -1035,6 +1115,7 @@ wire [3:0] alu_xbytes = ((w_src == 4'd1) || (w_src == 4'd2) ||
 v60_alu alu (
     .op(aop), .opbytes(alu_bytes), .xbytes(alu_xbytes),
     .x(val1[31:0]), .y(val2[31:0]), .flags_in(psw_flags(psw)),
+    .bf_resid(bf_resid_r), .bf_len(bf_len_r),
     .result(alu_result), .flags_out(alu_flags), .writes(alu_writes)
 );
 
@@ -1130,6 +1211,10 @@ always_ff @(posedge clk) begin
         msk_r           <= 32'd0;
         idx_r           <= 5'd0;
         r28_r           <= 32'd0;
+        bf_len_r        <= 6'd0;
+        bf_bad_r        <= 1'b0;
+        bf_resid_r      <= 3'd0;
+        ea_bit_mode     <= 1'b0;
         stk_val         <= 32'd0;
         stk_cnt         <= 32'd0;
         stk_phase       <= 1'b0;
@@ -1289,7 +1374,7 @@ always_ff @(posedge clk) begin
                 state     <= S_EXC_SW;
             end else begin
             pc      <= idu_pc;
-            aop     <= op_alu(idu_op);
+            aop     <= op_alu_all(idu_op, idu_subop);
             cop     <= op_ctrl(idu_op);
             cpush   <= 1'b0;
             taken   <= 1'b0;
@@ -1310,13 +1395,13 @@ always_ff @(posedge clk) begin
                 state    <= S_EXC_SW;
             end else if (op_ctrl(idu_op) != CTRL_NONE) begin
                 state <= S_CTRL;
-            end else if (op_alu(idu_op) == ALU_NONE) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_NONE) begin
                 // Decoded and addressed, but not one of the operations
                 // v60_alu implements.
                 stopped     <= 1'b1;
                 stop_reason <= STOP_NO_ALU;
                 state       <= S_STOP;
-            end else if (op_privileged(op_alu(idu_op)) &&
+            end else if (op_privileged(op_alu_all(idu_op, idu_subop)) &&
                          (psw[PSW_EL_HI:PSW_EL_LO] != 2'b00)) begin
                 // Checked before any operand is fetched: the exception is for
                 // attempting the instruction, not for what it would have read.
@@ -1324,7 +1409,7 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_PRIVILEGED;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
-            end else if (op_alu(idu_op) == ALU_BRK) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_BRK) begin
                 // Vector 13, unconditionally, with the Instruction Exceptions
                 // frame -- the code word, the PSW, and the CURRENT PC.
                 //
@@ -1346,7 +1431,7 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_BREAKPOINT;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
-            end else if (op_alu(idu_op) == ALU_BRKV) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_BRKV) begin
                 // "The OV flag is tested and if set, an Integer Overflow
                 // Exception occurs.  Otherwise, instruction execution
                 // continues with the next instruction."  Its frame is
@@ -1364,43 +1449,43 @@ always_ff @(posedge clk) begin
                     // One byte, and nothing happens.
                     state <= S_RETIRE;
                 end
-            end else if (op_alu(idu_op) == ALU_HALT) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_HALT) begin
                 // Retire first, wait after: see halted_r above.  The privilege
                 // check has already run, before this, because it runs before
                 // any operand is fetched and HALT has none.
                 halted_r <= 1'b1;
                 state    <= S_RETIRE;
-            end else if (op_alu(idu_op) == ALU_TRAPFL) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_TRAPFL) begin
                 // Its two inputs are both registers -- the PSW here and TKCW
                 // in the register file -- so the only thing this state does is
                 // ask for TKCW.  Privileged register id 8; see the ID table on
                 // LDPR's and STPR's pages.
                 rf_pr_id <= 5'd8;
                 state    <= S_TRAPFL;
-            end else if (op_alu(idu_op) == ALU_GETPSW) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_GETPSW) begin
                 // Its one operand is write-only and the value it writes is the
                 // PSW, which lives here rather than in the address unit.
                 val1  <= {32'd0, psw};
                 state <= S_OP2;
-            end else if (op_alu(idu_op) == ALU_NOP) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_NOP) begin
                 // Format V, no operands, "no action is taken".  Its Operation
                 // line is "PC <- PC + 1", which S_RETIRE does from idu_len.
                 state <= S_RETIRE;
-            end else if (op_alu(idu_op) == ALU_DISPOSE) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_DISPOSE) begin
                 // Format V, no operand: everything it needs is in R30.
                 state <= S_PSH_R;
-            end else if ((op_alu(idu_op) == ALU_PUSHM) ||
-                         (op_alu(idu_op) == ALU_POPM)) begin
+            end else if ((op_alu_all(idu_op, idu_subop) == ALU_PUSHM) ||
+                         (op_alu_all(idu_op, idu_subop) == ALU_POPM)) begin
                 // Their one operand is the register LIST, a source.
                 state <= S_OP1;
-            end else if (op_alu(idu_op) == ALU_PREPARE) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_PREPARE) begin
                 // Its one operand is `num`, a source, like PUSH's.
                 state <= S_OP1;
-            end else if (op_alu(idu_op) == ALU_POP) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_POP) begin
                 // Nothing to read before the stack: POP's one operand is where
                 // the word GOES.
                 state <= S_PSH_R;
-            end else if (op_alu(idu_op) == ALU_PUSH) begin
+            end else if (op_alu_all(idu_op, idu_subop) == ALU_PUSH) begin
                 // PUSH's one operand is a SOURCE, so it goes down the source
                 // path even though Format III normally means "destination".
                 state <= S_OP1;
@@ -1412,6 +1497,21 @@ always_ff @(posedge clk) begin
                 // INC and DEC, whose operand is `y`, are both served without
                 // the sequencer having to know which.
                 state <= S_OP2;
+            end else if (fmt_viib || fmt_viic) begin
+                // The bit field group.  Its length comes from the ext byte the
+                // format carries, or -- when bit 7 is set -- from the register
+                // that byte names.  Taken here, before either operand, because
+                // both the length check and the address check need it.
+                if (bf_ext_raw[7]) begin
+                    rf_ra_sel <= bf_ext_raw[4:0];
+                    state     <= S_BF_LEN;
+                end else if (bf_ext_raw[6:0] > 7'd32) begin
+                    bf_len_r <= 6'd63;      // rejected by bf_len_bad below
+                    state    <= S_OP1;
+                end else begin
+                    bf_len_r <= bf_ext_raw[5:0];
+                    state    <= S_OP1;
+                end
             end else if ((idu_fmt != FMT_II) && (idu_fmt != FMT_I)) begin
                 // Formats IV to VII: not sequenced here.
                 stopped     <= 1'b1;
@@ -1474,6 +1574,9 @@ always_ff @(posedge clk) begin
                 // was missed; it survived because no test had a memory source
                 // in the instruction immediately after a control transfer.
                 ea_addr_only  <= src_addr_only;
+                // EXTBF's and CMPBF's `bsrc` is bit-addressed, and it is this
+                // operand.  INSBF's is its destination -- see S_OP2.
+                ea_bit_mode   <= bf_src_is_bit;
                 // DEFECT this fixes (audit D1/P1).  `ea_io` and `ea_lock` are
                 // properties of the ACCESS, and v60_ea latches them on `start`
                 // -- so a state that describes an access and does not say what
@@ -1515,12 +1618,30 @@ always_ff @(posedge clk) begin
         end
 
         S_OP1S: begin
+            // EXTBF's and CMPBF's bit-addressed operand is this one.  The
+            // residual is combinational off the descriptor, so the address
+            // check happens BEFORE the access rather than after it -- an
+            // Illegal Data Field exception carries the Current PC and the
+            // handler restarts the instruction, so nothing may be committed
+            // and no access may be left open.
+            if (bf_src_is_bit && bf_addr_bad) begin
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else begin
+            // Only when THIS operand is the bit-addressed one.  CMPBF's second
+            // operand also runs through the address unit, and capturing there
+            // too would overwrite the residual with the one belonging to a
+            // byte-addressed access -- which is zero, and looks plausible.
+            if (bf_src_is_bit) bf_resid_r <= ea_bit_resid;
             ea_start <= 1'b1;
             // IN reads its port here; every other instruction's source is
             // memory, and no source is ever interlocked -- TASI's and CAXI's
             // locked operand is the DESTINATION.
             ea_io    <= io_src;
             state    <= S_OP1W;
+            end
         end
 
         S_OP1W: begin
@@ -1613,6 +1734,7 @@ always_ff @(posedge clk) begin
                 // would otherwise compute its destination address and never
                 // write to it.
                 ea_addr_only  <= 1'b0;
+                ea_bit_mode   <= bf_dst_is_bit;
                 // OUT writes its port here.
                 // And TASI and CAXI lock the bus around theirs.  v60_ea holds
                 // it across the gap between the read and the write, which is
@@ -1649,6 +1771,16 @@ always_ff @(posedge clk) begin
         end
 
         S_OP2S: begin
+            // INSBF's bit-addressed operand is the DESTINATION, so its check
+            // belongs here -- and here is still before the access, which is
+            // what keeps the restart honest.
+            if (bf_dst_is_bit && bf_addr_bad) begin
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else begin
+            if (bf_dst_is_bit) bf_resid_r <= ea_bit_resid;
             ea_start <= 1'b1;
             // No `ea_io` here, and that is a statement rather than an
             // omission: this state starts the destination's READ, and the only
@@ -1659,8 +1791,8 @@ always_ff @(posedge clk) begin
             // write against a port would need it back; nothing in the set has
             // one.  Proved dead by mutation: setting it changes nothing.
             ea_lock  <= is_lockop;   // TASI's and CAXI's `rwi`
-
             state    <= S_OP2W;
+            end
         end
 
         S_OP2W: begin
@@ -2507,6 +2639,16 @@ always_ff @(posedge clk) begin
                 // pointer it started from, whatever the frame contained.
                 rf_wr_data <= fp_r + 32'd4;
             state <= S_RETIRE;
+        end
+
+        // ---- the bit field group ---------------------------------------------
+        S_BF_LEN: begin
+            // "bit 7 (ext) = 1 -> bits 6:0 (ext) contain a pointer (register
+            // ID) to the general purpose register containing the operand
+            // length" (p.3.293).  A length above 32 is stored as a value
+            // bf_len_bad rejects, so the check has one home rather than two.
+            bf_len_r <= (rf_ra > 32'd32) ? 6'd63 : rf_ra[5:0];
+            state    <= S_OP1;
         end
 
         // ---- CAXI ------------------------------------------------------------

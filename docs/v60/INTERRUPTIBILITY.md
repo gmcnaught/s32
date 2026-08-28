@@ -440,3 +440,199 @@ The one-line answer to "is this work safe to start": **the bus-invariant
 question is settled and benign — the architecture's own boundary is the one the
 invariant already protects — but the resumption contract is not settled at all,
 and that is what makes it unsafe to start today.**
+
+---
+
+# Addendum — searching the held PDFs for the residual count
+
+**Written after §5, as the bounded check §5 recommends.**
+
+**Does this change the §5 recommendation? No — it strengthens it.** No held
+source settles Unknown 1, and the search is now exhausted: every held book has
+been searched and the V60 material in all of them is the *same* 73-page
+databook this tree already reads plates from. §5's "reopen it if a source
+appears" is unchanged; what changes is that **no such source is on this
+machine**, so the reopening condition requires acquiring something new.
+
+One substantive refinement did come out of it, in **A5** below: Unknown 1 and
+Unknown 2 are not independent. The most likely mechanism makes the residual
+count *derivable*, which collapses the blocker into a single sharper question.
+That narrows what to go looking for; it does not make the work startable.
+
+## A1 — What was searched
+
+| source | held as | searched | result |
+|---|---|---|---|
+| Programmer's Reference | `NEC_V60pgmRef_djvu.txt` (OCR only; **no PDF**) | keyword sweep of the whole text | negative |
+| V60 databook | `NEC_uPD70616_V60_DataBook_1986.pdf`, 73 pp. = 3.229–3.301 | text layer + one plate at 500 dpi | negative |
+| 1987 Microcomputer Products Vol 2 | `1987_Microcomputer_Products_Vol_2.pdf`, 39 MB | full text layer | **contains no V60 instruction material at all** |
+| Microprocessor Peripherals databook | `NEC_Microprocessor_Peripherals_DataBook_1986.pdf`, 334 MB, 1178 pp. | contents + the whole V60 page range | **is the same databook, second scan** |
+
+Searched for, in each: `R28`, `R27`, `R26`, `R25`, `R24`, `remaining`,
+`residual`, `length register`, `count register`, `terminated`, `partially`,
+`point of interruption`, `resum*`, `interrupt latency`, `interruptable`,
+`downward direction`, `reserved for use`, `string instruction`, and the
+mnemonics `MOVBS` / `CMPC` / `SCH0BS`.
+
+## A2 — The Programmer's Reference OCR: no such sentence exists to look for
+
+This is the strongest negative of the four, because it changes what a plate
+could tell us.
+
+- **`R25` — 5 hits, `R24` — 5 hits.** Every one is a **register-list table**:
+  the §3 register diagram, §5's two TCB figures (Figures 5-1 and 5-2), and the
+  §9 register list. Not one is a semantic statement. **No register beyond
+  R28, R27 and R26 is ever given a role anywhere in the book**, and R26's only
+  role is the fill/stop *character*.
+- **`remaining` — 5 hits**, none within a thousand lines of any string page
+  (they are about bit addressing, section numbering, interrupt vectors, the
+  breakpoint trap, and FRM).
+- **`residual`, `count register`, `terminated`, `partially` — zero hits.**
+- **`length register` — 34 hits, all of them "Area Table Length Register"**
+  except one, which is also about the ATLR.
+
+**Inferred, and this is the point:** a plate of a §7 string page could only
+help if the OCR had *garbled* a sentence that is there. It has not garbled
+anything — there is **no sentence in the book about a remaining length**, so
+there is nothing on those plates to recover. That closes the specific hope §5
+ended on, at least for the pages this book contains.
+
+## A3 — The V60 databook: no per-instruction descriptions, and a shorter §3
+
+**Page.** The databook has five sections, from its own contents at p. 3.232:
+Design Information, Pipeline Operation, µPD70616 Architecture, Bus Operation,
+Instruction Set, plus an Appendix of register/ATE/PTE formats. Section 5's two
+entries are **"Instruction Format"** and **"Instruction Set Description"** —
+and the latter is the summary *tables* at pp. 3.293–3.299 that this tree has
+been reading, not per-instruction Description text. **The databook carries no
+prose description of any individual instruction.** Its Bit String Instructions
+block is the same opcode/format/flags/exception table already transcribed in
+`tools/v60x/insn_table.py`.
+
+**Page, verified on the plate at 500 dpi** (databook p. 3.247, PDF page 19),
+the databook's General Purpose Registers passage, quoted in full where it
+matters:
+
+> The general purpose register set consists of thirty-two 32-bit registers
+> named R0–R31. Each of these registers can be used as an accumulator, base
+> register, index register or for temporary storage. ... Any pair of
+> consecutive registers can also be used to hold doubleword (64-bit) data. ...
+>
+> **The top three of the general purpose registers (R29–R31) are also
+> implicitly selected by certain instructions** and can be referred to by
+> alternate names.
+>
+>   R29 : AP (Argument Pointer) … R30: FP (Frame Pointer) … R31: SP (Stack
+>   Pointer) …
+
+and then it moves straight to the Program Counter. **The Reference's sentence
+— "In addition to the AP, FP, and SP registers, other general purpose
+registers are required by string instructions … reserved for use starting from
+R28 and allocated in a downward direction" — has no counterpart in the
+databook.** The databook's treatment is strictly shorter, and it does not
+mention R28 at all. (This also incidentally confirms the doubleword
+register-pair rule from a second book: "Any pair of consecutive registers can
+also be used to hold doubleword (64-bit) data" — `docs/v60/DOUBLEWORD.md`.)
+
+So item 1 of the search plan is a clean negative, checked on the plate rather
+than on the text layer.
+
+## A4 — The other two books add nothing, for two different reasons
+
+**`1987_Microcomputer_Products_Vol_2.pdf` — four pages of V60, and they are the
+front matter.** Its contents lists
+
+```
+µPD70616   32-Bit Virtual Memory Microprocessor (V60)  .... 3-229
+µPD72191   Floating Point Processor                     .... 3-233
+```
+
+so the V60 entry occupies **3-229 to 3-232 inclusive — four pages** — and the
+extracted text confirms it: Description, Ordering Information, Pin
+Identification, a package diagram and a feature list, ending at 3-232 with
+µPD72191 beginning on the next page. **No register set, no instruction set, no
+string pages.** The 1987 volume *cut the V60 entry down* relative to the 1986
+printing the held 73-page extract comes from. This was the highest-value
+unknown in the search plan and it is empty.
+
+**`NEC_Microprocessor_Peripherals_DataBook_1986.pdf` — not peripherals only,
+and it is the same book.** Despite its filename it contains the whole 1986
+databook including "Section 3 — CMOS Microprocessors", and its V60 section is
+**pp. 3.229–3.301, the identical range the held extract covers.** Sampling
+confirms it: PDF page 300 is a µPD70616 page carrying the TCB Organization
+diagram, and the Bit String Instructions material at its pp. 3.297–3.298 is
+the same summary table.
+
+Searched across its full V60 page range: `R28` **0**, `R27` **0**,
+`downward direction` **0**, `interrupt latency` **0**, `interruptable` **0**.
+The single `resum` hit is in the µPD72191 FPP section and is about bus
+control.
+
+**One incidental result worth keeping.** Its contents puts µPD72191 at 3.303
+and its text layer runs 3.301 → 3.303 with no 3.302, so **3.302 is blank and
+the held 73-page extract is the complete V60 section.** Nothing is missing
+from what this tree already has — which is itself a useful thing to have
+established, because it retires the possibility that a truncated extract was
+hiding the answer.
+
+## A5 — The refinement: Unknown 1 probably collapses into Unknown 2
+
+**Inferred.** Working through why no book names a count register suggests
+there may not be one, because the count is **derivable**:
+
+- **Page**, `SCHC` §7: `R28 ← search character byte address` /
+  `R27 ← search character offset`. R27 holds an **elapsed count**, so for
+  `SCHC` and `SKPC` the residual is `slen − R27` from the re-read length.
+- For the rest, R28/R27 are addresses, and the residual is
+  `slen − (R28 − src_start)/step` — which needs `src_start`, and `src_start`
+  is exactly what re-decoding the instruction's operands would recompute.
+
+So a single coherent mechanism explains everything the pages *do* say: **the
+resumed instruction re-decodes its operands to recover the start addresses and
+lengths, and R28/R27 supply how far it got.** That is why the working-register
+allocation stops at R28-downward with no count among them, and why the frame
+carries only PC and PSW.
+
+**But it is not stated, and it has a visible hole.** Re-decoding re-evaluates
+the addressing modes, and several of the eighteen permit `[Rn+]` on their
+string operands — `MOVCF`'s table marks `[Rn+]` as `O` for both `src` and
+`dst`. Re-decoding after a resume would step `Rn` a second time and compute a
+*different* start address, which breaks the derivation in exactly the case
+that uses it.
+
+**Two caveats on this inference, both important.** First, `SCHC`'s own page
+names **only R28** as "used to maintain the character address being scanned"
+during execution; R27 is described only as what it contains "following the
+execution", so the pages do not license treating R27 as live mid-instruction.
+Second, nothing says operands are re-decoded at all.
+
+**Net effect on the blocker:** Unknown 1 ("how does it know how much is left")
+reduces to Unknown 2 ("are operands re-evaluated on resume, and what happens
+to autoincrement side effects"). That is one question instead of two, and it is
+a sharper thing to search for — but it is still unanswered, and an
+implementation still cannot be derived.
+
+## A6 — Conclusion of the search
+
+**No held source settles Unknown 1.** The Programmer's Reference contains no
+sentence about a remaining length anywhere in its text; the V60 databook has no
+per-instruction descriptions and a shorter register-set section that omits the
+string-register rule entirely; the 1987 volume carries four pages of V60 front
+matter; and the peripherals databook is a second scan of the same databook.
+All four have been searched, and the held V60 material is complete rather than
+truncated.
+
+**§5's recommendation stands unchanged**, and is now better supported:
+
+1. Do not authorise option (a).
+2. Do not start option (b).
+3. Ship the eighteen non-interruptible and record it.
+4. Reopen only on a **new acquisition** — and the thing to acquire is now
+   named precisely: **a scan or PDF of the µPD70616 Programmer's Reference
+   Manual §7**, whose Description blocks are the only place in NEC's
+   documentation set that has ever carried this level of instruction detail,
+   and whose OCR is all this tree holds. Failing that, §3's fuller register
+   discussion or any NEC application note on string-instruction resumption.
+   The sharpened question to ask of it is **A5's**: *is a resumed string
+   instruction's operand re-decoded, and if so what happens to an
+   autoincrement that already stepped?*

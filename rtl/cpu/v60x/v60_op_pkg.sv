@@ -1146,6 +1146,43 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     end
 endfunction
 
+// The escape opcodes whose SUB-OP picks the OPERATION, not just the width.
+// 0x5D is EXTBF, INSBF and CMPBF together, and p.3.295's two-bit `ext` field in
+// the sub-op byte selects the variant of each -- so one opcode byte carries
+// eight operations and op_alu(), keyed by opcode alone, cannot express it.
+function automatic alu_op_e op_alu_escape(input logic [7:0] op,
+                                          input logic [4:0] subop);
+    alu_op_e r;
+    begin
+        case ({op, 3'b000, subop})
+            16'h5D00: r = ALU_CMPBFS;  // CMPBF
+            16'h5D01: r = ALU_CMPBFZ;  // CMPBF
+            16'h5D02: r = ALU_CMPBFL;  // CMPBF
+            16'h5D08: r = ALU_EXTBFS;  // EXTBF
+            16'h5D09: r = ALU_EXTBFZ;  // EXTBF
+            16'h5D0A: r = ALU_EXTBFL;  // EXTBF
+            16'h5D18: r = ALU_INSBFR;  // INSBF
+            16'h5D19: r = ALU_INSBFL;  // INSBF
+            default: r = ALU_NONE;
+        endcase
+        op_alu_escape = r;
+    end
+endfunction
+
+// The whole answer.  The escape's operation if it has one, and the opcode's
+// otherwise -- the same shape as op_data_bytes() below, for the same reason.
+function automatic alu_op_e op_alu_all(input logic [7:0] op,
+                                       input logic [4:0] subop);
+    alu_op_e e;
+    begin
+        // if/else and not a ternary: a ternary between two enum values is not
+        // an enum to every tool, which this file's own dst_mode note records.
+        e = op_alu_escape(op, subop);
+        if (e != ALU_NONE) op_alu_all = e;
+        else               op_alu_all = op_alu(op);
+    end
+endfunction
+
 // Which control transfer an opcode is, if any.
 function automatic ctrl_op_e op_ctrl(input logic [7:0] op);
     ctrl_op_e r;
