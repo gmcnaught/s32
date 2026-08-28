@@ -24,6 +24,9 @@ tables it needs.
 | FAS* first vs subsequent bus cycle | p. 3.235 | `tb_v60_biu_pins` |
 | UBE* + A0 byte lane decode | p. 3.236 | `tb_v60_biu_pins` |
 | reset output pin states | p. 3.282 | in `v60_biu`'s reset branch |
+| BERR* and RT/EP* sampled at the FALLING edge of T4 | p. 3.239-40 + the p. 3.243 plate | `tb_v60_biu_pins` |
+| RT/EP* = 1 retries the cycle; RT/EP* = 0 raises | p. 3.237 | `tb_v60_biu_pins` |
+| NMI* is an event and latches; INT is a level and does not | p. 3.237 | `tb_v60_biu_pins` |
 
 ### The addressing-mode decoder
 
@@ -65,6 +68,7 @@ modes need, and hands back the operand.
 | the scaled index is the operand's size, and is added after an indirection | p. 3.257, p. 3.294 | `tb_v60_ea` |
 | `[Rn+]` / `[-Rn]` step by the operand's size, decrement before the access | p. 3.261 | `tb_v60_ea` |
 | writing an immediate is the illegal-addressing-mode exception | PgmRef §8 | `tb_v60_ea` |
+| an interrupt acknowledge cycle drives MRQ + ST2-ST0 = 1110 | p. 3.234 | `tb_v60_dxu` |
 
 The memory in both benches is modelled as the databook describes it — two
 byte-wide banks reached only through those three lane encodings — so an access
@@ -100,6 +104,7 @@ queue filled from idle bus cycles and hands the decoder one byte at a time;
 | a fetch never runs while the data unit wants the bus | p. 3.246 | `tb_v60_pfu` |
 | the grant is held from BCY* to the ack, and an ack reaches one master | p. 3.283 | `tb_v60_pfu`, continuously |
 | a request withdrawn before its cycle starts does not wedge the bus | — | `tb_v60_pfu` |
+| both hold over a third kind of cycle: the interrupt acknowledge | — | `tb_v60_pfu` |
 
 The arbiter's hold rule is not defensive programming: an earlier version
 released the grant when a master dropped its request, and a data read at
@@ -180,6 +185,15 @@ register file, the address unit and the ALU, and retires it.
 | an interrupt's frame being the PSW and the PC, with no code word | Fig 8-3 | `tb_v60_exc` |
 | the handler reached through the SBT and the queue flushed for it | Fig 8-2, p. 3.246 | `tb_v60_seq` |
 | one master at a time on the data unit, and completions reaching only it | — | `tb_v60_dmux` |
+| NMI is vector 2 and the bus fault vector 3, off the p. 3.270 plate | p. 3.270, Fig 8-2 | `tb_v60_seq` |
+| an interrupt stacks the PSW and the NEXT PC, and nothing else | Fig 8-5 | `tb_v60_seq`, `tb_v60_exc` |
+| INT held off while PSW.IE is clear, taken at the next boundary when set | p. 3.237 | `tb_v60_seq` |
+| a maskable interrupt's vector read off the SECOND acknowledge cycle | p. 3.237 | `tb_v60_exc`, `tb_v60_seq` |
+| a vector under 64 is the Invalid Interrupt: vector 4, code 0400 | PgmRef §8, Fig 8-5 | `tb_v60_exc` |
+| the bus fault's frame, the failed cycle's physical address above the code | Fig 8-5 | `tb_v60_seq`, `tb_v60_exc` |
+| its code naming which KIND of cycle failed, read against write | Table 8-1 | `tb_v60_seq` |
+| a faulting instruction not retiring, and the handler running instead | Fig 8-5 "Abort" | `tb_v60_seq` |
+| all three frames landing on the INTERRUPT stack, not the level stack | §8 + step (vii) | `tb_v60_seq`, `tb_v60_exc` |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
@@ -206,15 +220,20 @@ mode. What exists is a bus, the operand vocabulary above it, the machinery
 that turns one operand reference into bus cycles, an instruction stream, a
 decoder, enough architectural state and datapath to execute the integer
 two-operand instructions of Formats I and II including the shift group and the
-conversions, the control transfers that make a sequence of them a program, and
-three of the instruction exceptions.
+conversions, the control transfers that make a sequence of them a program,
+three of the instruction exceptions, and the three externally raised ones.
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
 piece would take. In short: the two return pairs (`CALL`/`RET` and
-`RETIU`/`RETIS`), the externally raised exceptions — which need `berr`, `int`
-and `nmi` pins `v60_biu` does not have, so System 32's interrupts cannot be
-driven end to end whatever the units above do — the multiplies and divides and
-everything outside the integer set, and a doubleword operand's register pair.
+`RETIU`/`RETIS`), the multiplies and divides and everything outside the integer
+set, and a doubleword operand's register pair.
+
+Of the externally raised group, what is missing is the bus freeze interrupt
+(vector 1, and `v60_biu` has no `BFREZ` pin), the double bus error (§8 halts;
+nothing here halts, and `BST_MACHINE_FAULT` is never issued), NMI's own "no
+further NMI until RETIS" masking, and `BLOCK*` during an acknowledge cycle. All
+four are recorded with their pages in `docs/v60/EXCEPTIONS.md` and
+`docs/v60/BUS-CYCLE-TIMING.md`.
 
 `docs/v60/EXECUTION-STAGE-PLAN.md`'s six increments are **done**: the operand
 data type, the PSW package, the register file, the ALU, the exception unit and
@@ -274,5 +293,26 @@ during an instruction fetch (the databook says only that FAS* is undefined
 there), and that a control transfer to an odd address drops the byte before the
 target — which is why an odd instruction stream rests at fifteen queued bytes
 rather than sixteen.
+
+The externally raised exceptions add three more, both documents carrying the
+pages. `v60_biu` acknowledges a bus cycle it is raising a fault on, because an
+ack is the only thing that releases the arbiter's grant and advances `v60_dxu`
+and there is no abort path to a master — so the access completes and `berr`
+says its data is meaningless. The address the interrupt acknowledge cycles
+drive is not on a page at all, and is driven at zero. And `NMI*` and `INT` are
+synchronised, which no page asks for: they are the only two inputs in §1 with
+neither a setup parameter nor a waveform plate, which is what says they are
+asynchronous.
+
+One thing here is not a decision but a defect the new exceptions exposed.
+`v60_seq`'s `rf_stack_switch` is a registered output, so the register file
+performs the switch at the end of the cycle it is high in and R31 reads back as
+the new stack pointer only in the cycle after — and `S_EXC_REQ` sampled it a
+cycle too early, pushing the frame on the stack being switched away from. It
+was invisible for as long as it existed, because the three instruction
+exceptions switch to the entry they are already on and the register file makes
+that a no-op. The first exception that genuinely changes stacks is an
+externally raised one. `S_EXC_SETTLE` is the fix, and "seq loses the
+stack-switch settle cycle" is one of the mutations `tb_v60_seq` catches.
 
 All are marked in the source at the point of decision.

@@ -62,6 +62,10 @@ v60_pfu dut (
 // cycle of a logical access.
 reg         d_go = 1'b0;
 reg  [23:0] d_addr = 24'h000800;
+// The data unit's status is a reg so the bench can put a THIRD kind of cycle on
+// the bus: the interrupt acknowledge, which is neither a data access nor an
+// instruction fetch and which nothing above this bench exercises here.
+bus_status_e d_status = BST_MEM_SINGLE;
 wire        d_ack;
 reg         d_req = 1'b0;
 
@@ -81,7 +85,7 @@ wire  [15:0] biu_wdata;
 
 v60_bus_arb arb (
     .clk(clk), .rst(rst),
-    .d_req(d_req), .d_status(BST_MEM_SINGLE), .d_addr(d_addr), .d_we(1'b0),
+    .d_req(d_req), .d_status(d_status), .d_addr(d_addr), .d_we(1'b0),
     .d_dl(DL_HALFWORD), .d_ube(1'b0), .d_first(1'b1), .d_wdata(16'd0),
     .d_ack(d_ack),
     .p_req(p_req), .p_status(p_status), .p_addr(p_addr), .p_dl(p_dl),
@@ -109,6 +113,9 @@ v60_biu biu (
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(1'b0), .bmode(1'b1), .hldrq_n(1'b1), .hldak_n(hldak_n),
+    .berr_n(1'b1), .rt_ep_n(1'b1), .nmi_n(1'b1), .int_req(1'b0),
+    .berr(), .berr_status(), .berr_addr(), .berr_we(), .berr_retry(),
+    .nmi_pending(), .nmi_take(1'b0), .int_pending(),
     .state(state)
 );
 
@@ -398,6 +405,37 @@ initial begin
     for (i = 0; i < 20; i = i + 1) if (byte_valid) take;
     while (level < 5'd8) @(negedge clk);    // wedged if the grant was kept
     chk(level >= 5'd8, "a request withdrawn before its cycle started does not wedge the bus");
+
+    // =======================================================================
+    // A third kind of cycle.  The arbiter's two invariants -- ownership does
+    // not change between BCY* and the ack, and an ack reaches exactly one
+    // master -- are held continuously by the monitor above, and they are held
+    // over whatever status is on the pins.  An interrupt acknowledge is the
+    // case worth running because it is the one status that is neither of the
+    // two the rest of this bench sees, and because it is an I/O cycle, so the
+    // three-TI recovery gap runs between consecutive ones while the prefetch
+    // unit is asking for the bus.
+    // =======================================================================
+    d_go = 1'b0;
+    quiesce;
+    for (i = 0; i < 16; i = i + 1) if (byte_valid) take;
+
+    ncyc     = 0;
+    d_status = BST_INTERRUPT_ACK;
+    d_go     = 1'b1;
+    repeat (600) @(negedge clk);
+    d_go     = 1'b0;
+    repeat (200) @(negedge clk);
+    d_status = BST_MEM_SINGLE;
+
+    n_data = 0; n_prefetch = 0;
+    for (i = 0; i < ncyc && i < 64; i = i + 1) begin
+        if (rec_st[i] === BST_INTERRUPT_ACK)             n_data     = n_data + 1;
+        else if (rec_st[i] === BST_PREFETCH ||
+                 rec_st[i] === BST_DEMAND_FETCH)         n_prefetch = n_prefetch + 1;
+    end
+    chk(n_data > 1,     "interrupt acknowledge cycles ran on the bus");
+    chk(n_prefetch > 0, "with the prefetch unit taking the gaps between them");
 
     if (errors == 0) $display("V60 PFU PASS");
     else             $display("V60 PFU FAIL (%0d errors)", errors);

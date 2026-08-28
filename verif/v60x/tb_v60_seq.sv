@@ -35,6 +35,15 @@ always @(posedge clk) if (!rst) tick <= (tick == DIV-1) ? 3'd0 : tick + 3'd1;
 wire ce_rise = !rst && (tick == 3'd0);
 wire ce_fall = !rst && (tick == DIV/2);
 
+// The three externally raised conditions.  NMI* and INT are driven by the
+// stimulus; BERR* is aimed at an ADDRESS instead, because what a bus error
+// happens to is a bus cycle and the stimulus does not know when one runs.
+reg          nmi_n = 1'b1, int_req = 1'b0;
+reg   [23:0] berr_target = 24'd0;
+wire         biu_berr, biu_berr_we, nmi_pending, nmi_take, int_pending;
+bus_status_e biu_berr_status;
+wire  [23:0] biu_berr_addr;
+
 // ---- prefetch ----------------------------------------------------------------
 reg          redirect = 1'b0;
 reg   [31:0] redirect_pc = 32'd0;
@@ -127,12 +136,14 @@ wire  [3:0] ea_opbytes, ea_cycles;
 wire        ea_done, ea_rn_wb;
 wire [31:0] ea_rn_wb_val;
 
-wire        dx_req, dx_we, dx_done;
+wire        dx_req, dx_we, dx_done, dx_intack;
 wire [23:0] dx_addr;
 wire  [3:0] dx_nbytes, dx_cycles;
 wire [63:0] dx_wdata, dx_rdata;
 
 wire        exc_req, exc_is_int, exc_dis_ie, exc_done;
+wire        exc_int_stack, exc_ack_vector, exc_intack, exc_invalid_int;
+wire  [7:0] exc_int_vector;
 wire  [7:0] exc_vector;
 wire [31:0] exc_ret_pc, exc_psw_in, exc_sp_in, exc_sbr;
 wire  [1:0] exc_nparams;
@@ -174,9 +185,12 @@ v60_exc exc (
     .nparams(exc_nparams), .code(exc_code),
     .param0(exc_param0), .param1(exc_param1),
     .is_interrupt(exc_is_int), .disable_ie(exc_dis_ie),
+    .int_stack(exc_int_stack), .ack_vector(exc_ack_vector),
     .sp_out(exc_sp_out), .psw_out(exc_psw_out), .handler_pc(exc_handler_pc),
     .busy(), .done(exc_done), .bus_cycles(exc_cycles),
+    .int_vector(exc_int_vector), .invalid_int(exc_invalid_int),
     .dx_req(b_req), .dx_addr(b_addr), .dx_nbytes(b_nbytes), .dx_we(b_we),
+    .dx_intack(exc_intack),
     .dx_wdata(b_wdata), .dx_rdata(b_rdata), .dx_done(b_done),
     .dx_cycles(b_cycles)
 );
@@ -184,9 +198,10 @@ v60_exc exc (
 v60_dmux dmux (
     .a_req(a_req), .a_addr(a_addr), .a_nbytes(a_nbytes), .a_we(a_we),
     .a_wdata(a_wdata), .a_rdata(a_rdata), .a_done(a_done), .a_cycles(a_cycles),
-    .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we),
+    .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we), .b_intack(exc_intack),
     .b_wdata(b_wdata), .b_rdata(b_rdata), .b_done(b_done), .b_cycles(b_cycles),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
+    .dx_intack(dx_intack),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles),
     .overlap(dmux_overlap)
@@ -200,7 +215,7 @@ wire  [15:0] d_wdata;
 
 v60_dxu dxu (
     .clk(clk), .rst(rst),
-    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(1'b0),
+    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(1'b0), .intack(dx_intack),
     .wdata(dx_wdata), .rdata(dx_rdata), .busy(), .done(dx_done),
     .cycles(dx_cycles),
     .biu_req(d_req), .biu_status(d_status), .biu_addr(d_addr),
@@ -244,6 +259,11 @@ v60_seq seq (
     .exc_nparams(exc_nparams), .exc_code(exc_code), .exc_param0(exc_param0),
     .exc_param1(exc_param1), .exc_is_interrupt(exc_is_int),
     .exc_disable_ie(exc_dis_ie),
+    .exc_int_stack(exc_int_stack), .exc_ack_vector(exc_ack_vector),
+    .nmi_pending(nmi_pending), .nmi_take(nmi_take),
+    .int_pending(int_pending),
+    .berr(biu_berr), .berr_status(biu_berr_status),
+    .berr_addr(biu_berr_addr), .berr_we(biu_berr_we),
     .exc_sp_out(exc_sp_out), .exc_psw_out(exc_psw_out),
     .exc_handler_pc(exc_handler_pc), .exc_done(exc_done),
     .exc_bus_cycles(exc_cycles),
@@ -282,6 +302,22 @@ wire [15:0] d_out;
 reg  [15:0] d_in;
 bus_state_e state;
 
+// One cycle, at one address, fails.  RT/EP* is held at 0 throughout -- "cause
+// an exception (RT/EP* = 0)" -- because the retry side is tb_v60_biu_pins's.
+//
+// The window is the whole of T4 and not "while BCY* is low": BCY* is negated
+// at the RISING edge of T4 (p.3.283) and the pins are sampled at its falling
+// one, so a stimulus gated on BCY* would release BERR* just before the instant
+// that reads it.  `berr_budget` makes the arming a one-shot -- the handler
+// writes to the same address the fault was aimed at.
+integer n_berr_seen = 0;
+integer berr_budget = 0;
+always @(posedge clk) if (!rst && biu_berr) n_berr_seen = n_berr_seen + 1;
+
+wire berr_n  = !((n_berr_seen < berr_budget) && (state === T_T4) &&
+                 (a === berr_target));
+wire rt_ep_n = 1'b0;
+
 v60_biu biu (
     .clk(clk), .rst(rst), .ce_rise(ce_rise), .ce_fall(ce_fall),
     .req(biu_req), .status(biu_status), .addr(biu_addr), .we(biu_we),
@@ -291,12 +327,27 @@ v60_biu biu (
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(1'b0), .bmode(1'b1), .hldrq_n(1'b1), .hldak_n(hldak_n),
+    .berr_n(berr_n), .rt_ep_n(rt_ep_n), .nmi_n(nmi_n), .int_req(int_req),
+    .berr(biu_berr), .berr_status(biu_berr_status),
+    .berr_addr(biu_berr_addr), .berr_we(biu_berr_we), .berr_retry(),
+    .nmi_pending(nmi_pending), .nmi_take(nmi_take), .int_pending(int_pending),
     .state(state)
 );
 
 reg  [7:0] mem [0:2047];
 wire [10:0] bank_even = {a[10:1], 1'b0};
-always @(*) d_in = {mem[bank_even + 11'd1], mem[bank_even]};
+
+// A stand-in for the uPD71059.  "On the second interrupt acknowledge cycle, an
+// 8-bit interrupt vector is read" (p.3.237), so the two cycles of the pair
+// answer differently and a machine that kept the first one's byte fails.
+wire       is_iack = ({mrq_n, st} === 4'b1110);
+reg  [7:0] iack_first  = 8'hFF;
+reg  [7:0] iack_second = 8'd96;
+integer    iack_n = 0;
+always @(posedge clk) if (!rst && biu_ack && is_iack) iack_n = iack_n + 1;
+
+always @(*) d_in = is_iack ? {8'h00, (iack_n == 0) ? iack_first : iack_second}
+                           : {mem[bank_even + 11'd1], mem[bank_even]};
 
 always @(posedge clk) if (!rst && biu_ack && !rw_n) begin
     case ({ube_n, a[0]})
@@ -338,6 +389,27 @@ begin
     redirect    = 1'b1;
     @(negedge clk);
     redirect    = 1'b0;
+    @(negedge clk);
+end
+endtask
+
+// Reset, then place the two privileged registers this stage cannot load for
+// itself: the system base register, and the interrupt stack pointer that every
+// externally raised condition's frame goes on.  Both through the register
+// file's privileged port, the way the PC is placed through the prefetch unit's
+// redirect -- there is no LDPR here.
+task reset_and_arm;
+begin
+    @(negedge clk);
+    rst = 1'b1;
+    repeat (4) @(negedge clk);
+    rst = 1'b0;
+    repeat (2) @(negedge clk);
+    pr_id = 5'd5; pr_wdata = 32'h0000_0000; pr_wr = 1'b1;   // PR_SBR
+    @(negedge clk);
+    pr_id = 5'd0; pr_wdata = 32'h0000_0680;                 // PR_ISP
+    @(negedge clk);
+    pr_wr = 1'b0;
     @(negedge clk);
 end
 endtask
@@ -577,6 +649,43 @@ initial begin
     // handler 19: MOV.B #0xE3, [R8]
     mem[11'h7C0] = 8'h09; mem[11'h7C1] = 8'h80; mem[11'h7C2] = 8'hF4;
     mem[11'h7C3] = 8'hE3; mem[11'h7C4] = 8'h68;
+
+    // ---- a fifth program, at 0x500: the externally raised conditions ---------
+    // Four stores that leave a different byte at 0x700, so which of them ran
+    // and which was interrupted is readable out of memory.  The system base
+    // table is still at SBR = 0.
+    // SBT entry 2,  Non-Maskable Interrupt  (Figure 8-2's +8)  -> 0x7D0
+    mem[11'h008] = 8'hD0; mem[11'h009] = 8'h07;
+    // SBT entry 3,  Serious System Fault    (Figure 8-2's +12) -> 0x7E0
+    mem[11'h00C] = 8'hE0; mem[11'h00D] = 8'h07;
+    // SBT entry 96, a maskable interrupt    (4 x 96 = 0x180)   -> 0x7F0
+    mem[11'h180] = 8'hF0; mem[11'h181] = 8'h07;
+    // MOV.W #0x600, R31   the level 0 stack
+    mem[11'h500] = 8'h2D; mem[11'h501] = 8'hA0; mem[11'h502] = 8'hF4;
+    mem[11'h503] = 8'h00; mem[11'h504] = 8'h06; mem[11'h505] = 8'h00;
+    mem[11'h506] = 8'h00; mem[11'h507] = 8'h7F;
+    // MOV.W #0x700, R8    where every store below goes
+    mem[11'h508] = 8'h2D; mem[11'h509] = 8'hA0; mem[11'h50A] = 8'hF4;
+    mem[11'h50B] = 8'h00; mem[11'h50C] = 8'h07; mem[11'h50D] = 8'h00;
+    mem[11'h50E] = 8'h00; mem[11'h50F] = 8'h68;
+    // MOV.B #1, [R8]
+    mem[11'h510] = 8'h09; mem[11'h511] = 8'h80; mem[11'h512] = 8'hF4;
+    mem[11'h513] = 8'h01; mem[11'h514] = 8'h68;
+    // MOV.B #2, [R8]
+    mem[11'h515] = 8'h09; mem[11'h516] = 8'h80; mem[11'h517] = 8'hF4;
+    mem[11'h518] = 8'h02; mem[11'h519] = 8'h68;
+    // MOV.B #3, [R8]
+    mem[11'h51A] = 8'h09; mem[11'h51B] = 8'h80; mem[11'h51C] = 8'hF4;
+    mem[11'h51D] = 8'h03; mem[11'h51E] = 8'h68;
+    // handler 2:  MOV.B #0xA1, [R8]
+    mem[11'h7D0] = 8'h09; mem[11'h7D1] = 8'h80; mem[11'h7D2] = 8'hF4;
+    mem[11'h7D3] = 8'hA1; mem[11'h7D4] = 8'h68;
+    // handler 3:  MOV.B #0xA2, [R8]
+    mem[11'h7E0] = 8'h09; mem[11'h7E1] = 8'h80; mem[11'h7E2] = 8'hF4;
+    mem[11'h7E3] = 8'hA2; mem[11'h7E4] = 8'h68;
+    // handler 96: MOV.B #0xA3, [R8]
+    mem[11'h7F0] = 8'h09; mem[11'h7F1] = 8'h80; mem[11'h7F2] = 8'hF4;
+    mem[11'h7F3] = 8'hA3; mem[11'h7F4] = 8'h68;
 
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
@@ -878,6 +987,124 @@ initial begin
     chk(mem_word(13'h5FC) === 32'h12000004, "and carries a different code");
     step;
     chk(mem[11'h700] === 8'hE2, "and a different handler runs");
+
+    // =======================================================================
+    // The externally raised conditions.  Each is recognised where an
+    // instruction exception is -- between instructions -- and each puts its
+    // frame on the INTERRUPT stack, which is why PR_ISP is loaded above and
+    // why the frames below are found at 0x680 downward and not at R31's 0x600.
+    // =======================================================================
+
+    // The record byte is the same one the control-flow program used.
+    mem[11'h700] = 8'h00;
+
+    // ---- NMI: an event, taken at the completion of the current instruction --
+    reset_and_arm;
+    jump(32'h00000500);
+    step; step;                                  // the stack and the pointer
+    chk(seq_pc === 32'h00000510, "the setup ran and the PC is at the first store");
+    chk(mem[11'h700] === 8'h00,  "and nothing has been stored yet");
+
+    // A pulse, gone long before the instruction boundary: v60_biu latches it.
+    @(negedge clk); nmi_n = 1'b0;
+    repeat (3) @(negedge clk); nmi_n = 1'b1;
+    psw_before = seq_psw;
+    step;
+    chk(!stopped,               "an NMI is taken rather than stopping");
+    chk(seq_pc === 32'h000007D0,
+        "and the handler is SBT entry 2's, which is Figure 8-2's +8");
+    chk(mem[11'h700] === 8'h00,
+        "the instruction it interrupted did not run");
+    chk(rf.gpr[31] === 32'h00000678,
+        "the frame went on the INTERRUPT stack, not on R31's own");
+    chk(mem_word(13'h67C) === psw_before, "which holds the PSW");
+    chk(mem_word(13'h678) === 32'h00000510,
+        "and the NEXT PC: the instruction that has not run yet");
+    chk(seq_psw[PSW_IS] === 1'b1,  "the handler runs on the interrupt stack");
+    chk(seq_psw[PSW_IE] === 1'b0,  "with maskable interrupts disabled");
+    step;
+    chk(mem[11'h700] === 8'hA1,    "and the handler runs");
+
+    // ---- INT: a level, and PSW.IE decides ----------------------------------
+    reset_and_arm;
+    jump(32'h00000500);
+    step; step;
+    @(negedge clk);
+    int_req = 1'b1;                    // and it stays asserted, as the pin must
+    repeat (4) @(negedge clk);
+    chk(seq_psw[PSW_IE] === 1'b0, "PSW.IE is clear out of reset");
+    step;
+    chk(seq_pc === 32'h00000515,
+        "with PSW.IE clear the request is held pending and the program runs");
+    chk(mem[11'h700] === 8'h01,  "the first store happened");
+    step;
+    chk(mem[11'h700] === 8'h02,  "and so did the second");
+
+    // Set PSW.IE the way the instruction this tree does not have would.  There
+    // is no LDPSW or UPDPSW in v60_seq -- op_alu reports ALU_NONE for them --
+    // so the bit is placed directly, which is the same liberty the bench takes
+    // with the PC and the privileged registers.
+    @(negedge clk);
+    seq.psw[PSW_IE] = 1'b1;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    step;
+    chk(seq_pc === 32'h000007F0,
+        "unmasked, the interrupt is taken at the next instruction boundary");
+    chk(exc_int_vector === 8'd96,
+        "and its vector came off the second interrupt acknowledge cycle");
+    chk(!exc_invalid_int, "96 is one of the 192 vectors an application owns");
+    chk(mem[11'h700] === 8'h02,  "the instruction it interrupted did not run");
+    chk(mem_word(13'h67C) === psw_before, "the frame is the PSW");
+    chk(mem_word(13'h678) === 32'h0000051A, "and the Next PC");
+    chk(rf.gpr[31] === 32'h00000678, "two words, on the interrupt stack");
+    chk(seq_psw[PSW_IE] === 1'b0,
+        "and taking it disables further maskable interrupts");
+    step;
+    chk(mem[11'h700] === 8'hA3,  "and the handler runs");
+    @(negedge clk); int_req = 1'b0;
+
+    // ---- BERR*: the bus fault, which aborts the instruction ----------------
+    reset_and_arm;
+    jump(32'h00000500);
+    step; step;
+    berr_target = 24'h000700;          // the store's own destination
+    berr_budget = n_berr_seen + 1;     // exactly one failed cycle
+    psw_before  = seq_psw;
+    step;
+    chk(!stopped,  "a bus error raises rather than stopping");
+    chk(seq_pc === 32'h000007E0,
+        "the handler is SBT entry 3's, the Serious System Fault at +12");
+    chk(seq_pc !== 32'h00000515,
+        "so the faulting instruction did not retire");
+    chk(mem_word(13'h67C) === 32'h00000700,
+        "the frame's deepest word is the Exception Address: a physical address");
+    chk(mem_word(13'h678) === 32'h03030008,
+        "then the code -- a fixed length data WRITE bus error -- beside a count of 8");
+    chk(mem_word(13'h674) === psw_before, "then the PSW");
+    chk(mem_word(13'h670) === 32'h00000510,
+        "and the PC of the instruction whose cycle failed");
+    chk(rf.gpr[31] === 32'h00000670,
+        "four words, on the interrupt stack this group also uses");
+    chk(seq_psw[PSW_IE] === 1'b0,
+        "and a bus error disables maskable interrupts, by Note 2");
+    step;
+    chk(mem[11'h700] === 8'hA2,  "the bus fault handler runs");
+
+    // A read that fails carries a different code from a write that does: the
+    // 0300-031E group is one code per KIND of cycle.
+    reset_and_arm;
+    jump(32'h00000500);
+    step; step; step;                  // let the first store put 1 at 0x700
+    berr_target = 24'h000700;
+    berr_budget = n_berr_seen + 1;
+    // ADD.b #1, [R8] at 0x325 reads its destination first, so aim at that
+    // program instead: jump there with R8 already pointing at 0x700.
+    jump(32'h00000325);
+    step;
+    chk(seq_pc === 32'h000007E0,   "a failed READ raises the same vector");
+    chk(mem_word(13'h678) === 32'h03130008,
+        "with the fixed length data READ code instead");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

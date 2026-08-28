@@ -36,6 +36,11 @@ module v60_dmux (
     input        [23:0] b_addr,
     input         [3:0] b_nbytes,
     input               b_we,
+    // Only the exception unit asks for an interrupt acknowledge cycle: it is
+    // part of taking a maskable interrupt and nothing an operand can do.  So
+    // there is no `a_intack` -- an address unit that could ask for one would
+    // be a port with no caller.
+    input               b_intack,
     input        [63:0] b_wdata,
     output logic [63:0] b_rdata,
     output logic        b_done,
@@ -46,6 +51,7 @@ module v60_dmux (
     output logic [23:0] dx_addr,
     output logic  [3:0] dx_nbytes,
     output logic        dx_we,
+    output logic        dx_intack,
     output logic [63:0] dx_wdata,
     input        [63:0] dx_rdata,
     input               dx_done,
@@ -63,12 +69,14 @@ always_comb begin
         dx_addr   = b_addr;
         dx_nbytes = b_nbytes;
         dx_we     = b_we;
+        dx_intack = b_intack;
         dx_wdata  = b_wdata;
     end else begin
         dx_req    = a_req;
         dx_addr   = a_addr;
         dx_nbytes = a_nbytes;
         dx_we     = a_we;
+        dx_intack = 1'b0;
         dx_wdata  = a_wdata;
     end
 end

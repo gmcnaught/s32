@@ -13,12 +13,47 @@ this tree can reach:
 
 | offset | exception | vector | code |
 |---|---|---|---|
+| `+8` | Non-Maskable Interrupt | 2 | — |
+| `+12` | Serious System Fault (bus error) | 3 | `0300`–`031E` |
+| `+16` | System Fault (invalid interrupt) | 4 | `0400` |
 | `+64` | Reserved Opcode | 16 | `1000` |
 | `+68` | Privileged Instruction | 17 | `1100` |
 | `+72` | Reserved Addressing Mode | 18 | `1200` |
 | `+76` | Illegal Addressing Mode | 19 | `1300` |
 | `+80` | Illegal Data Field | 20 | `1400` |
 | `+84` | Integer Arithmetic | 21 | — |
+| `+256`–`+1020` | Application Interrupt Vectors | 64–255 | — |
+
+### The low end of that figure, and why it needs the plate
+
+The first three rows above are the part of Figure 8-2 that cannot be taken from
+either book's OCR. Both extracts render the low end of the table as a bare run
+of names and a bare run of offsets in separate columns, and one dropped row
+shifts every vector in the group by one. The rows were read off the **plate**
+at databook p. 3.270, which prints the vector NUMBER in its own column beside
+the offset — so the plate is self-checking where the OCR is not:
+
+```
+  vector   name                       offset
+    7      Stack Invalid Exception     +28
+    6      RFU                         +24
+    5      RFU                         +20
+    4      System Fault                +16
+    3      Serious System Fault        +12
+    2      Non-Maskable Interrupt      +8
+    1      Bus Freeze                  +4
+    0      RFU                         (SBR)
+```
+
+The Programmer's Reference's Figure 8-2 prints the same rows as name/offset
+pairs and agrees: NMI at `+8`, the Serious System Fault at `+12`. Two books,
+two independent renderings, and 4 × 2 = 8 and 4 × 3 = 12.
+
+**A correction, because it was written down wrong before it was read.**
+`docs/v60/GOALS.md` set this work going with "NMI\* ... its SBT entry is +12, so
+vector 3". It is not: `+12` is the Serious System Fault, which is where a bus
+error goes, and NMI is `+8`, vector 2. The goal text also told whoever picked
+it up to check the plate before using the low end, which is what turned it up.
 
 The codes are the "Instruction Exceptions" rows of the exception-code table,
 which prints its names and its codes in two separate columns:
@@ -118,6 +153,86 @@ The lesson is not about these five bits: when a page in one book is illegible,
 read**. Three of these were recorded as unread for exactly as long as it took
 to check the second printing.
 
+## The three frames the externally raised conditions use
+
+Figure 8-5 draws one frame per group, and these three are not the Instruction
+Exceptions' shape:
+
+```
+  #2 Non-Maskable Interrupt          #3 Bus Fault
+  #64-255 Maskable Interrupts          (the exception address is physical)
+
+     +4  PSW                            +12  Exception Address
+      0  PC (Next PC)                    +8  Exception Code |  8
+                                         +4  PSW
+  #4 System Fault                         0  PC
+     Invalid Interrupt
+
+     +8  Exception Code |  4
+     +4  PSW
+      0  PC
+```
+
+Three things follow, and each is checked rather than assumed:
+
+- **An interrupt stacks the Next PC**, where an instruction exception stacks
+  the Current PC. Figure 8-5 says so on the row itself, and the difference is
+  visible: the frame carries the address of the instruction that has *not* run.
+- **The bus fault is the only frame in this tree with a parameter word above
+  the code**, and its count is 8 — `4 × (1 parameter + 1)`. The word is "the
+  physical address that generated the exception" (§8), which `v60_biu` reports
+  with the fault as the failed cycle's `A23-A0`.
+- **All three go on the interrupt stack.** Step (vii) of the recognition
+  sequence covers the interrupts; §8's prose covers the other two, once per
+  group — the serious system faults' "exception information is pushed onto the
+  interrupt stack" and the system faults' "exception information is pushed on
+  the interrupt stack". So `v60_exc` takes `int_stack` separately from
+  `is_interrupt`, and sets `PSW.IS` for either.
+
+### The bus error's code says which kind of cycle failed
+
+Table 8-1's Serious System Exceptions group is thirteen codes, one per kind of
+bus cycle — which is exactly what `MRQ` + `ST2-ST0` already carries, so the map
+in `v60_seq` is the two tables laid against each other rather than a choice:
+
+| code | cycle | | code | cycle |
+|---|---|---|---|---|
+| `0301` | string data write | | `0313` | fixed length data read |
+| `0303` | fixed length data write | | `0314` | system base table read |
+| `0305` | translation table write | | `0315` | translation table read |
+| `0309` | string I/O write | | `0317` | instruction fetch |
+| `030B` | fixed length I/O write | | `0319` | string I/O read |
+| `0311` | string data read | | `031B` | fixed length I/O read |
+| | | | `031E` | interrupt vector read |
+
+A short path access "is substituted for a single mode data access" (p. 3.233),
+so it takes the fixed length codes. There is no system base table *write* code,
+and nothing writes one.
+
+## A maskable interrupt's vector is not chosen by the processor
+
+"If set, the µPD70616 will perform a pair of back-to-back interrupt
+acknowledge cycles.  On the second interrupt acknowledge cycle, an 8-bit
+interrupt vector is read from the external µPD71059 Interrupt Controller and
+used as an offset into the System Base Table" (p. 3.237).
+
+`v60_exc` makes both cycles through the same data unit as everything else, with
+`BST_INTERRUPT_ACK` on the status pins. Their back-to-backness is not arranged
+anywhere: that status code has `MRQ` = 1, so `v60_biu`'s own p. 3.291 rule puts
+the three TI states between them.
+
+The address the two cycles drive is **not on any page held here** — the
+databook names the status code and says nothing about `A23-A0` during it — so
+it is driven at zero and marked at the point of decision.
+
+What comes back is checked before it is used, because §8 makes that a named
+exception rather than a diagnostic: "An invalid interrupt exception occurs when
+an external interrupt controller supplies a system base table vector in the
+range of 0 to 63.  These interrupt/exception vectors are reserved for system
+use and attempted use will result in an exception." So a vector under 64
+becomes the System Fault — vector 4, code `0400`, and an *exception's* frame
+rather than an interrupt's.
+
 ## Which stack
 
 Step (vii) above says it exactly: an interrupt's frame goes on the interrupt
@@ -130,6 +245,26 @@ save into the entry the old `{IS, EL}` names, load from the entry the new one
 does — and a switch to the same entry is a no-op there, which is the ordinary
 case in this tree: it runs at execution level 0 and these exceptions handle at
 execution level 0.
+
+## What is still not raised, and why
+
+- **A double bus error.** "When a bus error involves the interrupt stack or a
+  second bus error occurs during the processing of the initial bus error, the
+  situation is deemed unrecoverable and the processor will halt" (§8). Nothing
+  in this tree halts, and `BST_MACHINE_FAULT` — which is what the databook says
+  a fatal double bus error puts on the pins (p. 3.234) — is never issued. A
+  second fault while `v60_exc` is pushing is reported like any other and raised
+  again afterwards.
+- **The bus freeze interrupt**, vector 1. `v60_biu` has no `BFREZ` pin.
+- **NMI's own masking rule.** "Additional non-maskable interrupts will not be
+  acknowledged until the processing of the first NMI completes and the RETIS
+  instruction is executed" (p. 3.271). There is no RETIS.
+- **A clean abort.** Figure 8-5 marks the bus fault "Abort", and what `v60_seq`
+  does is abandon the instruction at the first access completion after the
+  fault: it does not retire and its addressing-mode writeback is dropped, but a
+  read-modify-write whose read had already completed still closes with its
+  write, one bus cycle later. `v60_biu` acknowledges the failed cycle for the
+  same reason — see `docs/v60/BUS-CYCLE-TIMING.md`.
 
 ## What is not covered, and where it is covered instead
 

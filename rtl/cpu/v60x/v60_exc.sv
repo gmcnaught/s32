@@ -74,10 +74,49 @@
 //    all set, and the stack is selected.  The three digits the Programmer's
 //    Reference's printing of that sequence lost to the scan are legible in
 //    the databook's, pp.3.269-3.270 -- see docs/v60/EXCEPTIONS.md.
-//  * The externally raised exceptions -- bus error, NMI, maskable interrupt --
-//    cannot be driven end to end, because v60_biu has no pin for any of them.
-//    `is_interrupt` and `disable_ie` are inputs so the behaviour can be built
-//    and tested before the pins exist.
+//  * A double bus error.  "When a bus error involves the interrupt stack or a
+//    second bus error occurs during the processing of the initial bus error,
+//    the situation is deemed unrecoverable and the processor will halt" (S8).
+//    Nothing here halts: a bus error while this module is pushing is reported
+//    to v60_seq like any other and raised again afterwards.  There is no halt
+//    state in this tree and BST_MACHINE_FAULT, which is what the databook says
+//    a fatal double bus error puts on the pins (p.3.234), is never issued.
+//
+//  ---------------------------------------------------------------------------
+//  Where a maskable interrupt's vector comes from
+//  ---------------------------------------------------------------------------
+//  Not from the caller.  "If set, the uPD70616 will perform a pair of
+//  back-to-back interrupt acknowledge cycles.  On the second interrupt
+//  acknowledge cycle, an 8-bit interrupt vector is read from the external
+//  uPD71059 Interrupt Controller and used as an offset into the System Base
+//  Table" (p.3.237).  `ack_vector` asks for exactly that, and the two cycles
+//  are made through the same data unit as everything else, with
+//  BST_INTERRUPT_ACK on the status pins.  Their back-to-backness is not
+//  arranged here: the status code has MRQ = 1, so v60_biu's own p.3.291 rule
+//  puts the three TI states between them.
+//
+//  The vector that comes back is checked before it is used, because §8 makes
+//  that a named exception rather than a diagnostic: "An invalid interrupt
+//  exception occurs when an external interrupt controller supplies a system
+//  base table vector in the range of 0 to 63.  These interrupt/exception
+//  vectors are reserved for system use and attempted use will result in an
+//  exception."  So a vector under 64 becomes the System Fault -- vector 4,
+//  code 0400, and an exception's frame rather than an interrupt's, which is
+//  what Figure 8-5 draws for it: "#4 System Fault / Invalid Interrupt, +8
+//  Exception Code | 4, +4 PSW, 0 PC".  That substitution is made here rather
+//  than in the sequencer because the vector never leaves this module: it is
+//  read, checked and used between two of its own bus accesses.
+//
+//  ---------------------------------------------------------------------------
+//  Which stack, when the frame is not an interrupt's
+//  ---------------------------------------------------------------------------
+//  Step (vii) of the recognition sequence says interrupt -> IS and exception
+//  -> L0SP, and §8's prose overrides it for two whole groups: the serious
+//  system faults' "exception information is pushed onto the interrupt stack",
+//  and the system faults' "exception information is pushed on the interrupt
+//  stack".  Both are exceptions and neither goes on the level stack.  So
+//  `int_stack` says which stack independently of `is_interrupt`; the caller
+//  drives it, and PSW.IS is set for either.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -107,6 +146,10 @@ module v60_exc
 
     input               is_interrupt,  // an interrupt, not an exception
     input               disable_ie,    // bus error / stack invalid (Note 2)
+    input               int_stack,     // the frame goes on the interrupt stack
+    // Take the vector off a pair of interrupt acknowledge cycles rather than
+    // from `vector`.  Only meaningful with is_interrupt.
+    input               ack_vector,
 
     output logic [31:0] sp_out,
     output logic [31:0] psw_out,
@@ -115,19 +158,29 @@ module v60_exc
     output logic        done,
     output logic  [3:0] bus_cycles,
 
+    // Observable, for verification: what the interrupt controller supplied and
+    // whether it was one of the 64 the processor reserves.
+    output logic  [7:0] int_vector,
+    output logic        invalid_int,
+
     // ---- data access unit --------------------------------------------------
     output logic        dx_req,
     output logic [23:0] dx_addr,
     output logic  [3:0] dx_nbytes,
     output logic        dx_we,
+    output logic        dx_intack,
     output logic [63:0] dx_wdata,
     input        [63:0] dx_rdata,
     input               dx_done,
     input         [3:0] dx_cycles
 );
 
-typedef enum logic [2:0] {
-    S_IDLE, S_VECTOR, S_PUSH, S_ISSUE, S_FIN
+typedef enum logic [3:0] {
+    S_IDLE, S_VECTOR, S_PUSH, S_ISSUE, S_FIN,
+    // A maskable interrupt's vector: the first acknowledge cycle, the gap that
+    // gives the data unit a fresh request edge, the second acknowledge cycle
+    // which is the one carrying the vector, and the gap before the SBT read.
+    S_IACK1, S_IACK_GAP, S_IACK2, S_VEC_GAP
 } state_e;
 
 state_e      state;
@@ -137,8 +190,7 @@ logic [15:0] code_r;
 logic  [1:0] phase;         // 0: parameters, 1: the PSW, 2: the return PC
 logic [31:0] sp;
 logic [31:0] p0, p1;
-logic        int_r, dis_r;
-logic  [7:0] vec_r;
+logic        int_r, dis_r, ist_r;
 
 assign busy = (state != S_IDLE);
 
@@ -172,7 +224,8 @@ endfunction
 // The PSW the handler runs with.
 function automatic logic [31:0] psw_upd(input logic [31:0] p,
                                         input logic        is_int,
-                                        input logic        dis);
+                                        input logic        dis,
+                                        input logic        on_ist);
     logic [31:0] r;
     begin
         // The eight step recognition sequence, which the DATABOOK prints with
@@ -198,8 +251,10 @@ function automatic logic [31:0] psw_upd(input logic [31:0] p,
         r[PSW_EM]                = 1'b0;
         r[PSW_ASA]               = 1'b1;
         // DECISION, marked in the header: an interrupt is "saved on the
-        // interrupt stack", and PSW.IS is what selects it.
-        if (is_int)        r[PSW_IS] = 1'b1;
+        // interrupt stack", and PSW.IS is what selects it.  A serious system
+        // fault and a system fault go there too, by §8's prose rather than by
+        // step (vii), and say so through `int_stack`.
+        if (is_int || on_ist) r[PSW_IS] = 1'b1;
         psw_upd = r;
     end
 endfunction
@@ -226,30 +281,98 @@ always_ff @(posedge clk) begin
         p1          <= 32'd0;
         int_r       <= 1'b0;
         dis_r       <= 1'b0;
-        vec_r       <= 8'd0;
+        ist_r       <= 1'b0;
+        dx_intack   <= 1'b0;
+        int_vector  <= 8'd0;
+        invalid_int <= 1'b0;
     end else begin
         done <= 1'b0;
 
         case (state)
         S_IDLE: if (req) begin
-            vec_r       <= vector;
             p0          <= param0;
             p1          <= param1;
             pushes_left <= np_eff;
             np_r        <= np_eff;
             int_r       <= is_interrupt;
             dis_r       <= disable_ie;
+            ist_r       <= int_stack;
             sp          <= sp_in;
             bus_cycles  <= 4'd0;
             code_r      <= code;
+            invalid_int <= 1'b0;
+            int_vector  <= 8'd0;
             // With no parameter words the code word is first -- and with none
             // of either, which is an interrupt, the PSW is.
             if (np_eff != 2'd0)     phase <= 2'd0;
             else if (!is_interrupt) phase <= 2'd1;
             else                    phase <= 2'd2;
 
-            // The vector first: SBR + 4 x vector, a 32-bit read.
-            dx_addr   <= sbr[23:0] + {14'd0, vector, 2'b00};
+            if (is_interrupt && ack_vector) begin
+                // "a pair of back-to-back interrupt acknowledge cycles".  One
+                // byte each, because what comes back is "an 8-bit interrupt
+                // vector"; the address is not on any page held here -- the
+                // databook names the status code and says nothing about
+                // A23-A0 during it -- so it is driven at zero and marked.
+                dx_addr   <= 24'd0;
+                dx_nbytes <= 4'd1;
+                dx_we     <= 1'b0;
+                dx_intack <= 1'b1;
+                dx_req    <= 1'b1;
+                state     <= S_IACK1;
+            end else begin
+                // The vector first: SBR + 4 x vector, a 32-bit read.
+                dx_addr   <= sbr[23:0] + {14'd0, vector, 2'b00};
+                dx_nbytes <= 4'd4;
+                dx_we     <= 1'b0;
+                dx_req    <= 1'b1;
+                state     <= S_VECTOR;
+            end
+        end
+
+        // The first acknowledge cycle carries no vector -- the page puts it on
+        // the second -- so this one is made and its data dropped.
+        S_IACK1: if (dx_done) begin
+            bus_cycles <= bus_cycles + dx_cycles;
+            dx_req     <= 1'b0;
+            state      <= S_IACK_GAP;
+        end
+
+        S_IACK_GAP: begin
+            dx_addr   <= 24'd0;
+            dx_nbytes <= 4'd1;
+            dx_we     <= 1'b0;
+            dx_intack <= 1'b1;
+            dx_req    <= 1'b1;
+            state     <= S_IACK2;
+        end
+
+        S_IACK2: if (dx_done) begin
+            bus_cycles <= bus_cycles + dx_cycles;
+            dx_req     <= 1'b0;
+            dx_intack  <= 1'b0;
+            int_vector <= dx_rdata[7:0];
+
+            if (dx_rdata[7:0] < 8'd64) begin
+                // The Invalid Interrupt: a System Fault, and an EXCEPTION's
+                // frame -- vector 4 with the code word Figure 8-5 gives it.
+                // Its information still goes on the interrupt stack, which
+                // `ist_r` already says, and it disables interrupts.
+                invalid_int <= 1'b1;
+                code_r      <= 16'h0400;
+                int_r       <= 1'b0;
+                dis_r       <= 1'b1;
+                pushes_left <= 2'd0;
+                np_r        <= 2'd0;
+                phase       <= 2'd1;      // the code word, then PSW, then PC
+                dx_addr     <= sbr[23:0] + {14'd0, 8'd4, 2'b00};
+            end else begin
+                dx_addr <= sbr[23:0] + {14'd0, dx_rdata[7:0], 2'b00};
+            end
+            state <= S_VEC_GAP;
+        end
+
+        S_VEC_GAP: begin
             dx_nbytes <= 4'd4;
             dx_we     <= 1'b0;
             dx_req    <= 1'b1;
@@ -298,7 +421,7 @@ always_ff @(posedge clk) begin
         S_FIN: begin
             // "transferred to the ... vector at execution level 0", and for an
             // interrupt "further maskable interrupts will be disabled".
-            psw_out <= psw_upd(psw_in, int_r, dis_r);
+            psw_out <= psw_upd(psw_in, int_r, dis_r, ist_r);
             sp_out  <= sp;
             done    <= 1'b1;
             state   <= S_IDLE;
@@ -320,7 +443,10 @@ always_ff @(posedge clk) begin
     if (!rst && req && (sbr[11:0] != 12'd0))
         $display("WARN v60_exc: SBR %h is not page aligned -- 'the twelve low order bits' must be zero (t=%0t)",
                  sbr, $time);
-    if (!rst && req && is_interrupt && (vector < 8'd64))
+    // Only for a vector the caller supplied.  One that comes off the
+    // acknowledge cycles is not a diagnostic: §8 makes it the Invalid
+    // Interrupt exception, and the S_IACK2 branch raises it.
+    if (!rst && req && is_interrupt && !ack_vector && (vector < 8'd64))
         $display("WARN v60_exc: interrupt on vector %0d, which is one of the 64 the processor reserves (t=%0t)",
                  vector, $time);
 end

@@ -32,6 +32,9 @@ wire ce_fall = !rst && (tick == DIV/2);
 
 // ---- the unit ---------------------------------------------------------------
 reg          e_req = 1'b0, e_int = 1'b0, e_dis = 1'b0;
+reg          e_ist = 1'b0, e_ackv = 1'b0;
+wire   [7:0] e_int_vec;
+wire         e_invalid;
 reg    [7:0] e_vec = 8'd0;
 reg   [31:0] e_ret = 32'd0, e_psw = 32'd0, e_sp = 32'd0, e_sbr = 32'd0;
 reg    [1:0] e_np = 2'd0;
@@ -42,7 +45,7 @@ wire  [31:0] e_sp_out, e_psw_out, e_handler;
 wire         e_busy, e_done;
 wire   [3:0] e_cycles;
 
-wire         dx_req, dx_we, dx_done;
+wire         dx_req, dx_we, dx_done, dx_intack;
 wire  [23:0] dx_addr;
 wire   [3:0] dx_nbytes, dx_cycles;
 wire  [63:0] dx_wdata, dx_rdata;
@@ -52,10 +55,13 @@ v60_exc dut (
     .req(e_req), .vector(e_vec), .ret_pc(e_ret), .psw_in(e_psw),
     .sp_in(e_sp), .sbr(e_sbr),
     .nparams(e_np), .code(e_code), .param0(e_p0), .param1(e_p1),
-    .is_interrupt(e_int), .disable_ie(e_dis),
+    .is_interrupt(e_int), .disable_ie(e_dis), .int_stack(e_ist),
+    .ack_vector(e_ackv),
     .sp_out(e_sp_out), .psw_out(e_psw_out), .handler_pc(e_handler),
     .busy(e_busy), .done(e_done), .bus_cycles(e_cycles),
+    .int_vector(e_int_vec), .invalid_int(e_invalid),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
+    .dx_intack(dx_intack),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles)
 );
@@ -68,7 +74,7 @@ wire  [15:0] biu_wdata, biu_rdata;
 
 v60_dxu dxu (
     .clk(clk), .rst(rst),
-    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(1'b0),
+    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(1'b0), .intack(dx_intack),
     .wdata(dx_wdata), .rdata(dx_rdata), .busy(), .done(dx_done),
     .cycles(dx_cycles),
     .biu_req(biu_req), .biu_status(biu_status), .biu_addr(biu_addr),
@@ -93,16 +99,32 @@ v60_biu biu (
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(1'b0), .bmode(1'b1), .hldrq_n(1'b1), .hldak_n(hldak_n),
+    .berr_n(1'b1), .rt_ep_n(1'b1), .nmi_n(1'b1), .int_req(1'b0),
+    .berr(), .berr_status(), .berr_addr(), .berr_we(), .berr_retry(),
+    .nmi_pending(), .nmi_take(1'b0), .int_pending(),
     .state(state)
 );
 
 reg  [7:0] mem [0:8191];
 wire [12:0] bank_even = {a[12:1], 1'b0};
-always @(*) d_in = {mem[bank_even + 13'd1], mem[bank_even]};
 
-integer nack = 0;
+// ---- a stand-in for the uPD71059 -------------------------------------------
+// "On the SECOND interrupt acknowledge cycle, an 8-bit interrupt vector is
+// read" (p.3.237).  So the model answers the two cycles of the pair
+// differently, and a machine that kept the first one's byte fails rather than
+// passing on a controller that happened to hold the vector across both.
+wire       is_iack = ({mrq_n, st} === 4'b1110);
+reg  [7:0] iack_first  = 8'hC0;
+reg  [7:0] iack_second = 8'hC8;
+integer    iack_n = 0;
+
+always @(*) d_in = is_iack ? {8'h00, (iack_n == 0) ? iack_first : iack_second}
+                           : {mem[bank_even + 13'd1], mem[bank_even]};
+
+integer nack = 0, n_iack = 0;
 always @(posedge clk) if (!rst && biu_ack) begin
     nack = nack + 1;
+    if (is_iack) begin iack_n = iack_n + 1; n_iack = n_iack + 1; end
     if (!rw_n) begin
         case ({ube_n, a[0]})
             2'b00: begin mem[bank_even] = d_out[7:0];
@@ -141,6 +163,8 @@ endtask
 task take;
 begin
     @(negedge clk);
+    iack_n = 0;
+    n_iack = 0;
     e_req = 1'b1;
     @(negedge clk);
     e_req = 1'b0;
@@ -161,6 +185,13 @@ initial begin
     put_word(13'h1000 + 13'd84, 32'h0000_3000);
     // and one in the user range, vector 200
     put_word(13'h1000 + 13'd800, 32'h0000_4000);
+    // and vector 192, which is what the FIRST acknowledge cycle would give
+    put_word(13'h1000 + 13'd768, 32'h0000_5000);
+    // vector 4, the System Fault the Invalid Interrupt raises -- Figure 8-2's
+    // "+16 System Fault"
+    put_word(13'h1000 + 13'd16,  32'h0000_6000);
+    // vector 3, the Serious System Fault -- Figure 8-2's "+12"
+    put_word(13'h1000 + 13'd12,  32'h0000_7000);
 
     repeat (4) @(negedge clk);
     rst = 1'b0;
@@ -314,6 +345,94 @@ initial begin
         "with asynchronous system traps held off while it runs");
     chk(word_at(13'h3F8) === e_psw,
         "and the PSW it pushed is the one it found, not the one it built");
+
+    // =======================================================================
+    // A maskable interrupt, whose vector is not the caller's.  "If set, the
+    // uPD70616 will perform a pair of back-to-back interrupt acknowledge
+    // cycles.  On the second interrupt acknowledge cycle, an 8-bit interrupt
+    // vector is read from the external uPD71059 Interrupt Controller and used
+    // as an offset into the System Base Table" (p.3.237).
+    // =======================================================================
+    e_psw  = 32'h0304_0000 | (32'h1 << PSW_IE);
+    e_int  = 1'b1; e_dis = 1'b0; e_ist = 1'b1; e_ackv = 1'b1;
+    e_vec  = 8'd99;                   // and this is ignored outright
+    e_sp   = 32'h0000_0300;
+    e_np   = 2'd0;
+    iack_first  = 8'hC0;              // 192: an entry that exists, and is wrong
+    iack_second = 8'hC8;              // 200: the one the page puts on cycle two
+    take;
+    chk(n_iack == 2,
+        "a maskable interrupt makes a PAIR of interrupt acknowledge cycles");
+    chk(e_int_vec === 8'hC8,
+        "and the vector is the byte from the SECOND of them");
+    chk(e_handler === 32'h0000_4000,
+        "so the handler is vector 200's entry, not vector 192's");
+    chk(!e_invalid, "a vector of 200 is one of the 192 the application owns");
+    chk(word_at(13'h2FC) === e_psw,          "the frame is the PSW");
+    chk(word_at(13'h2F8) === 32'h0000_0110,  "and the return PC, and no more");
+    chk(e_sp_out === 32'h0000_02F8,          "two words");
+    // two acknowledge cycles, two for the vector, four for the frame
+    chk(e_cycles === 4'd8,
+        "and it costs the pair of acknowledge cycles on top of an interrupt");
+    chk(e_psw_out[PSW_IE] === 1'b0,  "it disables further maskable interrupts");
+    chk(e_psw_out[PSW_IS] === 1'b1,  "and runs on the interrupt stack");
+
+    // "An invalid interrupt exception occurs when an external interrupt
+    // controller supplies a system base table vector in the range of 0 to 63"
+    // (§8).  It is the System Fault -- vector 4, code 0400 -- and its frame is
+    // an EXCEPTION's, which Figure 8-5 draws with the code word an interrupt
+    // does not have.
+    e_sp        = 32'h0000_0280;
+    iack_second = 8'd63;              // the top of the reserved range
+    take;
+    chk(e_int_vec === 8'd63,       "the controller supplied a reserved vector");
+    chk(e_invalid,                 "which is the Invalid Interrupt exception");
+    chk(e_handler === 32'h0000_6000,
+        "so the handler is vector 4's entry, the System Fault");
+    chk(word_at(13'h27C) === 32'h0400_0004,
+        "and the frame gains a code word: 0400, with a parameter count of 4");
+    chk(word_at(13'h278) === e_psw,         "then the PSW");
+    chk(word_at(13'h274) === 32'h0000_0110, "then the return PC");
+    chk(e_sp_out === 32'h0000_0274, "three words, where an interrupt pushed two");
+    chk(e_psw_out[PSW_IE] === 1'b0, "Figure 8-5 disables interrupts for it");
+    chk(e_psw_out[PSW_IS] === 1'b1,
+        "and its information still goes on the interrupt stack");
+
+    // 64 is the first vector an application may supply, and is not invalid.
+    e_sp        = 32'h0000_0200;
+    iack_second = 8'd64;
+    put_word(13'h1000 + 13'd256, 32'h0000_2400);
+    take;
+    chk(!e_invalid,               "vector 64 is the first one an application owns");
+    chk(e_handler === 32'h0000_2400, "and it reads its own entry");
+    e_ackv = 1'b0; e_int = 1'b0; e_ist = 1'b0;
+
+    // =======================================================================
+    // The bus fault frame, which is the only one in this tree with a parameter
+    // word above the code: Figure 8-5's "#3 Bus Fault, +12 Exception Address,
+    // +8 Exception Code | 8, +4 PSW, 0 PC", with the note that the exception
+    // address is a physical address.
+    // =======================================================================
+    e_vec  = 8'd3;
+    e_sp   = 32'h0000_0180;
+    e_np   = 2'd1;
+    e_p0   = 32'h00AB_CDEF;           // the address of the cycle that failed
+    e_code = 16'h0313;                // fixed length data read bus error
+    e_dis  = 1'b1;                    // "interrupts disabled"
+    e_ist  = 1'b1;                    // "pushed onto the interrupt stack"
+    take;
+    chk(e_handler === 32'h0000_7000, "the bus fault handler is vector 3's entry");
+    chk(word_at(13'h17C) === 32'h00AB_CDEF,
+        "the Exception Address is pushed first, deepest in the frame");
+    chk(word_at(13'h178) === 32'h0313_0008,
+        "then the code beside a parameter count of 8: two words, eight bytes");
+    chk(word_at(13'h174) === e_psw,         "then the PSW");
+    chk(word_at(13'h170) === 32'h0000_0110, "then the PC");
+    chk(e_sp_out === 32'h0000_0170,  "four words of frame");
+    chk(e_psw_out[PSW_IE] === 1'b0,  "a bus error disables maskable interrupts");
+    chk(e_psw_out[PSW_IS] === 1'b1,
+        "and it runs on the interrupt stack, though it is not an interrupt");
+    e_dis = 1'b0; e_ist = 1'b0; e_np = 2'd0;
 
     if (errors == 0) $display("V60 EXC PASS");
     else             $display("V60 EXC FAIL (%0d errors)", errors);

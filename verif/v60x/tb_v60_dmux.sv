@@ -28,7 +28,7 @@ wire [63:0] b_rdata;
 wire        b_done;
 wire  [3:0] b_cycles;
 
-wire        dx_req, dx_we;
+wire        dx_req, dx_we, dx_intack;
 wire [23:0] dx_addr;
 wire  [3:0] dx_nbytes;
 wire [63:0] dx_wdata;
@@ -40,9 +40,10 @@ wire        overlap;
 v60_dmux dut (
     .a_req(a_req), .a_addr(a_addr), .a_nbytes(a_nbytes), .a_we(a_we),
     .a_wdata(a_wdata), .a_rdata(a_rdata), .a_done(a_done), .a_cycles(a_cycles),
-    .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we),
+    .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we), .b_intack(1'b0),
     .b_wdata(b_wdata), .b_rdata(b_rdata), .b_done(b_done), .b_cycles(b_cycles),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
+    .dx_intack(dx_intack),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles), .overlap(overlap)
 );

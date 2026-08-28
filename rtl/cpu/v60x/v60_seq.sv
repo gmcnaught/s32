@@ -90,6 +90,46 @@
 //  else -- there is no LDPSW, no task switch, and RETIU/RETIS are not here.
 //
 //  ---------------------------------------------------------------------------
+//  The three externally raised conditions
+//  ---------------------------------------------------------------------------
+//  v60_biu has the pins; this has the recognition point.  All three are taken
+//  where the instruction exceptions already are, and all three put their frame
+//  on the INTERRUPT stack -- an interrupt by step (vii) of the recognition
+//  sequence, a bus fault and a system fault by §8's prose, which says of both
+//  groups that "the exception information is pushed onto the interrupt stack".
+//
+//    NMI*  -- vector 2 (Figure 8-2's +8, and the databook's own vector column
+//             at p.3.270).  "At the completion of the current instruction, the
+//             PC and PSW are pushed" (p.3.237), so it is recognised in S_IDLE
+//             and its frame is Figure 8-5's "#2 Non-Maskable Interrupt: PSW,
+//             PC (Next PC)" -- which is `pc`, because S_RETIRE has already
+//             advanced it.
+//
+//    INT   -- masked by PSW.IE, and the vector is not this module's to choose:
+//             it comes off a pair of interrupt acknowledge cycles, which
+//             v60_exc makes.  Holding it off while PSW.IE is clear is the
+//             whole of "any interrupt requests are held pending until unmasked
+//             by software" (p.3.237), because the pin is a level the source
+//             holds until it is acknowledged.
+//
+//    BERR* -- vector 3, the Serious System Fault.  Figure 8-5's "#3 Bus Fault"
+//             frame is the only one in this tree with a parameter word above
+//             the code: "+12 Exception Address, +8 Exception Code | 8, +4 PSW,
+//             0 PC", and the note under it says the exception address is a
+//             physical address -- which is the failed cycle's A23-A0.  The
+//             code is one of the thirteen in the 0300-031E group and says
+//             which KIND of cycle failed, so it is decoded from the status the
+//             bus interface unit reports with the fault.
+//
+//  Two things about the bus fault are marked rather than assumed.  It is
+//  recognised at the first access completion after the fault, which is where
+//  the sequencer can abandon the instruction cleanly -- the faulting
+//  instruction does not retire, and its addressing-mode writeback is dropped
+//  with it -- but a read-modify-write whose read had already completed still
+//  closes with its write, one bus cycle later.  And the double bus error is
+//  not modelled: §8 says the processor halts, and nothing here halts.
+//
+//  ---------------------------------------------------------------------------
 //  What this does not do
 //  ---------------------------------------------------------------------------
 //  * Anything v60_alu does not implement: the multiplies and divides, the
@@ -101,9 +141,8 @@
 //    neither is here; BSR and JSR pair with RSR, which is.
 //  * RETIU and RETIS, which restore the PSW as well as the PC, and belong with
 //    v60_exc when it is wired in.
-//  * Every exception except the three instruction ones below.  There is no
-//    pin for a bus error, an NMI or a maskable interrupt (v60_biu has none),
-//    no MMU to raise a page fault, and no trace or breakpoint machinery.
+//  * The exceptions that need machinery this tree does not have: no MMU, so no
+//    page fault; no trace or breakpoint; no address traps; no coprocessor.
 //  * Two addressing-mode register writebacks in one instruction -- `mov.w
 //    [R1+], [R2+]` -- which needs two retirement slots and has one.  This
 //    stops with STOP_TWO_WB rather than dropping one of them silently.
@@ -111,6 +150,7 @@
 `timescale 1ns/1ps
 
 module v60_seq
+    import v60_bus_pkg::*;
     import v60_fmt_pkg::*;
     import v60_op_pkg::*;
     import v60_am_pkg::*;
@@ -206,6 +246,8 @@ module v60_seq
     output logic [31:0] exc_param1,
     output logic        exc_is_interrupt,
     output logic        exc_disable_ie,
+    output logic        exc_int_stack,
+    output logic        exc_ack_vector,
     input        [31:0] exc_sp_out,
     input        [31:0] exc_psw_out,
     input        [31:0] exc_handler_pc,
@@ -218,6 +260,15 @@ module v60_seq
     output logic        rf_stack_switch,
     output logic  [1:0] rf_new_el,
     output logic        rf_new_is,
+
+    // ---- the externally raised conditions, from v60_biu -----------------------
+    input               nmi_pending,    // latched NMI*, held until taken
+    output logic        nmi_take,
+    input               int_pending,    // the INT level, masked here by PSW.IE
+    input               berr,           // one pulse: a bus cycle faulted
+    input  bus_status_e berr_status,    // which kind of cycle it was
+    input        [23:0] berr_addr,      // and its physical address
+    input               berr_we,
 
     // ---- control transfers ---------------------------------------------------
     // A taken branch flushes the prefetch queue and refills it from the target
@@ -258,6 +309,59 @@ localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
 localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
 localparam logic [15:0] CODE_ILLEGAL_MODE  = 16'h1300;
 
+// The two externally raised vectors this module names.  A maskable interrupt's
+// is not here because it is not chosen here -- it comes off the acknowledge
+// cycles.  Both read off the low end of the system base table, which is the
+// part of Figure 8-2 whose OCR cannot be trusted in either book: taken from
+// the databook's plate at p.3.270, where the vector NUMBER is printed in its
+// own column beside the offset, and cross-checked against the Programmer's
+// Reference's Figure 8-2, which prints the same two rows as offsets +8 and
+// +12.
+//
+//    +8   Non-Maskable Interrupt    vector 2
+//    +12  Serious System Fault      vector 3   -- the bus fault
+localparam logic [7:0] VEC_NMI       = 8'd2;
+localparam logic [7:0] VEC_BUS_FAULT = 8'd3;
+
+// Which exception is being raised, which decides the frame rather than the
+// vector: an interrupt has no code word, a bus fault has a parameter above
+// one, and the three instruction exceptions have neither.
+localparam logic [1:0] EK_INSN = 2'd0;
+localparam logic [1:0] EK_BERR = 2'd1;
+localparam logic [1:0] EK_INT  = 2'd2;
+
+// Table 8-1's Serious System Exceptions, all thirteen, keyed by the bus status
+// of the cycle that failed and its direction.  The group is one code per KIND
+// of cycle, which is exactly what MRQ + ST2-ST0 already says, so the mapping is
+// the two tables laid against each other rather than a choice:
+//
+//   0301 string data write     0311 string data read     0317 instruction fetch
+//   0303 fixed length write    0313 fixed length read    0319 string I/O read
+//   0305 translation write     0314 system base table    031B fixed length I/O
+//   0309 string I/O write      0315 translation read     031E interrupt vector
+//   030B fixed length I/O write
+//
+// A short path access "is substituted for a single mode data access" (p.3.233),
+// so it is a fixed length data access and takes its codes.  There is no system
+// base table WRITE code, and nothing writes one.
+function automatic logic [15:0] berr_code(input bus_status_e st_in,
+                                          input logic       wr);
+    case (st_in)
+        BST_MEM_STRING:                     berr_code = wr ? 16'h0301 : 16'h0311;
+        BST_MEM_SHORT_PATH, BST_MEM_SINGLE: berr_code = wr ? 16'h0303 : 16'h0313;
+        BST_TRANS_TABLE:                    berr_code = wr ? 16'h0305 : 16'h0315;
+        BST_SYS_BASE_TABLE:                 berr_code = 16'h0314;
+        BST_IO_STRING:                      berr_code = wr ? 16'h0309 : 16'h0319;
+        BST_IO_SINGLE:                      berr_code = wr ? 16'h030B : 16'h031B;
+        BST_DEMAND_FETCH, BST_PREFETCH:     berr_code = 16'h0317;
+        BST_INTERRUPT_ACK:                  berr_code = 16'h031E;
+        // The four reserved codes and the two acknowledge statuses are not
+        // cycles this processor issues, so a fault on one is reported as the
+        // ordinary data access it cannot be.
+        default:                            berr_code = wr ? 16'h0303 : 16'h0313;
+    endcase
+endfunction
+
 // A reserved opcode or addressing mode used to stop here.  It is an
 // exception now -- vectors 16 and 18, Figure 8-2 -- so what is left are the
 // three things this sequencer cannot do rather than the ones the architecture
@@ -275,8 +379,9 @@ typedef enum logic [4:0] {
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
 
-    // an exception: switch the stack, take it, then run the handler
-    S_EXC_SW, S_EXC_REQ, S_EXC_W
+    // an exception: switch the stack, let the switch land, take it, then run
+    // the handler
+    S_EXC_SW, S_EXC_SETTLE, S_EXC_REQ, S_EXC_W
 } state_e;
 
 state_e      state;
@@ -293,6 +398,11 @@ logic  [4:0] wb_rn_sel;
 logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
 logic  [7:0] exc_vec_r;   // the exception being raised, and its code
 logic [15:0] exc_code_r;
+logic  [1:0] exc_kind;    // which of the three shapes of frame it wants
+logic        exc_ack_r;   // and whether its vector comes off the bus
+logic        berr_r;      // a bus fault is outstanding
+logic [23:0] berr_addr_r; // where it happened -- the frame's parameter word
+logic [15:0] berr_code_r;
 
 // ---------------------------------------------------------------------------
 // Which operand is the source and which the destination.
@@ -372,6 +482,14 @@ always_ff @(posedge clk) begin
         exc_param1      <= 32'd0;
         exc_is_interrupt<= 1'b0;
         exc_disable_ie  <= 1'b0;
+        exc_int_stack   <= 1'b0;
+        exc_ack_vector  <= 1'b0;
+        exc_kind        <= EK_INSN;
+        exc_ack_r       <= 1'b0;
+        nmi_take        <= 1'b0;
+        berr_r          <= 1'b0;
+        berr_addr_r     <= 24'd0;
+        berr_code_r     <= 16'd0;
         rf_stack_switch <= 1'b0;
         rf_new_el       <= 2'd0;
         rf_new_is       <= 1'b0;
@@ -399,6 +517,17 @@ always_ff @(posedge clk) begin
         redirect  <= 1'b0;
         exc_req         <= 1'b0;
         rf_stack_switch <= 1'b0;
+        nmi_take        <= 1'b0;
+
+        // A bus fault is latched wherever it happens -- a prefetch's cycle is
+        // not one this sequencer is waiting on -- and kept until it is raised.
+        // The first one wins: a second before the first is taken is the double
+        // bus error §8 halts on, and this does not halt.
+        if (berr && !berr_r) begin
+            berr_r      <= 1'b1;
+            berr_addr_r <= berr_addr;
+            berr_code_r <= berr_code(berr_status, berr_we);
+        end
 
         // An addressing mode's register writeback -- the Rn that [Rn+] or
         // [-Rn] moved -- is a single cycle pulse, and v60_ea raises it when
@@ -421,14 +550,58 @@ always_ff @(posedge clk) begin
         end
 
         case (state)
+        // The recognition point.  "At the completion of the current
+        // instruction" (NMI, p.3.237) is here, which is also where the three
+        // instruction exceptions are raised from -- so an externally raised
+        // one is taken instead of starting the next instruction, and the
+        // frame's PC is the one that has not run yet.  The order is Figure
+        // 8-2's: the bus fault is nearer the bottom of the table than the two
+        // interrupts, and a machine that took an interrupt while a fault was
+        // outstanding would run a handler on a broken bus.
         S_IDLE: if (run && !stopped) begin
-            idu_start   <= 1'b1;
             insn_cycles <= 5'd0;
             wb_rn_en    <= 1'b0;
-            state       <= S_FETCH;
+
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else if (nmi_pending) begin
+                exc_kind  <= EK_INT;
+                exc_vec_r <= VEC_NMI;
+                exc_ack_r <= 1'b0;
+                // The pin is an event and v60_biu holds it; taking it here is
+                // what releases it.
+                nmi_take  <= 1'b1;
+                state     <= S_EXC_SW;
+            end else if (int_pending && psw[PSW_IE]) begin
+                // "can be masked by the IE bit in the PSW register.  If the IE
+                // bit is cleared, the INT input is masked and any interrupt
+                // requests are held pending until unmasked by software" --
+                // which needs nothing held here, because INT "must be asserted
+                // until acknowledged".  The vector is the controller's, so
+                // this asks v60_exc for the acknowledge cycles rather than
+                // naming one.
+                exc_kind  <= EK_INT;
+                exc_vec_r <= 8'd0;
+                exc_ack_r <= 1'b1;
+                state     <= S_EXC_SW;
+            end else begin
+                idu_start <= 1'b1;
+                state     <= S_FETCH;
+            end
         end
 
         S_FETCH: if (idu_done) begin
+            // A fault on this instruction's own fetch.  The decode is let
+            // finish -- v60_idu takes `start` only from its idle state, so
+            // abandoning it mid-instruction would drop the next `idu_start`
+            // and hang -- and the instruction is then not executed.
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
             pc      <= idu_pc;
             aop     <= op_alu(idu_op);
             cop     <= op_ctrl(idu_op);
@@ -447,7 +620,8 @@ always_ff @(posedge clk) begin
                     exc_vec_r  <= VEC_RESERVED_MODE;
                     exc_code_r <= CODE_RESERVED_MODE;
                 end
-                state <= S_EXC_SW;
+                exc_kind <= EK_INSN;
+                state    <= S_EXC_SW;
             end else if (op_ctrl(idu_op) != CTRL_NONE) begin
                 state <= S_CTRL;
             end else if (op_alu(idu_op) == ALU_NONE) begin
@@ -463,6 +637,7 @@ always_ff @(posedge clk) begin
                 state       <= S_STOP;
             end else begin
                 state <= S_OP1;
+            end
             end
         end
 
@@ -510,9 +685,17 @@ always_ff @(posedge clk) begin
 
         S_OP1W: begin
             if (ea_done) begin
-                val1        <= ea_rdata;
                 insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
-                state       <= S_OP2;
+                if (berr_r) begin
+                // Abandoned: a bus cycle of this access failed, so the
+                // instruction does not retire and its writeback is dropped.
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+                end else begin
+                    val1  <= ea_rdata;
+                    state <= S_OP2;
+                end
             end
         end
 
@@ -529,6 +712,7 @@ always_ff @(posedge clk) begin
             if (!dst_is_reg && am_is_immediate(dst_mode)) begin
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;
+                exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
             end else if (dst_is_reg) begin
                 // A register destination needs no address and no bus cycle:
@@ -583,12 +767,23 @@ always_ff @(posedge clk) begin
 
         S_OP2W: begin
             if (ea_rmw_pending) begin
+                // A read-modify-write whose read has completed: the access is
+                // still open and closing it is the only way out, so a fault
+                // here is taken one bus cycle later, at S_WBW.
                 val2  <= ea_rdata;
                 state <= S_EXEC;
             end else if (ea_done) begin
-                val2        <= ea_rdata;
                 insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
-                state       <= S_EXEC;
+                if (berr_r) begin
+                // Abandoned: a bus cycle of this access failed, so the
+                // instruction does not retire and its writeback is dropped.
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+                end else begin
+                    val2  <= ea_rdata;
+                    state <= S_EXEC;
+                end
             end
         end
 
@@ -631,7 +826,15 @@ always_ff @(posedge clk) begin
 
         S_WBW: if (ea_done) begin
             insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
-            state       <= S_RETIRE;
+            if (berr_r) begin
+                // Abandoned: a bus cycle of this access failed, so the
+                // instruction does not retire and its writeback is dropped.
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                state <= S_RETIRE;
+            end
         end
 
         // ---- retire ----------------------------------------------------------
@@ -753,7 +956,13 @@ always_ff @(posedge clk) begin
 
         S_CTRL_EAW: if (ea_done) begin
             insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
-            if (cop == CTRL_RSR) begin
+            if (berr_r) begin
+                // Abandoned: a bus cycle of this access failed, so the
+                // instruction does not retire and its writeback is dropped.
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else if (cop == CTRL_RSR) begin
                 target <= ea_rdata[31:0];
                 state  <= S_CTRL_FIN;
             end else if ((cop == CTRL_JSR) && !cpush) begin
@@ -808,31 +1017,84 @@ always_ff @(posedge clk) begin
         S_EXC_SW: begin
             rf_stack_switch <= 1'b1;
             rf_new_el       <= 2'd0;
-            rf_new_is       <= psw[PSW_IS];
+            // An instruction exception's frame goes on the stack the new
+            // execution level names -- L0SP, or IS if that is where it already
+            // was.  The other three go on the interrupt stack outright: an
+            // interrupt by step (vii), a bus fault and a system fault by §8's
+            // prose about each group.
+            rf_new_is       <= (exc_kind == EK_INSN) ? psw[PSW_IS] : 1'b1;
             rf_ra_sel       <= 5'd31;
-            state           <= S_EXC_REQ;
+            state           <= S_EXC_SETTLE;
         end
 
+        // One cycle, and it is not padding.  `rf_stack_switch` is a registered
+        // output, so the register file performs the switch at the end of the
+        // cycle it is HIGH in -- which is this one -- and R31 only reads back
+        // as the new stack pointer in the cycle after.  Without this state,
+        // S_EXC_REQ samples the OLD one and the frame is pushed on the stack
+        // being switched away from.
+        //
+        // That was invisible until now: the three instruction exceptions
+        // switch to the entry they are already on, which the register file
+        // makes a no-op, so the old value and the new one were the same word.
+        // The first exception here that genuinely changes stacks is an
+        // externally raised one.
+        S_EXC_SETTLE: state <= S_EXC_REQ;
+
         S_EXC_REQ: begin
-            exc_req          <= 1'b1;
-            exc_vector       <= exc_vec_r;
+            exc_req    <= 1'b1;
+            exc_vector <= exc_vec_r;
+            exc_psw_in <= psw;
+            exc_sp_in  <= rf_ra;
+            exc_sbr    <= sbr;
+            exc_param1 <= 32'd0;
+
+            case (exc_kind)
+            // Figure 8-5's "#3 Bus Fault": one parameter word above the code,
+            // and it is the physical address of the cycle that failed.  Note 2
+            // of the recognition sequence, and §8 again, disable interrupts.
+            EK_BERR: begin
+                exc_ret_pc       <= pc;
+                exc_nparams      <= 2'd1;
+                exc_code         <= berr_code_r;
+                exc_param0       <= {8'd0, berr_addr_r};
+                exc_is_interrupt <= 1'b0;
+                exc_disable_ie   <= 1'b1;
+                exc_int_stack    <= 1'b1;
+                exc_ack_vector   <= 1'b0;
+                berr_r           <= 1'b0;
+            end
+            // Figure 8-5's "#2 Non-Maskable Interrupt / #64-255 Maskable
+            // Interrupts": the PSW and the Next PC, and nothing else.  `pc` is
+            // the next instruction's, because retirement has already moved it.
+            EK_INT: begin
+                exc_ret_pc       <= pc;
+                exc_nparams      <= 2'd0;
+                exc_code         <= 16'd0;
+                exc_param0       <= 32'd0;
+                exc_is_interrupt <= 1'b1;
+                exc_disable_ie   <= 1'b0;
+                exc_int_stack    <= 1'b1;
+                exc_ack_vector   <= exc_ack_r;
+            end
             // "An exception during the execution of an instruction stacks the
             // PC of the instruction causing the exception (Current PC)", and
             // the Instruction Exceptions frame prints "PC (Current PC)".
-            exc_ret_pc       <= idu_pc;
-            exc_psw_in       <= psw;
-            exc_sp_in        <= rf_ra;
-            exc_sbr          <= sbr;
-            // Parameter count 4: one word, and that word is the exception
-            // code beside the count itself -- so there are no parameter words
-            // ABOVE it, which is what nparams counts.
-            exc_nparams      <= 2'd0;
-            exc_code         <= exc_code_r;
-            exc_param0       <= 32'd0;
-            exc_param1       <= 32'd0;
-            exc_is_interrupt <= 1'b0;
-            exc_disable_ie   <= 1'b0;
-            state            <= S_EXC_W;
+            // Parameter count 4: one word, and that word is the exception code
+            // beside the count itself -- so there are no parameter words ABOVE
+            // it, which is what nparams counts.
+            default: begin
+                exc_ret_pc       <= idu_pc;
+                exc_nparams      <= 2'd0;
+                exc_code         <= exc_code_r;
+                exc_param0       <= 32'd0;
+                exc_is_interrupt <= 1'b0;
+                exc_disable_ie   <= 1'b0;
+                exc_int_stack    <= 1'b0;
+                exc_ack_vector   <= 1'b0;
+            end
+            endcase
+            state <= S_EXC_W;
         end
 
         S_EXC_W: if (exc_done) begin

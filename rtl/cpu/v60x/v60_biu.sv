@@ -27,6 +27,55 @@
 //  of ticks there is no midpoint, and none of the instants above can be
 //  expressed at all.  That is not an implementation preference, it is why the
 //  bus adapter cannot live on clk_sys in this design.
+//
+//  ---------------------------------------------------------------------------
+//  The three externally raised conditions: BERR*, NMI* and INT
+//  ---------------------------------------------------------------------------
+//  Two different kinds of pin arrive here for one reason -- this is the module
+//  that has pins.
+//
+//  BERR* IS a bus signal and belongs to a bus cycle.  "External logic can
+//  assert the BERR* input to indicate the presence of a fault in the current
+//  bus cycle and request a retry of the bus cycle or force an exception if the
+//  bus fault cannot be corrected.  The decision to retry or terminate a bus
+//  cycle with an error is determined by the state of the RT/EP* input pin"
+//  (p.3.236), and RT/EP*'s own entry gives the two levels: "RT/EP* will
+//  determine whether to retry the faulty bus cycle (RT/EP* = 1) or cause an
+//  exception (RT/EP* = 0)" (p.3.237).
+//
+//  WHEN they are sampled is the one place the databook contradicts itself, and
+//  the plate wins.  The BERR* pin's prose says "at the rising edge of the T4
+//  state" (p.3.236).  The AC characteristics table gives tSBEK/tHKBE and
+//  tSRTK/tHKRT as setup and hold to CLK-falling for both pins (p.3.239-40), and
+//  the Bus Error Timing plate on p.3.243 draws the sampling instant in the
+//  middle of the state it labels T4 -- on the falling edge, between the two
+//  state boundaries it ticks above the clock.  Two renderings against one
+//  sentence, and the two are the ones with numbers on them, so BERR* and RT/EP*
+//  are sampled at the FALLING edge of T4: the same midpoint that latches read
+//  data and negates DS*.
+//
+//  A retry needs no state of its own.  Withholding `ack` is the whole of it:
+//  the master is still asserting `req` (v60_dxu holds it until the ack of the
+//  last bus cycle) and v60_bus_arb holds the grant until an ack, so the cycle
+//  ends in TI and starts again from the same latched request -- through
+//  `may_start`, which means an I/O retry still waits out the three-TI recovery
+//  gap.
+//
+//  NMI* and INT are NOT bus signals.  They are asynchronous inputs -- the
+//  databook gives them no setup or hold parameter and no waveform plate, where
+//  READY*, BMODE, HLDRQ*, BERR* and RT/EP* all have both -- so they are
+//  synchronised here and reported as level and pending flags.  The
+//  synchronisers are an implementation necessity and not from a page; what IS
+//  from a page is which of the two is a level and which is an event:
+//
+//    "The NMI* pin is an active low interrupt input that cannot be masked by
+//     software.  At the completion of the current instruction, the PC and PSW
+//     are pushed" (p.3.237)          -- an EVENT, so it latches until taken.
+//
+//    "The INT input is an active high interrupt input that can be masked by
+//     the IE bit ... The INT input must be asserted until acknowledged by the
+//     uPD70616" (p.3.237)            -- a LEVEL, so it is reported as one and
+//                                       nothing here has to remember it.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -72,6 +121,22 @@ module v60_biu
     input               hldrq_n,    // sampled at rising T4 or TI
     output logic        hldak_n,
 
+    // ---- the externally raised conditions ---------------------------------
+    input               berr_n,     // BERR*:  sampled at falling T4
+    input               rt_ep_n,    // RT/EP*: 1 retry the cycle, 0 raise
+    input               nmi_n,      // NMI*:   asynchronous, active low, an event
+    input               int_req,    // INT:    asynchronous, active high, a level
+
+    output logic        berr,       // one pulse: this cycle ended in a fault
+    output bus_status_e berr_status,// what kind of cycle it was -- the code
+    output logic [23:0] berr_addr,  // and where: the frame's Exception Address
+    output logic        berr_we,
+    output logic        berr_retry, // one pulse: the cycle is being re-run
+
+    output logic        nmi_pending,// latched NMI*, held until nmi_take
+    input               nmi_take,
+    output logic        int_pending,// the synchronised INT level
+
     output bus_state_e  state       // observable, for verification
 );
 
@@ -82,6 +147,11 @@ logic  [1:0] io_recovery;          // three TI states between I/O cycles
 logic        short_cycle;          // BMODE sampled low at falling T2
 logic        ready_seen;           // READY* sampled low at falling T3 / TW
 logic        take_hold;            // HLDRQ* sampled low at rising T4 or TI
+
+// The two asynchronous inputs, brought into this clock domain.  Two flops is
+// an implementation necessity, not a databook instant -- see the header.
+logic  [1:0] nmi_sync, int_sync;
+logic        nmi_q;                // for the falling edge NMI* is
 
 assign state = st_r;
 assign busy  = (st_r != T_TI) && (st_r != T_TH);
@@ -147,9 +217,35 @@ always_ff @(posedge clk) begin
         bus_hiz     <= 1'b0;
         hldak_n     <= 1'b1;
         rdata       <= 16'd0;
+        berr        <= 1'b0;
+        berr_retry  <= 1'b0;
+        berr_status <= BST_MEM_SINGLE;
+        berr_addr   <= 24'd0;
+        berr_we     <= 1'b0;
+        nmi_sync    <= 2'b11;       // NMI* is active low: idle is high
+        int_sync    <= 2'b00;
+        nmi_q       <= 1'b1;
+        nmi_pending <= 1'b0;
+        int_pending <= 1'b0;
     end
     else begin
-        ack <= 1'b0;
+        ack        <= 1'b0;
+        berr       <= 1'b0;
+        berr_retry <= 1'b0;
+
+        // -------------------------------------------------------------------
+        // The two asynchronous inputs.  INT is a level the source holds "until
+        // acknowledged"; NMI* is an event, so its assertion edge is latched
+        // and held until the sequencer takes it.  Setting wins over taking in
+        // the same cycle: a request that arrives as one is taken must not be
+        // the one that is lost.
+        // -------------------------------------------------------------------
+        nmi_sync    <= {nmi_sync[0], nmi_n};
+        int_sync    <= {int_sync[0], int_req};
+        nmi_q       <= nmi_sync[1];
+        int_pending <= int_sync[1];
+        if (!nmi_sync[1] && nmi_q) nmi_pending <= 1'b1;
+        else if (nmi_take)         nmi_pending <= 1'b0;
 
         if (ce_rise) begin
             st_r <= st_next;
@@ -237,11 +333,50 @@ always_ff @(posedge clk) begin
                 // "The read data on the D15-D0 inputs is latched internally at
                 // the falling edge of T4 and simultaneously the DS* output is
                 // negated, completing the bus cycle." -- p.3.283
+                //
+                // BERR* and RT/EP* are sampled at this same instant -- the AC
+                // table's tSBEK/tSRTK are setup to CLK-falling and the p.3.243
+                // plate draws the sample in the middle of T4.  See the header
+                // for why the pin prose's "rising edge" is not what is
+                // implemented.
                 T_T4: begin
-                    if (!we_r) rdata <= d_in;
                     ds_n <= 1'b1;
                     d_oe <= 1'b0;
-                    ack  <= 1'b1;
+
+                    if (!berr_n && rt_ep_n) begin
+                        // "retry the faulty bus cycle (RT/EP* = 1)".  No ack:
+                        // the master is still asking and the arbiter still
+                        // holds the grant, so the cycle re-runs from TI on its
+                        // own -- and an I/O cycle waits out its recovery gap
+                        // on the way, because it restarts through `may_start`.
+                        // Read data is NOT latched: the cycle that would have
+                        // produced it failed.
+                        berr_retry <= 1'b1;
+                    end
+                    else begin
+                        if (!we_r) rdata <= d_in;
+                        ack <= 1'b1;
+                        if (!berr_n) begin
+                            // "cause an exception (RT/EP* = 0)".
+                            //
+                            // DECISION, and the one thing in this module that
+                            // no page settles: the cycle is acknowledged
+                            // anyway.  A bus cycle here can only be ended by
+                            // an ack -- it is what releases v60_bus_arb's
+                            // grant and what advances v60_dxu -- and there is
+                            // no abort path to a master, so withholding it
+                            // would wedge the bus rather than abort the
+                            // access.  The access therefore completes with
+                            // whatever the failed cycle returned, and `berr`
+                            // says it is meaningless.  Figure 8-5 marks the
+                            // Bus Fault "Abort", and the abort is the
+                            // sequencer's: v60_seq raises instead of retiring.
+                            berr        <= 1'b1;
+                            berr_status <= status_r;
+                            berr_addr   <= a;
+                            berr_we     <= we_r;
+                        end
+                    end
                 end
                 // "HLDAK a half-clock later" than the TH tri-state -- p.3.292.
                 T_TH: hldak_n <= 1'b0;

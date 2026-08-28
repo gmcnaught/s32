@@ -145,6 +145,91 @@ is idle":
 it, and a defined value keeps simulation free of X-propagation noise that would
 obscure real faults.
 
+## BERR* and RT/EP* — where the book contradicts itself (pp. 3.236–3.243)
+
+Three sources, and they do not all say the same thing.
+
+**The pin prose**, p. 3.236: "External logic can assert the BERR* input to
+indicate the presence of a fault in the current bus cycle and request a retry
+of the bus cycle or force an exception if the bus fault cannot be corrected.
+The decision to retry or terminate a bus cycle with an error is determined by
+the state of the RT/EP* input pin **at the rising edge of the T4 state**."
+
+**The AC characteristics table**, pp. 3.239–3.240, gives four parameters and
+every one of them is referenced to a *falling* edge:
+
+| parameter | symbol | min |
+|---|---|---|
+| BERR* setup to CLK↓ | `tSBEK` | 10 ns |
+| BERR* hold from CLK↓ | `tHKBE` | 20 ns |
+| RT/EP* setup to CLK↓ | `tSRTK` | 10 ns |
+| RT/EP* hold from CLK↓ | `tHKRT` | 20 ns |
+
+(The table has a *second* RT/EP* pair, `tSRFK`/`tHKRF`, referenced to CLK↑.
+That one is for the BFREZ release, which the same pin also decides — see the
+Bus Freeze plate, where it is drawn against a rising edge.)
+
+**The Bus Error Timing plate**, p. 3.243, draws the state boundaries as ticks
+above the clock and labels the period between two of them T4. The valid window
+for BERR* and RT/EP* is drawn in the *middle* of that period, on the falling
+slope, with `tSBEK` before it and `tHKBE` after it.
+
+So two renderings against one sentence, and the two are the ones carrying
+numbers. `v60_biu` samples both pins at the **falling edge of T4** — the same
+midpoint that latches read data and negates DS*.
+
+What each level does, from RT/EP*'s own entry on p. 3.237:
+
+| RT/EP* | bus error action | BFREZ release |
+|---|---|---|
+| 1 | retry | interrupted instruction restart |
+| 0 | exception | machine fault exception |
+
+The retry needs no state of its own in `v60_biu`. Withholding `ack` is the
+whole of it: the master is still asserting `req` and `v60_bus_arb` holds the
+grant until an ack, so the cycle ends in TI and starts again from the same
+latched request — through `may_start`, which means an I/O retry waits out the
+three-TI recovery gap on the way.
+
+**One decision, marked in the source.** On the exception side the cycle *is*
+acknowledged. A bus cycle here can only be ended by an ack — it releases the
+arbiter's grant and advances `v60_dxu` — and there is no abort path to a
+master, so withholding it would wedge the bus rather than abort the access.
+The access completes with whatever the failed cycle returned and `berr` says it
+is meaningless; the abort is `v60_seq`'s, which raises instead of retiring.
+
+`BFREZ` and the machine fault acknowledge status are still not implemented, so
+the right-hand column above is documented and unreachable.
+
+## NMI* and INT — the two asynchronous inputs (p. 3.237)
+
+Neither is a bus signal and neither has a setup or hold parameter or a waveform
+plate, where READY*, BMODE, HLDRQ*, BERR* and RT/EP* all have both. They are
+synchronised in `v60_biu`, which is an implementation necessity and not from a
+page. What *is* from the page is which of the two is an event and which is a
+level:
+
+- **NMI\*** — "an active low interrupt input that cannot be masked by software.
+  At the completion of the current instruction, the PC and PSW are pushed on
+  the stack and control is transferred to a non-maskable interrupt handler."
+  An event: the pin can be gone before the instruction boundary arrives, so
+  `v60_biu` latches its assertion edge and holds it until `nmi_take`.
+- **INT** — "an active high interrupt input that can be masked by the IE bit in
+  the PSW register.  If the IE bit is cleared, the INT input is masked and any
+  interrupt requests are held pending until unmasked by software ... The INT
+  input must be asserted until acknowledged by the µPD70616." A level, and the
+  source is required to hold it, so nothing in the processor has to remember
+  it. "Held pending" is `v60_seq` declining to take it while `PSW.IE` is clear,
+  and no more than that.
+
+Not implemented, and both from the same pages: `BLOCK*`, which "is also
+asserted for the duration of an interrupt acknowledge bus cycle" (p. 3.236) —
+`v60_biu` has no such pin, because TASI and CAXI, its other users, are not
+implemented either — and NMI's own masking rule, "additional non-maskable
+interrupts will not be acknowledged until the processing of the first NMI
+completes and the RETIS instruction is executed" (p. 3.271), which needs a
+RETIS this tree does not have.
+
 ## Open verification item: the 20-clock reset minimum
 
 `RESET` must be held for at least 20 clocks (p. 3.281). Nothing in this tree

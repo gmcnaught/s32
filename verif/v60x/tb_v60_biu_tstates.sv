@@ -57,6 +57,9 @@ v60_biu dut (
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(ready_n), .bmode(bmode), .hldrq_n(hldrq_n), .hldak_n(hldak_n),
+    .berr_n(1'b1), .rt_ep_n(1'b1), .nmi_n(1'b1), .int_req(1'b0),
+    .berr(), .berr_status(), .berr_addr(), .berr_we(), .berr_retry(),
+    .nmi_pending(), .nmi_take(1'b0), .int_pending(),
     .state(state)
 );
 

@@ -35,9 +35,14 @@ reg   [23:0] addr = 24'h0;
 reg    [1:0] dl = 2'b01;
 reg   [15:0] wdata = 16'h0;
 reg          ready_n = 1'b0, bmode = 1'b1, hldrq_n = 1'b1;
+reg          berr_n = 1'b1, rt_ep_n = 1'b1, nmi_n = 1'b1, int_req = 1'b0;
+reg          nmi_take = 1'b0;
 reg   [15:0] d_in = 16'hBEEF;
 
 wire         ack, busy, d_oe, bus_hiz;
+wire         berr, berr_we, berr_retry, nmi_pending, int_pending;
+bus_status_e berr_status;
+wire  [23:0] berr_addr;
 wire  [15:0] rdata, d_out;
 wire  [23:0] a;
 wire   [1:0] dl_o;
@@ -54,6 +59,10 @@ v60_biu dut (
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(ready_n), .bmode(bmode), .hldrq_n(hldrq_n), .hldak_n(hldak_n),
+    .berr_n(berr_n), .rt_ep_n(rt_ep_n), .nmi_n(nmi_n), .int_req(int_req),
+    .berr(berr), .berr_status(berr_status), .berr_addr(berr_addr),
+    .berr_we(berr_we), .berr_retry(berr_retry),
+    .nmi_pending(nmi_pending), .nmi_take(nmi_take), .int_pending(int_pending),
     .state(state)
 );
 
@@ -126,6 +135,18 @@ begin
     repeat (2) @(posedge clk);
 end
 endtask
+
+// The bus error observables.  BCY* falls once per bus cycle, so counting its
+// falling edges is how a retried cycle is told from a completed one.
+integer n_bcy = 0, n_ack = 0, n_berr = 0, n_retry = 0;
+reg     pbcy2 = 1'b1;
+always @(posedge clk) if (!rst) begin
+    if (!bcy_n && pbcy2) n_bcy <= n_bcy + 1;
+    if (ack)             n_ack <= n_ack + 1;
+    if (berr)            n_berr <= n_berr + 1;
+    if (berr_retry)      n_retry <= n_retry + 1;
+    pbcy2 <= bcy_n;
+end
 
 // Count TI states between the end of one cycle and the start of the next.
 integer ti_run = 0, ti_between = 0;
@@ -215,6 +236,108 @@ initial begin
     repeat (DIV*3) @(negedge clk);
     chk(state === T_TI, "bus hold exits through TI");
     chk(!bus_hiz, "outputs driven again after the hold");
+
+    // =====================================================================
+    // BERR* and RT/EP*, at the instant the p.3.243 plate draws them.
+    // =====================================================================
+    // A fault that is present for T2 and T3 and gone by T4 is not a fault:
+    // the pins are sampled once, in T4, and not watched across the cycle.
+    n_bcy = 0; n_ack = 0; n_berr = 0; n_retry = 0;
+    fork
+        do_cycle(BST_MEM_SINGLE, 1'b0, 24'h007000, 16'h0);
+        begin
+            @(negedge clk);
+            wait (state === T_T2); berr_n = 1'b0; rt_ep_n = 1'b0;
+            wait (state === T_T4); berr_n = 1'b1; rt_ep_n = 1'b1;
+        end
+    join
+    chk(n_berr == 0 && n_retry == 0 && n_ack == 1,
+        "BERR* low in T2 and T3 and high in T4 is not a fault");
+
+    // And one that is low at the RISING edge of T4 and high again before its
+    // midpoint is not one either -- which is what separates the plate's
+    // instant from the pin prose's "rising edge of the T4 state".
+    n_bcy = 0; n_ack = 0; n_berr = 0; n_retry = 0;
+    fork
+        do_cycle(BST_MEM_SINGLE, 1'b0, 24'h007002, 16'h0);
+        begin
+            @(negedge clk);
+            wait (state === T_T3); berr_n = 1'b0; rt_ep_n = 1'b0;
+            // Into T4, then away well before tick 3, which is its midpoint.
+            wait (state === T_T4);
+            @(posedge clk); @(posedge clk);
+            berr_n = 1'b1; rt_ep_n = 1'b1;
+        end
+    join
+    chk(n_berr == 0 && n_retry == 0 && n_ack == 1,
+        "BERR* is sampled at the FALLING edge of T4, not the rising one");
+
+    // "retry the faulty bus cycle (RT/EP* = 1)".  The cycle makes no ack and
+    // runs again from the same request; releasing BERR* lets the second one
+    // finish.  Two BCY* assertions, one ack.
+    n_bcy = 0; n_ack = 0; n_berr = 0; n_retry = 0;
+    fork
+        do_cycle(BST_MEM_SINGLE, 1'b0, 24'h007004, 16'h0);
+        begin
+            @(negedge clk);
+            berr_n = 1'b0; rt_ep_n = 1'b1;
+            @(posedge berr_retry);
+            @(negedge clk);
+            berr_n = 1'b1;
+        end
+    join
+    chk(n_retry == 1, "RT/EP* = 1 retries the cycle");
+    chk(n_berr  == 0, "and raises nothing");
+    chk(n_bcy   == 2, "so BCY* is asserted twice: the cycle ran again");
+    chk(n_ack   == 1, "and only the second one acknowledged");
+
+    // "cause an exception (RT/EP* = 0)".  The cycle ends, and says what kind
+    // of cycle it was and where -- the frame's Exception Address.
+    n_bcy = 0; n_ack = 0; n_berr = 0; n_retry = 0;
+    fork
+        do_cycle(BST_IO_SINGLE, 1'b1, 24'h007006, 16'h1234);
+        begin
+            @(negedge clk);
+            berr_n = 1'b0; rt_ep_n = 1'b0;
+            @(posedge berr);
+            @(negedge clk);
+            berr_n = 1'b1; rt_ep_n = 1'b1;
+        end
+    join
+    chk(n_berr  == 1, "RT/EP* = 0 raises instead of retrying");
+    chk(n_retry == 0, "and does not retry");
+    chk(n_bcy   == 1, "the cycle is not run again");
+    chk(n_ack   == 1, "and it is acknowledged, which is what unwedges the bus");
+    chk(berr_status === BST_IO_SINGLE,
+        "the fault carries the status of the cycle that failed");
+    chk(berr_addr === 24'h007006, "and its physical address");
+    chk(berr_we === 1'b1,         "and its direction");
+
+    // =====================================================================
+    // NMI* is an event and INT is a level (p.3.237).
+    // =====================================================================
+    chk(!nmi_pending, "no NMI is pending out of reset");
+    @(negedge clk);
+    nmi_n = 1'b0;
+    repeat (4) @(negedge clk);
+    nmi_n = 1'b1;                       // a pulse, gone before it is taken
+    repeat (4) @(negedge clk);
+    chk(nmi_pending,
+        "NMI* latches: the pin can be gone before the instruction completes");
+    @(negedge clk); nmi_take = 1'b1;
+    @(negedge clk); nmi_take = 1'b0;
+    repeat (2) @(negedge clk);
+    chk(!nmi_pending, "and taking it releases the latch");
+
+    chk(!int_pending, "INT is low");
+    @(negedge clk);
+    int_req = 1'b1;
+    repeat (4) @(negedge clk);
+    chk(int_pending, "INT is reported as a level: the source holds it");
+    @(negedge clk);
+    int_req = 1'b0;
+    repeat (4) @(negedge clk);
+    chk(!int_pending, "and nothing here remembers it once the source drops it");
 
     if (errors == 0) $display("V60 BIU PINS PASS");
     else             $display("V60 BIU PINS FAIL (%0d errors)", errors);

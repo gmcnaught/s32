@@ -15,7 +15,35 @@ rather than inside it and can run at any point.
 
 ---
 
-## Goal 1 — the externally raised exceptions
+## Goal 1 — the externally raised exceptions — **DONE**
+
+**Two corrections to the goal text below, left in place rather than edited out
+because the second is the reason the first was caught.**
+
+The text says NMI's "SBT entry is +12, so vector 3". It is not. The plate at
+databook p. 3.270 prints the vector number in its own column beside the offset,
+and reads `+8` / vector **2** for the Non-Maskable Interrupt and `+12` /
+vector 3 for the **Serious System Fault**, which is where a bus error goes. The
+Programmer's Reference's Figure 8-2 agrees. `docs/v60/EXCEPTIONS.md` carries
+the plate reading.
+
+That is exactly what the text's own instruction — *"Read the bus-error and
+stack-invalid entries off Figure 8-2 before using them: the low end of that
+figure OCRs ambiguously in both books, so check the plate"* — was there to
+catch, and it caught it. A goal that says which of its own claims to verify is
+worth more than one that is right.
+
+The second: the databook's `BERR*` pin prose says the retry-or-raise decision
+is made "at the rising edge of the T4 state", and its own AC table and its own
+p. 3.243 waveform plate both put it on the **falling** edge. The plate wins;
+see `docs/v60/BUS-CYCLE-TIMING.md`.
+
+What landed: the four pins on `v60_biu`, the interrupt acknowledge pair in
+`v60_exc` with the Invalid Interrupt substitution, and the recognition point in
+`v60_seq`, with 18 mutations checked and the whole suite green under both
+simulators. `docs/v60/NEXT-STEPS.md` item 2 is now what is *left* of the group:
+the bus freeze interrupt, the double bus error, NMI's own masking rule, and
+`BLOCK*`.
 
 ```
 Add the externally raised exceptions to the clean-room V60 in

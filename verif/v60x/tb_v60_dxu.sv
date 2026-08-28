@@ -32,7 +32,7 @@ wire ce_rise = !rst && (tick == 3'd0);
 wire ce_fall = !rst && (tick == DIV/2);
 
 // ---- the logical access ----------------------------------------------------
-reg         dreq = 1'b0, dwe = 1'b0, dio = 1'b0;
+reg         dreq = 1'b0, dwe = 1'b0, dio = 1'b0, diack = 1'b0;
 reg  [23:0] daddr = 24'h0;
 reg   [3:0] dn = 4'd1;
 reg  [63:0] dwdata = 64'd0;
@@ -49,7 +49,7 @@ wire  [15:0] biu_wdata, biu_rdata;
 
 v60_dxu dut (
     .clk(clk), .rst(rst),
-    .req(dreq), .addr(daddr), .nbytes(dn), .we(dwe), .io(dio), .wdata(dwdata),
+    .req(dreq), .addr(daddr), .nbytes(dn), .we(dwe), .io(dio), .intack(diack), .wdata(dwdata),
     .rdata(drdata), .busy(dbusy), .done(ddone), .cycles(dcycles),
     .biu_req(biu_req), .biu_status(biu_status), .biu_addr(biu_addr),
     .biu_we(biu_we), .biu_dl(biu_dl), .biu_ube(biu_ube), .biu_first(biu_first),
@@ -74,6 +74,9 @@ v60_biu biu (
     .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(1'b0), .bmode(1'b1), .hldrq_n(1'b1), .hldak_n(hldak_n),
+    .berr_n(1'b1), .rt_ep_n(1'b1), .nmi_n(1'b1), .int_req(1'b0),
+    .berr(), .berr_status(), .berr_addr(), .berr_we(), .berr_retry(),
+    .nmi_pending(), .nmi_take(1'b0), .int_pending(),
     .state(state)
 );
 
@@ -137,7 +140,7 @@ end
 task access(input [23:0] a_in, input [3:0] n, input w, input i_o, input [63:0] wd);
 begin
     @(negedge clk);
-    daddr = a_in; dn = n; dwe = w; dio = i_o; dwdata = wd;
+    daddr = a_in; dn = n; dwe = w; dio = i_o; diack = 1'b0; dwdata = wd;
     ncyc = 0;
     dreq = 1'b1;
     @(negedge clk);
@@ -256,6 +259,34 @@ initial begin
     chk(rec_st[0] === BST_IO_SINGLE, "an I/O access drives single mode I/O status");
     access(24'h000300, 4'd2, 1'b0, 1'b0, 64'd0);
     chk(rec_st[0] === BST_MEM_SINGLE, "a memory access drives single mode memory status");
+
+    // =======================================================================
+    // An interrupt acknowledge cycle.  It is an ordinary one-byte read as far
+    // as everything below this module is concerned; what it changes is the
+    // status code, and "the interrupt acknowledge status is generated during
+    // the pair of interrupt acknowledge bus cycles" (p.3.234).
+    // =======================================================================
+    @(negedge clk);
+    daddr = 24'h000000; dn = 4'd1; dwe = 1'b0; dio = 1'b0; diack = 1'b1;
+    ncyc = 0;
+    dreq = 1'b1;
+    @(negedge clk);
+    while (!ddone) @(negedge clk);
+    dreq = 1'b0;
+    @(negedge clk);
+    chk(dcycles === 4'd1,   "an interrupt acknowledge is one bus cycle");
+    chk(rec_st[0] === {1'b1, 3'b110},
+        "and drives MRQ + ST2-ST0 = 1110, the interrupt acknowledge status");
+    chk(rec_lane[0] === 2'b10,
+        "the vector is eight bits, so it comes off one lane");
+    diack = 1'b0;
+
+    // It is an I/O status -- MRQ is high -- so the recovery gap that separates
+    // "any consecutive pair of I/O bus cycles" (p.3.291) is what makes the
+    // acknowledge PAIR back-to-back rather than adjacent.  Nothing arranges
+    // that; it falls out of the status code.
+    chk(bst_is_io(BST_INTERRUPT_ACK),
+        "an interrupt acknowledge is an I/O cycle, so it takes the recovery gap");
 
     if (errors == 0) $display("V60 DXU PASS");
     else             $display("V60 DXU FAIL (%0d errors)", errors);

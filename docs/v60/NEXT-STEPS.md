@@ -1,7 +1,8 @@
 # What is open, in the order it is worth doing
 
 **Rewritten 2026-08-27**, after the three items this file opened with — control
-flow, wiring `v60_exc` in, and the three recorded gaps — all closed. What they
+flow, wiring `v60_exc` in, and the three recorded gaps — all closed, and
+updated the same day when item 2 below closed too. What they
 were and what closing them turned up is at the bottom, under *What this
 replaced*. `rtl/cpu/v60x/README.md` is the boundary statement: what is
 verified, against which page, by which bench. This file is the other half.
@@ -13,8 +14,8 @@ from a page is marked at the point of decision.
 
 `docs/v60/GOALS.md` is this list in the form the work is started in — four
 paste-ready goal texts, each carrying its own pages and acceptance criteria.
-Its order differs from this file's on purpose: item 2 below is what blocks
-running System 32 code, and item 1 gates nothing.
+Its order differs from this file's on purpose, and its Goal 1 — item 2 below,
+the externally raised exceptions — is **done**; see *What this replaced*.
 
 ---
 
@@ -38,18 +39,28 @@ not, and each is a pair because neither half is useful alone:
 the register file's stack switch, which `v60_seq` already drives on the way
 *in*.
 
-## 2. The externally raised exceptions
+## 2. What is left of the externally raised group
 
-`v60_biu` has `ready_n`, `bmode` and `hldrq_n`, and no `berr`, `int` or `nmi`.
-The bus error, NMI and maskable interrupt families therefore cannot be driven
-end to end whatever the units above them do — `v60_exc` takes `is_interrupt`
-and `disable_ie` as inputs precisely so the behaviour could be built and
-benched before the pins exist, and `tb_v60_exc` does both.
+The bus error, NMI and maskable interrupt families are **done** — see *What
+this replaced*. Four things around them are not, each small and each with its
+page:
 
-Adding them is a bus-unit change and a sequencer change: a pin, the
-recognition point (between instructions, which is where `v60_seq` already
-raises), and the vector. System 32 raises interrupts, so nothing in this tree
-can run that machine's code until this is done.
+- **The bus freeze interrupt**, vector 1. `v60_biu` has no `BFREZ` pin, and the
+  BFREZ side of `RT/EP*` — "restart instruction execution (RT/EP* = 1) or cause
+  an exception (RT/EP* = 0)" on release, p. 3.237 — is documented and
+  unreachable.
+- **The double bus error.** "When a bus error involves the interrupt stack or a
+  second bus error occurs during the processing of the initial bus error ...
+  the processor will halt" (§8). Nothing here halts, and the machine fault
+  acknowledge status the databook says accompanies it (p. 3.234) is never
+  issued. It needs a halt state, which is also what `HALT` and the halt
+  acknowledge status would want.
+- **NMI's own masking.** "Additional non-maskable interrupts will not be
+  acknowledged until the processing of the first NMI completes and the RETIS
+  instruction is executed" (p. 3.271). It needs RETIS, which is item 1.
+- **`BLOCK*`**, which "is also asserted for the duration of an interrupt
+  acknowledge bus cycle" (p. 3.236). Its other users, TASI and CAXI, are not
+  implemented, so the pin would be half of itself.
 
 ## 3. The rest of the instruction set
 
@@ -97,6 +108,26 @@ for this one.
 
 Three items, all closed, and each one turned up something that was not the
 work itself:
+
+**The externally raised exceptions** — `BERR*`, `RT/EP*`, `NMI*` and `INT` on
+`v60_biu`, the interrupt acknowledge pair in `v60_exc`, and the recognition
+point in `v60_seq`, with `docs/v60/EXCEPTIONS.md` and
+`docs/v60/BUS-CYCLE-TIMING.md` for the pages. Three things came out of it that
+were not the work:
+
+- **A defect in already-benched code.** `rf_stack_switch` is a registered
+  output, so `S_EXC_REQ` sampled R31 a cycle before the switch landed and
+  pushed the frame on the stack being switched *away from*. It could not be
+  seen while every exception in the tree switched to the entry it was already
+  on, which the register file makes a no-op.
+- **The databook contradicting itself, and the plate winning.** The `BERR*` pin
+  prose says the decision is made "at the rising edge of the T4 state"; the AC
+  table's four setup and hold parameters and the p. 3.243 waveform both put it
+  on the falling edge. Two renderings with numbers against one sentence.
+- **The goal text being wrong about a vector it warned would be.** `GOALS.md`
+  said NMI's entry is `+12`, vector 3, *and* said to read the low end of
+  Figure 8-2 off the plate before using it. The plate says `+8`, vector 2;
+  `+12` is the Serious System Fault, which is where the bus error goes.
 
 **Control flow** — `Bcc`, `BSR`, `JMP`, `JSR`, `RSR`, `DBcc`, `TB`, with
 `docs/v60/CONTROL-FLOW.md` for the pages. Two defects in already-benched code

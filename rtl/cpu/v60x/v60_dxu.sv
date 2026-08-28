@@ -51,6 +51,15 @@ module v60_dxu
     input         [3:0] nbytes,     // 1, 2, 4 or 8
     input               we,
     input               io,         // I/O address space rather than memory
+    // An interrupt acknowledge cycle rather than a data access.  It is issued
+    // here and not from a unit of its own because it IS a read that a master
+    // wants the answer to, and everything below this port -- the lane decode,
+    // FAS*, the arbiter, the recovery gap -- is the same machinery.  What
+    // changes is the status code, which is the one thing the databook gives
+    // it: "the interrupt acknowledge status is generated during the pair of
+    // interrupt acknowledge bus cycles" (p.3.234).  Its caller issues two
+    // one-byte reads and keeps the second; see v60_exc.
+    input               intack,
     input        [63:0] wdata,
 
     output logic [63:0] rdata,
@@ -75,7 +84,7 @@ logic [23:0] cur;      // address of the next bus cycle
 logic  [3:0] rem;      // bytes of the logical access still to move
 logic  [3:0] pos;      // bytes already moved
 logic  [3:0] len_r;    // the logical length, held for DL and for FAS*
-logic        io_r, we_r;
+logic        io_r, we_r, iack_r;
 logic [63:0] buf_r;
 logic        req_d;
 
@@ -98,8 +107,9 @@ always_comb begin
 end
 
 always_comb begin
-    if (io_r) biu_status = BST_IO_SINGLE;
-    else      biu_status = BST_MEM_SINGLE;
+    if (iack_r)    biu_status = BST_INTERRUPT_ACK;
+    else if (io_r) biu_status = BST_IO_SINGLE;
+    else           biu_status = BST_MEM_SINGLE;
 end
 
 assign biu_addr = cur;
@@ -138,6 +148,7 @@ always_ff @(posedge clk) begin
         len_r   <= 4'd0;
         io_r    <= 1'b0;
         we_r    <= 1'b0;
+        iack_r  <= 1'b0;
         buf_r   <= 64'd0;
         rdata   <= 64'd0;
         cycles  <= 4'd0;
@@ -153,6 +164,7 @@ always_ff @(posedge clk) begin
             pos     <= 4'd0;
             len_r   <= nbytes;
             io_r    <= io;
+            iack_r  <= intack;
             we_r    <= we;
             buf_r   <= we ? wdata : 64'd0;
             cycles  <= 4'd0;
