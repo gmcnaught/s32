@@ -659,6 +659,30 @@ afterwards.
 
 ## Interruptibility — the structural finding
 
+> **Correction, added after `docs/v60/DECIMAL.md` counted the corpus.** This
+> section originally read the group as interruptible. Only three of the eight
+> are. The sentence "to minimize the interrupt latency time, the ... instruction
+> allows the service of interrupts and faults following the completion of a bus
+> cycle" appears on **exactly thirteen** pages of the Programmer's Reference,
+> and they are the ten bit string pages plus **`CMPC`, `CMPCF` and `CMPCS`** —
+> the three character *comparisons*. `MOVC`, `MOVCF`, `MOVCS`, `SCHC` and
+> `SKPC` do not carry it.
+>
+> Verified by counting the whole text: thirteen occurrences, owned by ANDBS,
+> ANDNBS, CMPC, CMPCF, CMPCS, MOVBS, NOTBS, ORBS, ORNBS, SCH0BS, SCH1BS, XORBS,
+> XORNBS.
+>
+> Why the moves and searches are omitted is **not explained on any page held
+> here**, and it is odd: `MOVC` is as variable-length as `CMPC` and has the same
+> reason to want a bounded interrupt latency. Two readings are open — NEC
+> documented it only where it mattered most, or the moves genuinely run to
+> completion — and nothing distinguishes them. Recorded rather than guessed.
+>
+> The consequence for this tree is a smaller one than this section first
+> claimed: thirteen instructions need the mid-instruction exception entry path
+> described in `docs/v60/BIT-STRING.md`, not eighteen.
+
+
 **Yes, and in two different strengths, both stated on the pages.**
 
 The three `MOV` instructions and the two scan instructions say:
