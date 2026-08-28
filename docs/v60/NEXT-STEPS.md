@@ -54,10 +54,11 @@ page:
 
 In rough order of how much machinery each needs:
 
-- **`MUL`, `MULU`, `DIV`, `DIVU`, `REM`, `REMU` and the `X` forms.** Not one
-  cycle of combinational logic, so they need a multi-cycle unit and a sequencer
-  state to hold it. The generated table already reports `ALU_NONE` for them and
-  `v60_seq` stops rather than inventing an answer.
+- **The `X` forms of the multiplies and divides** — `MULX`, `MULUX`, `DIVX`,
+  `DIVUX`. The other six are done (see *What this replaced*); these four are
+  waiting on item 4 below, because their destination is a doubleword. `DIVX`
+  is the one that needs it most visibly: it writes a quotient into the low word
+  of its destination and a remainder into the high word.
 - **The bit-string group.** All ten subops are read (see
   `docs/v60/INSTRUCTION-DECODE.md`) and none is executed. They are the first
   instructions here that are *interruptible mid-execution* — "to minimize the
@@ -96,6 +97,16 @@ for this one.
 
 Three items, all closed, and each one turned up something that was not the
 work itself:
+
+**The multiplies and divides** — `MUL`, `MULU`, `DIV`, `DIVU`, `REM` and
+`REMU` in `v60_muldiv`, with `docs/v60/MULTIPLY-DIVIDE.md` for the pages, and
+the Integer Arithmetic Exception as `v60_exc`'s second raise site — the first
+that is not a decode failure. Two divergences from MAME came out of it, both
+where the pages are explicit and the emulator is not: a divide by zero raises,
+and `MUL`'s overflow is a signed fit. And the exhaustive byte sweep passed on
+the first run while the word boundaries did not: a shift-add multiplier's
+accumulator needs 65 bits, and the defect was invisible at exactly the width
+that was checked most.
 
 **The two return pairs** — `CALL`/`RET` and `RETIU`/`RETIS`, on one stack
 engine, with `docs/v60/RETURN-PAIRS.md` for the pages. Three of the four claims

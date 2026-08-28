@@ -412,6 +412,12 @@ EXEC_OP = {
     'CMP': 'CMP', 'TEST': 'TEST', 'NEG': 'NEG',
     'AND': 'AND', 'OR': 'OR', 'XOR': 'XOR', 'NOT': 'NOT',
     'MOV.B': 'MOV', 'MOV.H': 'MOV', 'MOV.W': 'MOV', 'MOV.D': 'MOV',
+    # v60_muldiv's, which is not combinational.  The X forms are deliberately
+    # NOT here: their destination is a doubleword, "a register pair, low
+    # register first" (S3), and nothing in this tree addresses one yet.
+    'MUL': 'MUL', 'MULU': 'MULU',
+    'DIV': 'DIV', 'DIVU': 'DIVU',
+    'REM': 'REM', 'REMU': 'REMU',
     # The shift group.  Their source operand is the count and their
     # destination is what moves, which is the pairing v60_alu's x and y
     # already are.  See docs/v60/SHIFTS.md.

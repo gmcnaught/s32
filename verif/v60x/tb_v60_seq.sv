@@ -484,10 +484,20 @@ initial begin
     mem[11'h12D] = 8'hAD; mem[11'h12E] = 8'hA0; mem[11'h12F] = 8'hF4;
     mem[11'h130] = 8'h04; mem[11'h131] = 8'h69;
     // MUL.b #2, R8          81 A0 F4 02 68
-    //   Decoded and addressed, and not one of the operations v60_alu
-    //   implements, so the sequencer stops rather than inventing one.
+    //   R8 holds 0xB6 by now, which is -74 as a signed byte, so the product is
+    //   -148: it does not fit a signed byte and OV is set, and the byte that
+    //   is stored is the low one.
     mem[11'h132] = 8'h81; mem[11'h133] = 8'hA0; mem[11'h134] = 8'hF4;
     mem[11'h135] = 8'h02; mem[11'h136] = 8'h68;
+    // MULX #2, R8           86 A0 F4 02 00 00 00 68
+    //   The X form, whose destination is a DOUBLEWORD -- "a register pair, low
+    //   register first" -- and nothing in this tree addresses one.  So it is
+    //   decoded and addressed and not executed, which is what the previous
+    //   occupant of this test was for.  Its source is a word, so its immediate
+    //   is four bytes where MUL.b's was one.
+    mem[11'h137] = 8'h86; mem[11'h138] = 8'hA0; mem[11'h139] = 8'hF4;
+    mem[11'h13A] = 8'h02; mem[11'h13B] = 8'h00; mem[11'h13C] = 8'h00;
+    mem[11'h13D] = 8'h00; mem[11'h13E] = 8'h68;
 
     // A second program, in Format I -- one mod field and one register, with
     // `d` saying which way round.  R8 is set up as a pointer, R9 and R10 hold
@@ -793,6 +803,50 @@ initial begin
     // RETIU #0   EA E0   -- not privileged, so at execution level 3 it runs
     mem[11'h5C8] = 8'hEA; mem[11'h5C9] = 8'hE0;
 
+    // ---- a seventh program, at 0x440: the multiplies and divides ------------
+    // SBT entry 21, Integer Arithmetic Exception (Figure 8-2's +84) -> 0x1C0.
+    // BRKV's page confirms the vector independently: "PC <- [ Exception
+    // Vector 21 ]", and 84 = 4 x 21.
+    mem[11'h054] = 8'hC0; mem[11'h055] = 8'h01;
+    // handler 21: MOV.B #0xC1, [R8] ; RETIS #8
+    //   Four words of frame -- the Current PC above the code word, then the
+    //   PSW, then the Next PC -- so eight bytes are left to discard after the
+    //   PC and PSW are popped, which is the count Figure 8-5 prints for it.
+    mem[11'h1C0] = 8'h09; mem[11'h1C1] = 8'h80; mem[11'h1C2] = 8'hF4;
+    mem[11'h1C3] = 8'hC1; mem[11'h1C4] = 8'h68;
+    mem[11'h1C5] = 8'hFA; mem[11'h1C6] = 8'hE8;
+    // MOV.W #0x600, R31
+    mem[11'h440] = 8'h2D; mem[11'h441] = 8'hA0; mem[11'h442] = 8'hF4;
+    mem[11'h443] = 8'h00; mem[11'h444] = 8'h06; mem[11'h445] = 8'h00;
+    mem[11'h446] = 8'h00; mem[11'h447] = 8'h7F;
+    // MOV.W #0x700, R8
+    mem[11'h448] = 8'h2D; mem[11'h449] = 8'hA0; mem[11'h44A] = 8'hF4;
+    mem[11'h44B] = 8'h00; mem[11'h44C] = 8'h07; mem[11'h44D] = 8'h00;
+    mem[11'h44E] = 8'h00; mem[11'h44F] = 8'h68;
+    // MOV.W #100, R9
+    mem[11'h450] = 8'h2D; mem[11'h451] = 8'hA0; mem[11'h452] = 8'hF4;
+    mem[11'h453] = 8'h64; mem[11'h454] = 8'h00; mem[11'h455] = 8'h00;
+    mem[11'h456] = 8'h00; mem[11'h457] = 8'h69;
+    // MUL.w #7, R9        85 A0 F4 07 00 00 00 69   -> 700
+    mem[11'h458] = 8'h85; mem[11'h459] = 8'hA0; mem[11'h45A] = 8'hF4;
+    mem[11'h45B] = 8'h07; mem[11'h45C] = 8'h00; mem[11'h45D] = 8'h00;
+    mem[11'h45E] = 8'h00; mem[11'h45F] = 8'h69;
+    // DIV.w #3, R9        A5 ...                    -> 233
+    mem[11'h460] = 8'hA5; mem[11'h461] = 8'hA0; mem[11'h462] = 8'hF4;
+    mem[11'h463] = 8'h03; mem[11'h464] = 8'h00; mem[11'h465] = 8'h00;
+    mem[11'h466] = 8'h00; mem[11'h467] = 8'h69;
+    // REM.w #3, R9        54 ...                    -> 233 % 3 = 2
+    mem[11'h468] = 8'h54; mem[11'h469] = 8'hA0; mem[11'h46A] = 8'hF4;
+    mem[11'h46B] = 8'h03; mem[11'h46C] = 8'h00; mem[11'h46D] = 8'h00;
+    mem[11'h46E] = 8'h00; mem[11'h46F] = 8'h69;
+    // DIV.w #0, R9        A5 ...                    -> the Zero Divide exception
+    mem[11'h470] = 8'hA5; mem[11'h471] = 8'hA0; mem[11'h472] = 8'hF4;
+    mem[11'h473] = 8'h00; mem[11'h474] = 8'h00; mem[11'h475] = 8'h00;
+    mem[11'h476] = 8'h00; mem[11'h477] = 8'h69;
+    // MOV.B #0x21, [R8]   where the handler returns to: the NEXT instruction
+    mem[11'h478] = 8'h09; mem[11'h479] = 8'h80; mem[11'h47A] = 8'hF4;
+    mem[11'h47B] = 8'h21; mem[11'h47C] = 8'h68;
+
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
     mem[11'h612] = 8'h00; mem[11'h613] = 8'h00;
@@ -865,12 +919,22 @@ initial begin
     chk(seq_pc === 32'h00000132,
         "and its immediate is one byte too, because the COUNT is the byte");
 
-    // ---- 9. something it cannot execute -----------------------------------------
+    // ---- 9. a multiply, which is not one cycle of combinational logic ----------
+    step;
+    chk(!stopped,                    "MUL.b executes");
+    chk(rf.gpr[8] === 32'h0000_006C, "-74 x 2 stores the low byte of -148");
+    chk(seq_psw[PSW_OV] === 1'b1,
+        "and OV is set, because -148 does not fit within a signed byte");
+    chk(seq_psw[PSW_S] === 1'b0,     "the stored byte's MSB is clear");
+    chk(seq_psw[PSW_Z] === 1'b0,     "and it is not zero");
+    chk(seq_pc === 32'h00000137,     "the PC advances by the instruction's length");
+
+    // ---- 10. something it cannot execute ---------------------------------------
     step;
     chk(stopped === 1'b1,
-        "a multiply is decoded and addressed and not executed");
+        "the X form is decoded and addressed and not executed");
     chk(stop_reason === 2'd0,
-        "and it says why: the table has the opcode, v60_alu does not have the operation");
+        "and it says why: the table has the opcode, no unit has the operation");
 
     // ---- 10. a format whose semantics are not documented -------------------------
     // Format I's `d` bit decides which operand is the destination and no page
@@ -1371,6 +1435,56 @@ initial begin
     chk(seq_pc === 32'h000007E0,   "a failed READ raises the same vector");
     chk(mem_word(13'h678) === 32'h03130008,
         "with the fixed length data READ code instead");
+
+    // =======================================================================
+    // The multiplies and divides, off the bus, and the exception one of them
+    // raises.  The arithmetic is tb_v60_muldiv's; what is here is that the
+    // sequencer waits for a unit that is not combinational, and that a divide
+    // by zero reaches its handler.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step; step;                      // R31, R8, R9 = 100
+    chk(rf.gpr[9] === 32'd100,  "the setup ran");
+    step;
+    chk(rf.gpr[9] === 32'd700,  "MUL.w multiplied, and the sequencer waited for it");
+    chk(seq_psw[PSW_OV] === 1'b0, "700 fits a word");
+    chk(seq_pc === 32'h00000460, "and the PC advanced by the instruction's length");
+    step;
+    chk(rf.gpr[9] === 32'd233,  "DIV.w divided, truncating toward zero");
+    chk(seq_psw[PSW_OV] === 1'b0, "and did not overflow");
+    step;
+    chk(rf.gpr[9] === 32'd2,    "REM.w left 233 % 3");
+    chk(seq_psw[PSW_OV] === 1'b0, "with OV cleared, which its page prints outright");
+
+    psw_before = seq_psw;
+    step;
+    chk(!stopped, "a divide by zero raises rather than stopping");
+    chk(seq_pc === 32'h000001C0,
+        "and the handler is SBT entry 21's, which BRKV's page names independently");
+    chk(rf.gpr[9] === 32'd2,
+        "the destination operand remains unchanged");
+    // Figure 8-5's Arithmetic Exceptions frame: "+12 PC (Current PC) /
+    // +8 Exception Code | 8 / +4 PSW / PC (Next PC)".
+    chk(mem_word(13'h5FC) === 32'h00000470,
+        "the Current PC is a PARAMETER above the code word, not the return PC");
+    chk(mem_word(13'h5F8) === 32'h15000008,
+        "the code is 1500, integer zero divide, beside a parameter count of 8");
+    chk(mem_word(13'h5F4) === psw_before, "then the PSW");
+    chk(mem_word(13'h5F0) === 32'h00000478,
+        "and the NEXT PC on top, so the handler returns past the divide");
+    chk(rf.gpr[31] === 32'h000005F0, "four words of frame");
+    chk(seq_psw[PSW_IS] === 1'b0,
+        "an arithmetic exception is not an interrupt: it stays on the level stack");
+    step;
+    chk(mem[11'h700] === 8'hC1, "the handler runs");
+    step;
+    chk(seq_pc === 32'h00000478, "and RETIS #8 returns past the divide");
+    chk(rf.gpr[31] === 32'h00000600,
+        "with the count discarding the code word and the parameter above it");
+    step;
+    chk(mem[11'h700] === 8'h21, "and the program continues");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

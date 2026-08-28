@@ -125,7 +125,25 @@ Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
 solve yourself.
 ```
 
-## Goal 3 — the multiplies and divides
+## Goal 3 — the multiplies and divides — **DONE** (the six; not the X forms)
+
+The six the goal text names are in `v60_muldiv`; `MULX`, `MULUX`, `DIVX` and
+`DIVUX` are not, and the paragraph below says why they would need something
+this tree does not have — a doubleword register pair, which is
+`docs/v60/NEXT-STEPS.md`'s own item 4. They are still decoded and addressed and
+stopped on, which `tb_v60_seq` checks.
+
+What the work found, in `docs/v60/MULTIPLY-DIVIDE.md`:
+
+- **Two divergences from MAME**, both where the pages are explicit. A divide by
+  zero **raises** — every one of the four divide pages lists Zero Divide, Table
+  8-1 gives it code 1500 and Figure 8-2 puts vector 21 at +84 — where MAME
+  leaves the destination alone and does not trap. And `MUL`'s overflow is the
+  **signed** fit its page describes, where MAME's test is an unsigned one that
+  reports overflow for `MUL.W -1, 1`.
+- **The exhaustive byte sweep passed and the word boundaries did not.** A
+  shift-add multiplier's accumulator needs 65 bits, and the missing one was
+  invisible at exactly the width that was checked most.
 
 The first execution unit here that is not one cycle of combinational logic,
 and the first exception raised by something other than a decode failure.

@@ -2,8 +2,10 @@
 //  v60_alu_pkg -- the integer operations v60_alu implements.
 //
 //  One value per instruction whose Condition Codes block has been read off the
-//  page.  The multiplies and divides are not here because they are not one
-//  cycle of combinational logic.
+//  page.  Most of them are v60_alu's, which is combinational; the six at the
+//  bottom are v60_muldiv's, which is not -- they are in the same enum because
+//  the generated table has one column for "what does this opcode do", and
+//  splitting it would put the same question in two places.
 //============================================================================
 `ifndef V60_ALU_PKG_SV
 `define V60_ALU_PKG_SV
@@ -37,6 +39,14 @@ typedef enum logic [4:0] {
     ALU_MOVS = 5'd16,   // sign extended to the destination's length
     ALU_MOVZ = 5'd17,   // zero extended
     ALU_MOVT = 5'd18,   // truncated, and OV if the bits dropped disagree
+    // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
+    // docs/v60/MULTIPLY-DIVIDE.md.
+    ALU_MUL  = 5'd19,
+    ALU_MULU = 5'd20,
+    ALU_DIV  = 5'd21,
+    ALU_DIVU = 5'd22,
+    ALU_REM  = 5'd23,
+    ALU_REMU = 5'd24,
     // Not one of the operations implemented here.
     ALU_NONE = 5'd31
 } alu_op_e;

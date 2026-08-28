@@ -202,6 +202,14 @@ register file, the address unit and the ALU, and retires it.
 | RETIS privileged and RETIU not, which is their only difference | §7 Exceptions | `tb_v60_seq` |
 | returning to a more privileged level raising Illegal Data Field | §7 RETIU | `tb_v60_seq` |
 | AP being R29 | §7 RET, p. 3.247 | `tb_v60_seq` |
+| MUL / MULU / DIV / DIVU / REM / REMU, byte width exhaustively | §7 blocks | `tb_v60_muldiv` |
+| and halfword and word at their boundaries — 394,416 checks | §7 blocks | `tb_v60_muldiv` |
+| MUL's overflow being a SIGNED fit, where MAME's is unsigned | §7 MUL | `tb_v60_muldiv` |
+| the negative maximum divided by −1 setting OV and writing nothing | §7 DIV | `tb_v60_muldiv` |
+| a remainder taking the sign of the dividend | §7 REM | `tb_v60_muldiv` |
+| a divide by zero raising vector 21, where MAME does not trap | §7 + Table 8-1 | `tb_v60_muldiv`, `tb_v60_seq` |
+| its frame: the Current PC as a PARAMETER and the Next PC on top | Fig 8-5 | `tb_v60_seq` |
+| the sequencer waiting for a unit that is not combinational | — | `tb_v60_seq`, `tb_v60_muldiv` |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
@@ -240,12 +248,14 @@ that turns one operand reference into bus cycles, an instruction stream, a
 decoder, enough architectural state and datapath to execute the integer
 two-operand instructions of Formats I and II including the shift group and the
 conversions, the control transfers that make a sequence of them a program —
-all three return pairs among them — three of the instruction exceptions, and
-the three externally raised ones.
+all three return pairs among them — the multiplies and divides of the integer
+set, four of the instruction exceptions, the integer arithmetic one, and the
+three externally raised ones.
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
-piece would take. In short: the multiplies and divides and everything outside
-the integer set, and a doubleword operand's register pair.
+piece would take. In short: everything outside the integer set, and a
+doubleword operand's register pair — which is what the X forms of the
+multiplies and divides are waiting on.
 
 Of the externally raised group, what is missing is the bus freeze interrupt
 (vector 1, and `v60_biu` has no `BFREZ` pin), the double bus error (§8 halts;
@@ -295,6 +305,14 @@ no doubleword code, so an eight-byte operand is driven as `word` and treated as
 two logical word accesses for FAS*; and the split walks upward from the
 operand's address, which nothing observable here depends on but a bus analyser
 would see.
+
+`v60_muldiv` makes one, and it is not a reading of a page but a divergence
+from MAME on two counts, both in `docs/v60/MULTIPLY-DIVIDE.md`: a divide by
+zero **raises** here, where MAME leaves the destination alone and does not
+trap; and `MUL`'s overflow is the **signed** fit its page describes, where
+MAME's test is an unsigned one that reports overflow for `MUL.W -1, 1`. Three
+NEC statements against an emulator's omission in the first case, and one
+sentence against a different reading of it in the second.
 
 A third table defect turned up with the return pairs, and it is the shift
 group's twice over: `RETIU` and `RETIS` were given a **word** operand from the

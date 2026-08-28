@@ -21,7 +21,7 @@ this tree can reach:
 | `+72` | Reserved Addressing Mode | 18 | `1200` |
 | `+76` | Illegal Addressing Mode | 19 | `1300` |
 | `+80` | Illegal Data Field | 20 | `1400` |
-| `+84` | Integer Arithmetic | 21 | — |
+| `+84` | Integer Arithmetic | 21 | `1500` zero divide |
 | `+256`–`+1020` | Application Interrupt Vectors | 64–255 | — |
 
 ### The low end of that figure, and why it needs the plate
@@ -245,6 +245,23 @@ save into the entry the old `{IS, EL}` names, load from the entry the new one
 does — and a switch to the same entry is a no-op there, which is the ordinary
 case in this tree: it runs at execution level 0 and these exceptions handle at
 execution level 0.
+
+## The Arithmetic Exceptions frame is a different shape again
+
+Figure 8-5 gives vector 21 the frame BRKV's operation prints:
+
+```
+   +12   PC (Current PC)
+   +8    Exception Code  |  8
+   +4    PSW
+    0    PC (Next PC)
+```
+
+The Current PC is a **parameter** above the code word, and the return address
+on top is the **Next** PC — the opposite way round from the Instruction
+Exceptions, whose return address is the Current PC and which have no parameter
+at all. So a zero-divide handler returns past the instruction that divided.
+`docs/v60/MULTIPLY-DIVIDE.md` has the rest.
 
 ## The frame is popped by RETIS and RETIU
 

@@ -179,10 +179,11 @@
 //  ---------------------------------------------------------------------------
 //  What this does not do
 //  ---------------------------------------------------------------------------
-//  * Anything v60_alu does not implement: the multiplies and divides, the
-//    shifts and rotates, and every instruction outside the integer set.  The
-//    generated table says which by returning ALU_NONE, and this stops on it
-//    rather than doing something arbitrary.
+//  * Anything neither v60_alu nor v60_muldiv implements.  The generated table
+//    says which by returning ALU_NONE, and this stops on it rather than doing
+//    something arbitrary.  The X forms of the multiplies and divides are among
+//    them: their destination is a doubleword register pair and nothing here
+//    addresses one.
 //  * The exceptions that need machinery this tree does not have: no MMU, so no
 //    page fault; no trace or breakpoint; no address traps; no coprocessor.
 //  * Two addressing-mode register writebacks in one instruction -- `mov.w
@@ -351,11 +352,14 @@ localparam logic [7:0] VEC_PRIVILEGED    = 8'd17;
 localparam logic [7:0] VEC_RESERVED_MODE = 8'd18;
 localparam logic [7:0] VEC_ILLEGAL_MODE  = 8'd19;
 localparam logic [7:0] VEC_ILLEGAL_DATA  = 8'd20;
+// +84  Integer Arithmetic Exception       vector 21   code 1500 (zero divide)
+localparam logic [7:0] VEC_INT_ARITH     = 8'd21;
 localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
 localparam logic [15:0] CODE_PRIVILEGED    = 16'h1100;
 localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
 localparam logic [15:0] CODE_ILLEGAL_MODE  = 16'h1300;
 localparam logic [15:0] CODE_ILLEGAL_DATA  = 16'h1400;
+localparam logic [15:0] CODE_ZERO_DIVIDE   = 16'h1500;
 
 // The two externally raised vectors this module names.  A maskable interrupt's
 // is not here because it is not chosen here -- it comes off the acknowledge
@@ -377,6 +381,11 @@ localparam logic [7:0] VEC_BUS_FAULT = 8'd3;
 localparam logic [1:0] EK_INSN = 2'd0;
 localparam logic [1:0] EK_BERR = 2'd1;
 localparam logic [1:0] EK_INT  = 2'd2;
+// Figure 8-5's Arithmetic Exceptions frame, which is BRKV's operation printed
+// as a diagram: "+12 PC (Current PC) / +8 Exception Code | 8 / +4 PSW /
+// PC (Next PC)".  One parameter word, and it is the Current PC -- so unlike
+// the Instruction Exceptions, the return PC on top is the NEXT one.
+localparam logic [1:0] EK_ARITH = 2'd3;
 
 // Table 8-1's Serious System Exceptions, all thirteen, keyed by the bus status
 // of the cycle that failed and its direction.  The group is one code per KIND
@@ -422,7 +431,7 @@ typedef enum logic [5:0] {
     S_IDLE, S_FETCH,
     S_OP1, S_OP1R, S_OP1S, S_OP1W,     // describe, read registers, start, wait
     S_OP2, S_OP2R, S_OP2S, S_OP2W,
-    S_EXEC, S_WB, S_WBW, S_RETIRE, S_STOP,
+    S_EXEC, S_MD, S_WB, S_WBW, S_RETIRE, S_STOP,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -516,6 +525,36 @@ v60_alu alu (
     .result(alu_result), .flags_out(alu_flags), .writes(alu_writes)
 );
 
+// The six that are not one cycle of combinational logic.  They take the same
+// two operand values and produce the same three things -- a result, four flags
+// and whether the destination is written at all -- so everything downstream of
+// S_WB is unchanged and only the wait is new.
+wire        md_is    = (aop == ALU_MUL)  || (aop == ALU_MULU) ||
+                       (aop == ALU_DIV)  || (aop == ALU_DIVU) ||
+                       (aop == ALU_REM)  || (aop == ALU_REMU);
+logic       md_start;
+wire        md_done, md_busy, md_writes, md_zero_div;
+wire [31:0] md_result;
+wire  [3:0] md_flags;
+
+v60_muldiv muldiv (
+    .clk(clk), .rst(rst),
+    .start(md_start), .op(aop), .opbytes(alu_bytes),
+    .x(val1[31:0]), .y(val2[31:0]), .flags_in(psw_flags(psw)),
+    .result(md_result), .flags_out(md_flags), .writes(md_writes),
+    .zero_div(md_zero_div), .busy(md_busy), .done(md_done)
+);
+
+// What S_WB and S_RETIRE see: the combinational unit's answer, or the
+// iterative one's, held from the cycle it finished in.
+logic [31:0] md_result_r;
+logic  [3:0] md_flags_r;
+logic        md_writes_r, md_zd_r, md_used;
+
+wire [31:0] eff_result = md_used ? md_result_r : alu_result;
+wire  [3:0] eff_flags  = md_used ? md_flags_r  : alu_flags;
+wire        eff_writes = md_used ? md_writes_r : alu_writes;
+
 
 always_ff @(posedge clk) begin
     if (rst) begin
@@ -574,6 +613,12 @@ always_ff @(posedge clk) begin
         wb_rn_sel     <= 5'd0;
         ea_rn_sel     <= 5'd0;
         wb_rn_val     <= 32'd0;
+        md_start      <= 1'b0;
+        md_result_r   <= 32'd0;
+        md_flags_r    <= 4'd0;
+        md_writes_r   <= 1'b0;
+        md_zd_r       <= 1'b0;
+        md_used       <= 1'b0;
     end else begin
         idu_start <= 1'b0;
         ea_start  <= 1'b0;
@@ -584,6 +629,7 @@ always_ff @(posedge clk) begin
         exc_req         <= 1'b0;
         rf_stack_switch <= 1'b0;
         nmi_take        <= 1'b0;
+        md_start        <= 1'b0;
 
         // A bus fault is latched wherever it happens -- a prefetch's cycle is
         // not one this sequencer is waiting on -- and kept until it is raised.
@@ -856,11 +902,27 @@ always_ff @(posedge clk) begin
         // ---- execute ---------------------------------------------------------
         S_EXEC: begin
             // The ALU is combinational and its inputs are already presented.
-            state <= S_WB;
+            // v60_muldiv is not, so those six are started here and waited on.
+            if (md_is) begin
+                md_start <= 1'b1;
+                md_used  <= 1'b1;
+                state    <= S_MD;
+            end else begin
+                md_used <= 1'b0;
+                state   <= S_WB;
+            end
+        end
+
+        S_MD: if (md_done) begin
+            md_result_r <= md_result;
+            md_flags_r  <= md_flags;
+            md_writes_r <= md_writes;
+            md_zd_r     <= md_zero_div;
+            state       <= S_WB;
         end
 
         S_WB: begin
-            if (!alu_writes) begin
+            if (!eff_writes) begin
                 // CMP and TEST leave no result.  If the destination was read
                 // through a read-modify-write access, that access is still
                 // open and has to be closed with what was already there;
@@ -875,16 +937,16 @@ always_ff @(posedge clk) begin
             end else if (dst_is_reg) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= reg_operand;
-                rf_wr_data <= alu_result;
+                rf_wr_data <= eff_result;
                 state      <= S_RETIRE;
             end else if (ea_rmw_pending) begin
-                ea_rmw_data <= {32'd0, alu_result};
+                ea_rmw_data <= {32'd0, eff_result};
                 ea_rmw_go   <= 1'b1;
                 state       <= S_WBW;
             end else begin
                 // MOV to memory: the address is computed for the write.
                 ea_we    <= 1'b1;
-                ea_wdata <= {32'd0, alu_result};
+                ea_wdata <= {32'd0, eff_result};
                 ea_start <= 1'b1;
                 state    <= S_WBW;
             end
@@ -906,15 +968,30 @@ always_ff @(posedge clk) begin
         // ---- retire ----------------------------------------------------------
         S_RETIRE: begin
             // The flags the operation left, and an addressing mode's writeback.
-            psw <= psw_set_flags(psw, alu_flags);
+            psw <= psw_set_flags(psw, eff_flags);
             if (wb_rn_en) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= wb_rn_sel;
                 rf_wr_data <= wb_rn_val;
             end
-            pc      <= idu_pc + {27'd0, idu_len};
-            retired <= 1'b1;
-            state   <= S_IDLE;
+            // A divide by zero is raised HERE and not in S_MD, because a
+            // read-modify-write destination still has an access open at that
+            // point and closing it -- with what was already there, since "the
+            // destination operand remains unchanged" -- is what S_WB and
+            // S_WBW have just done.  An exception is raised between operand
+            // accesses and never during one, which is what lets v60_dmux be a
+            // mux rather than a third bus master.
+            if (md_zd_r) begin
+                md_zd_r    <= 1'b0;
+                exc_vec_r  <= VEC_INT_ARITH;
+                exc_code_r <= CODE_ZERO_DIVIDE;
+                exc_kind   <= EK_ARITH;
+                state      <= S_EXC_SW;
+            end else begin
+                pc      <= idu_pc + {27'd0, idu_len};
+                retired <= 1'b1;
+                state   <= S_IDLE;
+            end
         end
 
         // ---- control transfers ------------------------------------------------
@@ -1337,12 +1414,15 @@ always_ff @(posedge clk) begin
         S_EXC_SW: begin
             rf_stack_switch <= 1'b1;
             rf_new_el       <= 2'd0;
-            // An instruction exception's frame goes on the stack the new
+            // Step (vii) puts an exception's frame on the stack the new
             // execution level names -- L0SP, or IS if that is where it already
-            // was.  The other three go on the interrupt stack outright: an
-            // interrupt by step (vii), a bus fault and a system fault by §8's
-            // prose about each group.
-            rf_new_is       <= (exc_kind == EK_INSN) ? psw[PSW_IS] : 1'b1;
+            // was -- and that covers the instruction exceptions and the
+            // arithmetic ones alike.  Two groups override it: an interrupt by
+            // step (vii) itself, and the bus fault and system fault by §8's
+            // prose about each group, all three of which go on the interrupt
+            // stack outright.
+            rf_new_is       <= ((exc_kind == EK_BERR) || (exc_kind == EK_INT))
+                               ? 1'b1 : psw[PSW_IS];
             rf_ra_sel       <= 5'd31;
             state           <= S_EXC_SETTLE;
         end
@@ -1396,6 +1476,23 @@ always_ff @(posedge clk) begin
                 exc_disable_ie   <= 1'b0;
                 exc_int_stack    <= 1'b1;
                 exc_ack_vector   <= exc_ack_r;
+            end
+            // Figure 8-5's Arithmetic Exceptions frame: the Current PC is a
+            // PARAMETER above the code word, and the return PC on top is the
+            // NEXT one -- which is BRKV's operation printed as a diagram,
+            // "[-SP] <- CurrentPC ; [-SP] <- Exception Code ; [-SP] <- PSW ;
+            // [-SP] <- NextPC".  So a zero-divide handler returns past the
+            // instruction that divided, and the destination it left alone
+            // stays alone.
+            EK_ARITH: begin
+                exc_ret_pc       <= idu_pc + {27'd0, idu_len};
+                exc_nparams      <= 2'd1;
+                exc_code         <= exc_code_r;
+                exc_param0       <= idu_pc;
+                exc_is_interrupt <= 1'b0;
+                exc_disable_ie   <= 1'b0;
+                exc_int_stack    <= 1'b0;
+                exc_ack_vector   <= 1'b0;
             end
             // "An exception during the execution of an instruction stacks the
             // PC of the instruction causing the exception (Current PC)", and

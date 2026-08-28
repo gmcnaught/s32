@@ -25,6 +25,7 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
      rtl/cpu/v60x/v60_psw_pkg.sv rtl/cpu/v60x/v60_regfile.sv \
      rtl/cpu/v60x/v60_alu_pkg.sv rtl/cpu/v60x/v60_alu.sv \
+     rtl/cpu/v60x/v60_muldiv.sv \
      rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
      rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
      rtl/cpu/v60x/v60_exc.sv rtl/cpu/v60x/v60_seq.sv"
@@ -81,6 +82,7 @@ run tb_v60_front       "V60 FRONT PASS"
 run tb_v60_psw         "V60 PSW PASS"
 run tb_v60_regfile     "V60 REGFILE PASS"
 run tb_v60_alu         "V60 ALU PASS"
+run tb_v60_muldiv      "V60 MULDIV PASS"
 run tb_v60_exc         "V60 EXC PASS"
 run tb_v60_seq         "V60 SEQ PASS"
 
