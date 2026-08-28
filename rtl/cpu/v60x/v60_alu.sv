@@ -47,6 +47,28 @@
 //  those pages fix -- the signed byte count, what a count past the operand's
 //  width does, and where each opcode is.
 //
+//  RVBIT, RVBYT and SETF are here too, and all three are one line of their own
+//  page:
+//
+//    "The individual bits of the byte data addressed by the source operand are
+//     reversed"                                            -- RVBIT, S7
+//    "dst <- byte_reversed( src )"                          -- RVBYT, S7
+//    "if ( condition ) then dst <- 01H else dst <- 00H"     -- SETF, S7
+//
+//  Three things about them are easy to get wrong and are marked where they are
+//  implemented:
+//
+//  * RVBIT is a BYTE instruction -- "rvbit src.b.r, dst.b.w".  It reverses
+//    eight bits, not thirty-two.  RVBYT is the word one.
+//  * SETF's condition is in the LOW nibble of its source ("the condition code
+//    field is found in the lower four bits ... the upper four bits are
+//    ignored"), where TRAP's is in the high nibble.  Sharing a condition
+//    evaluator between the two is right; sharing the nibble is a bug.  See
+//    docs/v60/TRANCHE-ONE.md.
+//  * All three leave every flag alone.  Both reversals print four "Unchanged"
+//    lines and blank flag rows on the plate, so a byte swap does not set Z
+//    even when the result is zero.
+//
 //  Not here: MUL, MULU, DIV and DIVU, which are not one cycle of
 //  combinational logic.
 //============================================================================
@@ -104,6 +126,13 @@ wire [31:0] mov_sx = x_sign ? (mov_zx | ~xmask) : mov_zx;
 wire [31:0] mov_drop = mov_zx & ~mask;
 wire        movt_ov  = sign_of(mov_zx, msb) ? (mov_drop != (xmask & ~mask))
                                             : (mov_drop != 32'd0);
+
+// "B7 B6 B5 B4 B3 B2 B1 B0" above and "B0 B1 B2 B3 B4 B5 B6 B7" below, so
+// dst[i] = src[7-i] -- over the source's BYTE, whatever the destination is.
+wire [7:0] rvbit_res = {x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]};
+
+// "Byte3 Byte2 Byte1 Byte0" above and "Byte0 Byte1 Byte2 Byte3" below.
+wire [31:0] rvbyt_res = {x[7:0], x[15:8], x[23:16], x[31:24]};
 
 wire [31:0] xm = x & mask;
 wire [31:0] ym = y & mask;
@@ -262,6 +291,16 @@ always_comb begin
             // Negating the most negative value is the one overflow.
             f_ov = (sign_of(xm, msb) && sign_of(raw, msb));
         end
+        // "The source operand is unaffected by this instruction", and the
+        // destination is written and not read: dst.b.w / dst.w.w.
+        ALU_RVBIT: raw = {24'd0, rvbit_res};
+        ALU_RVBYT: raw = rvbyt_res;
+        // "If the specified condition is satisfied by the integer PSW
+        // condition codes, the value 01H (true) is stored in the destination.
+        // Otherwise, the value 00H (false) is stored" -- exactly 01H and 00H,
+        // not "non-zero" and "zero".  The condition is the source's LOW
+        // nibble.
+        ALU_SETF: raw = cond_true(x[3:0], flags_in) ? 32'd1 : 32'd0;
         ALU_TEST: begin
             raw    = xm;
             f_cy   = 1'b0;                          // "CY Cleared"
@@ -318,7 +357,10 @@ end
 // in the Description says only when OV is set.  Every other block in S7 that
 // touches OV says "otherwise cleared", and a flag that could only ever be set
 // would be unlike anything else in this instruction set.
-wire keep_all = (op == ALU_MOV) || (op == ALU_MOVS) || (op == ALU_MOVZ);
+// "CY Unchanged / OV Unchanged / S Unchanged / Z Unchanged" on all three of
+// the new pages as well, so a reversal that produces zero does not set Z.
+wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS) || (op == ALU_MOVZ) ||
+                (op == ALU_RVBIT) || (op == ALU_RVBYT) || (op == ALU_SETF);
 wire keep_but_ov = (op == ALU_MOVT);
 
 assign result    = raw & mask;

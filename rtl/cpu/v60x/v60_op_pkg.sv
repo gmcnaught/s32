@@ -398,8 +398,8 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h009: r = 4'd4 ;  // GETPTE (operand 2)
             9'h00A: r = 4'd4 ;  // GETATE
             9'h00B: r = 4'd4 ;  // GETATE (operand 2)
-            9'h010: r = 4'd4 ;  // RVBIT
-            9'h011: r = 4'd4 ;  // RVBIT (operand 2)
+            9'h010: r = 4'd1 ;  // RVBIT
+            9'h011: r = 4'd1 ;  // RVBIT (operand 2)
             9'h012: r = 4'd1 ;  // MOV.B
             9'h013: r = 4'd1 ;  // MOV.B (operand 2)
             9'h014: r = 4'd1 ;  // MOVS.BH
@@ -998,6 +998,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     alu_op_e r;
     begin
         case (op)
+            8'h08: r = ALU_RVBIT; // RVBIT
             8'h09: r = ALU_MOV;  // MOV.B
             8'h0A: r = ALU_MOVS; // MOVS.BH
             8'h0B: r = ALU_MOVZ; // MOVZ.BH
@@ -1009,6 +1010,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h1D: r = ALU_MOVZ; // MOVZ.HW
             8'h29: r = ALU_MOVT; // MOVT.WB
             8'h2B: r = ALU_MOVT; // MOVT.WH
+            8'h2C: r = ALU_RVBYT; // RVBYT
             8'h2D: r = ALU_MOV;  // MOV.W
             8'h38: r = ALU_NOT;  // NOT
             8'h39: r = ALU_NEG;  // NEG
@@ -1017,6 +1019,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h3C: r = ALU_NOT;  // NOT
             8'h3D: r = ALU_NEG;  // NEG
             8'h3F: r = ALU_MOV;  // MOV.D
+            8'h47: r = ALU_SETF; // SETF
             8'h50: r = ALU_REM;  // REM
             8'h51: r = ALU_REMU; // REMU
             8'h52: r = ALU_REM;  // REM

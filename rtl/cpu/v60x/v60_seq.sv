@@ -493,6 +493,21 @@ wire  [4:0] reg_operand = fmt_i ? idu_reg : op2_rn;
 // it is whichever side `d` did not take.
 wire        dst_am_is_op2 = fmt_ii;
 
+// Which operations WRITE their destination without reading it first.  It is
+// the syntax line that says so: MOV's is "dst.w" where ADD's is "dst.rw", and
+// RVBIT, RVBYT and SETF all print "dst.b.w" or "dst.w.w" too.  A destination
+// that is only written costs one bus cycle instead of two, and an operation
+// that read a write-only destination would also touch memory the page says it
+// does not.
+//
+// MOVS, MOVZ and MOVT are deliberately NOT here even though their syntax lines
+// also print a write-only destination: they are left as they were until their
+// bus-cycle counts are checked, because changing them silently would move a
+// number tb_v60_seq does not currently assert.  Recorded as an open item in
+// docs/v60/TRANCHE-ONE.md rather than changed in passing.
+wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
+                             (aop == ALU_RVBYT) || (aop == ALU_SETF);
+
 // The destination operand's addressing mode.  Spelled out rather than
 // selected with a ternary: a ternary between two enum values is not an enum to
 // every tool.
@@ -843,9 +858,10 @@ always_ff @(posedge clk) begin
                 ea_imm        <= dst_am_is_op2 ? op2_imm   : op1_imm;
                 ea_opbytes    <= w_dst;
                 ea_we         <= 1'b0;
-                // Everything except MOV reads its destination and writes the
-                // same place, so the address is computed once.
-                ea_rmw        <= (aop != ALU_MOV);
+                // An operation that reads its destination and writes the same
+                // place computes the address once; one that only writes does
+                // not read at all.
+                ea_rmw        <= !dst_write_only;
                 // Every field of the descriptor is set before an access
                 // starts: JMP leaves this one set, and the next instruction
                 // would otherwise compute its destination address and never
@@ -862,10 +878,10 @@ always_ff @(posedge clk) begin
             if (dst_is_reg) begin
                 val2  <= {32'd0, rf_ra};
                 state <= S_EXEC;
-            end else if (aop == ALU_MOV) begin
-                // MOV's destination is written and not read -- its syntax line
-                // is "dst.w" where ADD's is "dst.rw" -- so the read is skipped
-                // and only the write happens.  The descriptor is already set.
+            end else if (dst_write_only) begin
+                // Written and not read -- see dst_write_only above -- so the
+                // read is skipped and only the write happens.  The descriptor
+                // is already set.
                 state <= S_EXEC;
             end else begin
                 state <= S_OP2S;

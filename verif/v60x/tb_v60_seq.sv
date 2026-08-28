@@ -847,6 +847,39 @@ initial begin
     mem[11'h478] = 8'h09; mem[11'h479] = 8'h80; mem[11'h47A] = 8'hF4;
     mem[11'h47B] = 8'h21; mem[11'h47C] = 8'h68;
 
+    // ---- an eighth program, at 0x4A0: RVBIT, RVBYT and SETF -----------------
+    // Three that write their destination without reading it, and leave every
+    // flag alone.  The bus-cycle count is what proves the first half.
+    // MOV.W #0x700, R8
+    mem[11'h4A0] = 8'h2D; mem[11'h4A1] = 8'hA0; mem[11'h4A2] = 8'hF4;
+    mem[11'h4A3] = 8'h00; mem[11'h4A4] = 8'h07; mem[11'h4A5] = 8'h00;
+    mem[11'h4A6] = 8'h00; mem[11'h4A7] = 8'h68;
+    // CMP.b #0, R8   B8 A0 E0 68   -- sets the flags to a known state: R8 is
+    //                                 0x700, so its byte 00 equals 0 and Z is
+    //                                 set, CY clear.
+    mem[11'h4A8] = 8'hB8; mem[11'h4A9] = 8'hA0; mem[11'h4AA] = 8'hE0;
+    mem[11'h4AB] = 8'h68;
+    // RVBIT #1, R9   08 A0 E1 69   -- immediate quick 1, into a register.
+    //   "the immediate data is zero extended to byte length before the bit
+    //   reversal takes place", so this reverses 0000_0001 and gives 80.
+    mem[11'h4AC] = 8'h08; mem[11'h4AD] = 8'hA0; mem[11'h4AE] = 8'hE1;
+    mem[11'h4AF] = 8'h69;
+    // RVBYT #0x11223344, R10   2C A0 F4 44 33 22 11 6A
+    mem[11'h4B0] = 8'h2C; mem[11'h4B1] = 8'hA0; mem[11'h4B2] = 8'hF4;
+    mem[11'h4B3] = 8'h44; mem[11'h4B4] = 8'h33; mem[11'h4B5] = 8'h22;
+    mem[11'h4B6] = 8'h11; mem[11'h4B7] = 8'h6A;
+    // SETF #4, [R8]  47 80 E4 68   -- condition 4 is Zero/Equal, and the CMP
+    //   above left Z set, so this stores 01H.  The destination is MEMORY, so
+    //   its bus cycles are countable: one write, and no read.
+    mem[11'h4B8] = 8'h47; mem[11'h4B9] = 8'h80; mem[11'h4BA] = 8'hE4;
+    mem[11'h4BB] = 8'h68;
+    // SETF #5, [R8]  47 80 E5 68   -- condition 5 is Not zero / Not equal.
+    mem[11'h4BC] = 8'h47; mem[11'h4BD] = 8'h80; mem[11'h4BE] = 8'hE5;
+    mem[11'h4BF] = 8'h68;
+    // RVBIT #1, [R8] 08 80 E1 68   -- the byte reversal, into memory
+    mem[11'h4C0] = 8'h08; mem[11'h4C1] = 8'h80; mem[11'h4C2] = 8'hE1;
+    mem[11'h4C3] = 8'h68;
+
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
     mem[11'h612] = 8'h00; mem[11'h613] = 8'h00;
@@ -1485,6 +1518,44 @@ initial begin
         "with the count discarding the code word and the parameter above it");
     step;
     chk(mem[11'h700] === 8'h21, "and the program continues");
+
+    // =======================================================================
+    // RVBIT, RVBYT and SETF, off the bus.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'hFF;
+    jump(32'h000004A0);
+    step;                                    // R8 = 0x700
+    step;                                    // CMP.b #0, R8 -> Z set
+    chk(seq_psw[PSW_Z] === 1'b1, "the compare left Z set");
+    psw_before = seq_psw;
+
+    step;
+    chk(rf.gpr[9] === 32'h0000_0080,
+        "RVBIT reversed the byte 01 into 80");
+    chk(seq_psw === psw_before,
+        "and touched none of the four flags");
+
+    step;
+    chk(rf.gpr[10] === 32'h4433_2211, "RVBYT swapped all four bytes");
+    chk(seq_psw === psw_before,        "and touched none of them either");
+
+    step;
+    chk(mem[11'h700] === 8'h01,
+        "SETF stored 01H, because Z was set and the condition is Zero/Equal");
+    chk(insn_cycles === 5'd1,
+        "in ONE bus cycle: a write-only destination is not read first");
+    chk(seq_psw === psw_before, "SETF sets a byte, not a flag");
+
+    step;
+    chk(mem[11'h700] === 8'h00,
+        "and the opposite condition stored 00H");
+
+    step;
+    chk(mem[11'h700] === 8'h80,
+        "RVBIT into memory reversed 01 to 80 there too");
+    chk(insn_cycles === 5'd1,
+        "also in one cycle, which is what a dst.b.w syntax line means");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

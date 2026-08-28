@@ -39,6 +39,10 @@ typedef enum logic [4:0] {
     ALU_MOVS = 5'd16,   // sign extended to the destination's length
     ALU_MOVZ = 5'd17,   // zero extended
     ALU_MOVT = 5'd18,   // truncated, and OV if the bits dropped disagree
+    // Three more that write and do not read, and leave all four flags alone.
+    ALU_RVBIT = 5'd25,  // the source BYTE's bits, reversed
+    ALU_RVBYT = 5'd26,  // the source WORD's bytes, reversed
+    ALU_SETF  = 5'd27,  // a condition, materialised as 01H or 00H
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 5'd19,

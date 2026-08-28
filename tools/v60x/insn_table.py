@@ -319,7 +319,13 @@ DATA_TYPE = {
     'MOVT.HB': (2, 1), 'MOVT.WB': (4, 1), 'MOVT.WH': (4, 2),
     'XCH': ('siz', 'siz'),
     'MOVEA': (4, 4),          # an effective address, and a place to put it
-    'RVBYT': (4, 4), 'RVBIT': (4, 4),
+    # DEFECT, corrected: RVBIT had (4, 4).  Its page prints
+    # "rvbit src.b.r, dst.b.w" -- it reverses EIGHT bits, not thirty-two, and
+    # both operands are bytes.  With the word width the decoder consumed a
+    # four-byte immediate where the instruction carries one, which is an
+    # instruction-LENGTH error of exactly the kind tb_v60_cosim exists to
+    # catch.  RVBYT really is "rvbyt src.w.r, dst.w.w".
+    'RVBYT': (4, 4), 'RVBIT': (1, 1),
 
     # Integer arithmetic and logic: the siz field.
     'ADD': ('siz', 'siz'), 'ADDC': ('siz', 'siz'),
@@ -428,6 +434,9 @@ EXEC_OP = {
     'CMP': 'CMP', 'TEST': 'TEST', 'NEG': 'NEG',
     'AND': 'AND', 'OR': 'OR', 'XOR': 'XOR', 'NOT': 'NOT',
     'MOV.B': 'MOV', 'MOV.H': 'MOV', 'MOV.W': 'MOV', 'MOV.D': 'MOV',
+    # Three that write their destination without reading it and leave every
+    # flag alone -- see docs/v60/TRANCHE-ONE.md.
+    'RVBIT': 'RVBIT', 'RVBYT': 'RVBYT', 'SETF': 'SETF',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
     # register first" (S3), and nothing in this tree addresses one yet.

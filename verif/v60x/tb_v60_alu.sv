@@ -473,6 +473,67 @@ initial begin
     chk(flags_out[PSW_OV] === 1'b1,      "and here they do not");
 
     $display("V60 ALU: %0d checks", checked);
+    // =======================================================================
+    // RVBIT, RVBYT and SETF.  Three one-line pages, and the three things that
+    // are easy to get wrong: which width each reverses, which nibble SETF's
+    // condition is in, and that none of them touches a flag.
+    // =======================================================================
+    flags_in = 4'b1111;                 // every flag set on the way in
+
+    // "dst[i] = src[7-i]", over a BYTE.  0x01 -> 0x80 is the case the page's
+    // own zero-extension sentence points at: "rvbit #1" reverses 0000_0001.
+    op = ALU_RVBIT; opbytes = 4'd1; xbytes = 4'd1; y = 32'hFFFF_FFFF;
+    x = 32'h0000_0001;
+    #1 chk(result === 32'h0000_0080, "RVBIT reverses a byte: 01 -> 80");
+    x = 32'h0000_0080;
+    #1 chk(result === 32'h0000_0001, "and back again: 80 -> 01");
+    x = 32'h0000_00A5;
+    #1 chk(result === 32'h0000_00A5, "A5 is a palindrome in eight bits");
+    x = 32'h0000_0055;
+    #1 chk(result === 32'h0000_00AA, "55 -> AA");
+    // The bits ABOVE the byte are not the operand and must not appear.
+    x = 32'hFFFF_FF01;
+    #1 chk(result === 32'h0000_0080,
+           "RVBIT reverses EIGHT bits, not thirty-two: the upper bytes are ignored");
+    #1 chk(flags_out === 4'b1111, "and it leaves all four flags alone");
+    #1 chk(writes === 1'b1,       "and it writes its destination");
+
+    // The full 32-bit endian swap.
+    op = ALU_RVBYT; opbytes = 4'd4; xbytes = 4'd4;
+    x = 32'h1122_3344;
+    #1 chk(result === 32'h4433_2211, "RVBYT swaps all four bytes");
+    x = 32'h0000_0000;
+    #1 chk(result === 32'h0000_0000, "a zero swaps to zero");
+    #1 chk(flags_out === 4'b1111,
+           "and Z is NOT set: both reversals print four Unchanged lines");
+
+    // SETF: the condition is the LOW nibble, and the stored values are exactly
+    // 01H and 00H.  Codes A and B are p.3.295's "True/Always" and
+    // "False/Never", which makes them checkable without setting up flags.
+    op = ALU_SETF; opbytes = 4'd1; xbytes = 4'd1; y = 32'hFFFF_FFFF;
+    x = 32'h0000_000A;
+    #1 chk(result === 32'h0000_0001, "SETF on the Always condition stores 01H");
+    x = 32'h0000_000B;
+    #1 chk(result === 32'h0000_0000, "and on the Never condition stores 00H");
+    // The high nibble "is ignored and has no effect", which is where TRAP puts
+    // ITS condition -- so an implementation that shared the nibble would read
+    // B here and store 0.
+    x = 32'h0000_00BA;
+    #1 chk(result === 32'h0000_0001,
+           "SETF reads the LOW nibble: BA is Always, not Never");
+    x = 32'h0000_00AB;
+    #1 chk(result === 32'h0000_0000, "and AB is Never, not Always");
+    #1 chk(flags_out === 4'b1111, "SETF sets a BYTE, not a flag");
+
+    // And it does read the flags it is asked about.
+    flags_in = 4'b0000;
+    x = 32'h0000_0004;                  // Zero / Equal
+    #1 chk(result === 32'h0000_0000, "SETF on Z with Z clear stores 00H");
+    flags_in = 4'b0001;                 // Z set
+    #1 chk(result === 32'h0000_0001, "and with Z set stores 01H");
+    #1 chk(flags_out === 4'b0001,      "still without disturbing them");
+    flags_in = 4'd0;
+
     if (errors == 0) $display("V60 ALU PASS");
     else             $display("V60 ALU FAIL (%0d errors)", errors);
     $finish;
