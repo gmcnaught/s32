@@ -55,9 +55,20 @@ module v60_fpu
     output logic         [63:0] result,
     output logic          [3:0] flags_out,
     output logic          [4:0] ffl_out,
-    // "If the source operand is a NaN or an infinity, a Reserved Floating
-    // Point Operand exception will occur and the flags and destination will
-    // remain unchanged."
+    // The CONDITION, not a trap request.  §8 states the architecture's shape
+    // four separate times and it is the same each time: the FLAG is set
+    // unconditionally, a TKCW bit decides whether that becomes a trap, and
+    // when it does not, execution continues with a stated result.
+    //
+    //   "The PSW.FIV flag will be set as a result of an invalid operation.  If
+    //    the exception is enabled, the destination operand remains unchanged.
+    //    If disabled, a QuietNaN is stored in the destination and execution
+    //    continues."
+    //
+    // So this reports "a NaN or an infinity was used as an operand" and the
+    // sequencer, which is where TKCW is reachable, decides what to do with it.
+    // The module used to raise on the operand class alone; see
+    // docs/v60/FLOATING-POINT-AUDIT.md's D1.
     output logic                resv_operand
 );
 

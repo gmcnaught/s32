@@ -3797,8 +3797,12 @@ initial begin
     chk(seq_psw[PSW_S] === 1'b1 && seq_psw[PSW_CY] === 1'b1,
         "with S and CY from the result");
 
-    // A NaN raises Reserved Floating Point Operand, and "the flags and
-    // destination will remain unchanged".
+    // A NaN, with the trap DISABLED -- which is the state out of reset, TKCW
+    // being zero.  §8: "The PSW.FIV flag will be set as a result of an invalid
+    // operation.  If the exception is enabled, the destination operand remains
+    // unchanged.  If disabled, ... execution continues."
+    //
+    // So the flag is set, the value is stored, and nothing traps.
     reset_and_arm;
     jump(32'h00000440);
     step; step;
@@ -3806,18 +3810,39 @@ initial begin
     put_word(13'h710, 32'h7FC0_0000);        // a quiet NaN
     rf.gpr[10] = 32'h0000_0710;
     rf.gpr[9]  = 32'h1234_5678;
-    seq.psw[PSW_Z] = 1'b1;
     repeat (2) @(negedge clk);
-    psw_before = seq_psw;
+    jump(32'h0000076E);
+    step;
+    chk(seq_pc === 32'h00000772,
+        "with the trap DISABLED a NaN does not raise -- TKCW is zero out of reset");
+    chk(rf.gpr[9] === 32'h7FC0_0000, "the value is stored and execution continues");
+    chk(seq_psw[PSW_FIV] === 1'b1,
+        "and PSW.FIV is set regardless: the flag is unconditional, the TRAP is not");
+
+    // The same instruction with the enable set.  TKCW[8] is the
+    // invalid-operation enable -- the alignment is TRAPFL's own, TKCW[8:4]
+    // against PSW[12:8].
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd8; pr_wdata = 32'h0000_0100; pr_wr = 1'b1;   // PR_TKCW, bit 8
+    @(negedge clk);
+    pr_wr = 1'b0;
+    put_word(13'h710, 32'h7FC0_0000);
+    rf.gpr[10] = 32'h0000_0710;
+    rf.gpr[9]  = 32'h1234_5678;
+    repeat (2) @(negedge clk);
     jump(32'h0000076E);
     step;
     chk(seq_pc === 32'h000002C0,
-        "a NaN source raises the FLOATING POINT exception, vector 22 -- not the integer one");
+        "with TKCW[8] set the same NaN raises vector 22");
     chk(mem_word(13'h5F8) === 32'h16800008,
         "with code 0x1680 -- Reserved Floating Point Operand");
-    chk(rf.gpr[9] === 32'h1234_5678, "the destination remains unchanged");
-    chk(mem_word(13'h5F4) === psw_before,
-        "and the FLAGS remain unchanged too, which the page says in the same breath");
+    chk(rf.gpr[9] === 32'h1234_5678,
+        "the DESTINATION remains unchanged, which is what §8 protects");
+    chk(mem_word(13'h5F4) >> PSW_FIV & 32'd1,
+        "and the frame's PSW carries FIV set, so a handler can tell which flag trapped");
 
     // And a clean value DOES write the floating point condition codes, which
     // is what finally lets TRAPFL fire from an FP result rather than by hand.

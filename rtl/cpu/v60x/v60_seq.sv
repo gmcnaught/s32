@@ -536,6 +536,8 @@ typedef enum logic [5:0] {
     // The bit field group's length, when the ext byte names a register rather
     // than carrying the value.
     S_BF_LEN,
+    // TKCW, for the floating point group's exception enables.
+    S_FP_TK,
     // The upper word of a doubleword REGISTER destination.  Two registers, one
     // write port -- the same reason the frame pair and the stack engine need
     // extra states.
@@ -594,6 +596,8 @@ logic  [4:0] idx_r;       // and the register it is working on
 // destination" -- R28 appears nowhere in the syntax line, so it is fetched
 // here rather than through the operand path.
 logic [31:0] r28_r;
+// TKCW, held for the floating point group's exception enables.
+logic [31:0] tkcw_r;
 // The bit field's length, and whether its address is legal.  Six bits: a
 // length of 32 is the maximum and does not fit in five.
 logic  [5:0] bf_len_r;
@@ -1239,8 +1243,18 @@ wire        dec_fault = is_dec && alu_dec_bad;
 // the only instruction in the group that flags without trapping.  Marked here
 // because it is a decision.
 wire        fp_resv   = is_fp && fpu_resv;
+// "If the exception is ENABLED, the destination operand remains unchanged.  If
+// disabled, ... execution continues."  TKCW[8] is the invalid-operation enable
+// -- the bit alignment is TRAPFL's own: TKCW[8:4] against PSW[12:8], so
+// TKCW[8] pairs with PSW[12] = FIV.
+//
+// DEFECT this fixes (docs/v60/FLOATING-POINT-AUDIT.md's D1).  The trap was
+// unconditional and the flag was suppressed -- exactly backwards.  TKCW is
+// zero out of reset, so every floating point trap is DISABLED until software
+// enables one, and a NaN through MOVF should set FIV and store the value.
+wire        fp_trap   = fp_resv && tkcw_r[8];
 wire        eff_writes = md_used ? md_writes_r
-                       : (alu_writes && !dec_fault && !fp_resv);
+                       : (alu_writes && !dec_fault && !fp_trap);
 
 // A doubleword destination -- the four X forms and MOV.D.  Its width comes
 // from the table (w_dst = 8), not from a decision here.
@@ -1296,6 +1310,7 @@ always_ff @(posedge clk) begin
         msk_r           <= 32'd0;
         idx_r           <= 5'd0;
         r28_r           <= 32'd0;
+        tkcw_r          <= 32'd0;
         bf_len_r        <= 6'd0;
         bf_bad_r        <= 1'b0;
         bf_resid_r      <= 3'd0;
@@ -1919,6 +1934,14 @@ always_ff @(posedge clk) begin
                 md_used   <= 1'b0;
                 state     <= S_CAXI_R;
             end
+            // The floating point group needs TKCW, because §8 makes every one
+            // of its exceptions TKCW-gated: the flag is set regardless and the
+            // enable decides whether it traps.  Privileged register id 8.
+            else if (is_fp) begin
+                rf_pr_id <= 5'd8;
+                md_used  <= 1'b0;
+                state    <= S_FP_TK;
+            end
             // The ALU is combinational and its inputs are already presented.
             // v60_muldiv is not, so those six are started here and waited on.
             else if (md_is) begin
@@ -2091,13 +2114,6 @@ always_ff @(posedge clk) begin
             // block is one line -- "Updated according to mask operand".
             if (is_updpsw) begin
                 psw <= updpsw_next;
-            end else if (fp_resv) begin
-                // "the flags ... will remain unchanged".
-                //
-                // Note the contrast with the DECIMAL fault below, whose pages
-                // protect only the destination.  When NEC wants the flags
-                // preserved it says so in the same sentence, and here it does.
-                psw <= psw;
             end else if (is_fp) begin
                 // The FLOATING POINT condition codes, PSW[12:8], which nothing
                 // in this tree has ever written.  Every sentence in the group
@@ -2141,11 +2157,26 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_ZERO_DIVIDE;
                 exc_kind   <= EK_ARITH;
                 state      <= S_EXC_SW;
-            end else if (fp_resv) begin
+            end else if (fp_trap) begin
                 // Vector 22, the Floating Point Arithmetic Exception, on the
                 // same Arithmetic Exceptions frame the zero divide and the
                 // decimal fault use -- Figure 8-5 groups #21, #22 and #23
                 // under one heading with one frame.
+                //
+                // Reached only with TKCW[8] set.  The FLAGS are committed
+                // above either way, which §8's invalid-operation paragraph
+                // requires -- "The PSW.FIV flag will be set as a result of an
+                // invalid operation.  If the exception is enabled, THE
+                // DESTINATION OPERAND remains unchanged" -- and which is what
+                // lets a handler tell which flag caused the trap.
+                //
+                // ABSF's own page says "the flags and destination will remain
+                // unchanged", which contradicts that.  §8 is followed, because
+                // it states the mechanism four times consistently and because
+                // MOVF and NEGF carry no such sentence at all -- a per-page
+                // rule here would make three instructions of one group behave
+                // three different ways.  Recorded as a conflict, not resolved
+                // by the pages.
                 exc_vec_r  <= VEC_FP_ARITH;
                 exc_code_r <= CODE_FP_RESERVED;
                 exc_kind   <= EK_ARITH;
@@ -2836,6 +2867,11 @@ always_ff @(posedge clk) begin
             // bf_len_bad rejects, so the check has one home rather than two.
             bf_len_r <= (rf_ra > 32'd32) ? 6'd63 : rf_ra[5:0];
             state    <= S_OP1;
+        end
+
+        S_FP_TK: begin
+            tkcw_r <= rf_pr_rdata;
+            state  <= S_WB;
         end
 
         // ---- CAXI ------------------------------------------------------------

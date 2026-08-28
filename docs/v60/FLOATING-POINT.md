@@ -840,3 +840,328 @@ known to execute these."
     the comment "they operate on op1 and must not read a possibly
     read-sensitive destination". The Reference's `.w` access type is the
     authority for that, and the core matches it.
+
+---
+
+# Addendum: `SUBF`'s operand order, run to ground
+
+`What the pages do not settle` item 1 above records `SUBF`'s operand order as
+open, and says it "must be decided". This section is the evidence, gathered
+afterwards. **It does not close the question from a page — but it moves it a
+long way, and it inverts one of the arguments the item leans on.**
+
+The Programmer's Reference PDF is still not held. Everything quoted from it is
+`docs/reference/NEC_V60pgmRef_djvu.txt`, its OCR text layer. Everything quoted
+from the databook is read on the plate.
+
+## 1. What the OCR actually prints, verbatim
+
+Blank lines elided; nothing else changed. Line numbers are into the OCR file.
+
+**`ADDF`** (16689):
+
+```
+Operation
+
+dst
+
+
+
+src + dst
+
+
+
+Description
+
+The sum of the source and destination operands is
+stored in the destination operand.
+```
+
+**`SUBF`** (47615):
+
+```
+Operation
+
+dst
+
+
+
+src - dst
+
+
+
+Description
+
+The difference of the source operand and destination
+operand is stored in the destination operand.
+```
+
+**`MULF`** (34522):
+
+```
+Operation
+dst
+
+
+
+Addressing Modes
+
+
+
+src * dst
+
+
+
+Description
+
+The product of the source operand and destination
+operand is stored in the destination operand.
+```
+
+**`DIVF`** (25516):
+
+```
+Operation
+
+dst
+
+
+
+dst + src
+
+
+
+Description
+
+The quotient of the source operand and destination
+operand is stored in the destination operand.
+```
+
+**`CMPF`** (22543):
+
+```
+Operation
+
+Flags
+
+
+
+src2 - srd
+
+
+
+Description
+
+The difference of the two source operands is computed
+and the Integer and floating point condition codes are
+updated to reflect the result of the operation.
+```
+
+(`CMPF`'s syntax line is `srd.s.r, src2.s.r` — the OCR reads `src1` as `srd`
+in both places, consistently. `DIVF`'s `+` is the OCR's rendering of `÷`; the
+same substitution appears on the integer `DIV` page, where the Description
+independently says "quotient".)
+
+**On the formatting question the brief asks — is `SUBF`'s line laid out like
+`DIVF`'s or like `ADDF`'s?** All four are laid out identically: the word
+`Operation`, then `dst` alone on a line, then the expression on a line of its
+own. `MULF` is the only one whose block is disturbed, and only by the
+`Addressing Modes` heading floating up into it from the next column. **Layout
+distinguishes nothing here.** What differs between the pages is not the
+structure but the token order inside the expression, and the OCR reproduces
+that faithfully — which is the point item 1 makes, and which turns out to cut
+the other way.
+
+## 2. The reframing: OCR fidelity is what convicts `SUBF`'s line
+
+Item 1's counter-argument is that "the OCR is a faithful token sequence for
+`ADDF` (`src + dst`) and `MULF` (`src * dst`) on the same book, so it may be
+reproducing a genuinely source-first convention."
+
+Two things are wrong with that as an argument for `src - dst`.
+
+**First, `ADDF` and `MULF` are evidence of nothing.** Addition and
+multiplication are commutative. NEC could print either order on those two pages
+and be correct, so their order establishes no convention — it establishes only
+that the OCR preserves order, which nobody disputes.
+
+**Second, and decisively: the group's other non-commutative operations are
+printed destination-first.** If a source-first convention existed, `DIVF` would
+read `src ÷ dst`. It reads `dst ÷ src`. And `SCLF` (43844), the third
+non-commutative floating point operation, reads:
+
+```
+Operation
+
+dst
+
+dst * 2count
+
+Description
+
+The destination operand is scaled by the integer count
+and stored in the destination operand.
+```
+
+— `dst ← dst × 2^count`, destination first again.
+
+So within the floating point group:
+
+| | operation printed | order observable? |
+|---|---|---|
+| `ADDF` | `src + dst` | no — commutative |
+| `MULF` | `src * dst` | no — commutative |
+| `DIVF` | **`dst ÷ src`** | **yes — destination first** |
+| `SCLF` | **`dst * 2^count`** | **yes — destination first** |
+| `SUBF` | **`src - dst`** | **yes — source first** |
+
+**`SUBF` is the sole outlier among the operations where order can be seen at
+all**, and the fidelity of the OCR is precisely what makes that visible: the
+same transcription that preserves `src - dst` on one page preserves
+`dst ÷ src` on another. There is no single convention under which both lines
+are right. One of the two is a typesetting error in NEC's book.
+
+## 3. The Description prose cannot settle it, and demonstrating that is itself a result
+
+The brief asks whether `SUBF`'s Description says in words what its formula
+says in symbols, the way `SUBRDC`'s does. **It does not — and neither does
+`DIVF`'s, which is why the prose is worthless here.**
+
+Set them side by side:
+
+- `SUBF`: "The **difference of the source operand and destination operand** is
+  stored in the destination operand."
+- `DIVF`: "The **quotient of the source operand and destination operand** is
+  stored in the destination operand."
+
+Word-for-word parallel — *the X of the source operand and destination operand*
+— sitting over two formulas that are printed in **opposite** orders. The same
+English phrase covers `src - dst` on one page and `dst ÷ src` on the next.
+`ADDF` ("The sum of the source and destination operands") and `MULF` ("The
+product of the source operand and destination operand") use the same template.
+
+So the floating point group's Description sentences are **order-neutral
+boilerplate**. They cannot decide `SUBF`, and their inability to is not a gap
+in the transcription — it is a property of how the four pages were written.
+
+Contrast the two places in the book where NEC *does* put the order in words:
+
+- **Integer `SUB`** (46651): "The source operand is subtracted **from** the
+  destination operand and the result stored in the destination operand."
+- **`SUBDC`** (47272): "The CY flag and source operand are subtracted **from**
+  the destination operand."
+- **`SUBRDC`** (47961): "The CY flag and destination operand are subtracted
+  **from** the source operand."
+- **`REM`** (39699): "The integer remainder of **the destination operand
+  (dividend) divided by the source operand (divisor)**."
+
+The preposition "from", and `REM`'s parenthetical role names, carry the order.
+The floating point group uses "the difference of A and B" and carries nothing.
+
+## 4. The integer group is uniformly destination-first
+
+Every integer operation whose order is observable, with its Operation block as
+the OCR prints it:
+
+| | operation | prose says the order? |
+|---|---|---|
+| `SUB` (46651) | `dst ← dst − src` | **yes** — "subtracted from the destination operand" |
+| `SUBC` (46946) | `dst ← dst − src − CY` | no |
+| `DIV` (25223) | `dst ← dst ÷ src` | no — same "quotient of" boilerplate |
+| `REM` (39699) | `dst ← dst % src` | **yes** — "the destination operand (dividend) divided by the source operand (divisor)" |
+
+Four for four, and the two that spell it out spell out destination-first. There
+is no instruction anywhere in the book, outside `SUBF` and the explicitly
+reversed `SUBRDC`, whose Operation block puts the source on the left of a
+non-commutative operator.
+
+## 5. A reversed form gets its own mnemonic — and the floating point group has none
+
+`SUBRDC` is the whole argument in one row. NEC needed `dst ← src − dst` in the
+decimal group, and rather than reverse `SUBDC` it added a **separate
+instruction with a separate opcode and a separate mnemonic**: `59-02`,
+"Subtract Decimal **Reversed** with Carry". The plain form and the reversed
+form coexist, and the name says which is which.
+
+The floating point group's instruction list, read off the databook **p. 3.297**
+plate, is:
+
+`MOVF` `ADDF` `SUBF` `MULF` `DIVF` `CMPF` `NEGF` `ABSF` `SCLF` `CVTF`
+`CVT.WS` `CVT.WL` `CVT.SW` `CVT.LW` `TRAPFL`
+
+**There is no `SUBRF` and no `DIVRF`.** So if `SUBF` really computed
+`src − dst`, the V60 would have *no way at all* to compute `dst − src` in a
+single floating point instruction — the operation an accumulate loop actually
+needs, and the one every other subtract in the instruction set performs. A
+machine that provides only the reversed subtract, provides the plain divide,
+and provides no reversed divide, is not a coherent design.
+
+## 6. The databook has nothing to add — confirmed on the plate
+
+p. 3.297's column headers, cropped and read at 600 dpi:
+
+```
+Mnemonic | Opcode 7 6 5 4 3 2 1 0  7 6 5 4 3 2 1 0 | Instruction Format | Clocks | Flags CY OV S Z | Exceptions
+```
+
+**There is no Operation column**, on that page or anywhere in the summary. The
+databook prints encodings, formats, flags and exception numbers and no
+semantics for any instruction in the set, so it cannot bear on operand order
+for this or anything else.
+
+The third PDF held, `1987_Microcomputer_Products_Vol_2.pdf`, was extracted and
+searched: its µPD70616 section is the **same datasheet**, at the same `3-229`
+page numbering, and its only `ADDF`/`SUBF` hits are an unrelated ALU
+function-code table for a different part. No second source exists in the
+material held.
+
+## 7. What I would decide, and how confident
+
+**Decision: implement `SUBF` as `dst ← dst − src`.**
+
+Confidence: **high**, and the reasoning is a weight-of-evidence argument rather
+than a page quotation — so it is a **decision**, not a page fact, and should be
+recorded as one at the point of decision in the RTL.
+
+Separated as usual:
+
+- **Page.** `SUBF`'s Operation block prints `src - dst`. This is the single
+  piece of direct evidence, and it is against the decision.
+- **Page.** `DIVF` prints `dst ÷ src` and `SCLF` prints `dst × 2^count` — the
+  only other floating point operations whose order is observable, both
+  destination-first, both on pages transcribed by the same OCR.
+- **Page.** Integer `SUB`, `SUBC`, `DIV` and `REM` are all destination-first,
+  and `SUB` and `REM` say so in prose.
+- **Page.** The floating point Description sentences are order-neutral
+  boilerplate, identical over `SUBF`'s and `DIVF`'s opposite formulas, so they
+  support neither reading.
+- **Page.** The decimal group needs a separate mnemonic (`SUBRDC`) for a
+  reversed subtract; the floating point group has no reversed mnemonic.
+- **Inferred.** If `SUBF` were `src − dst`, `dst − src` would be uncomputable
+  in one floating point instruction while `dst ÷ src` remained available —
+  which no instruction set does on purpose.
+- **Inferred.** `SUBF`'s printed line is a typesetting error, most plausibly
+  the commutative `ADDF` line above it being edited into a subtract without the
+  operands being reordered. `ADDF` is `5C-18` and `SUBF` is `5C-19`; they are
+  adjacent pages of the same template, and `src + dst` → `src - dst` is a
+  one-character edit.
+- **Unknown.** Nothing held can rule out the possibility that NEC intended a
+  reversed floating point subtract. That possibility is what keeps this a
+  decision. It would require the design defect in the previous bullet to be
+  deliberate, and it would still leave `DIVF`'s line and `SUBF`'s line
+  mutually inconsistent as a "convention".
+
+**What would settle it.** A plate of Programmer's Reference page 7-97 (`SUBF`),
+which the tree does not hold; or any V60 assembler, compiler back end or
+worked example that performs a floating point subtract and shows which operand
+is diminished. The µPD70632 (V70) documentation cited in
+`docs/v60/INSTRUCTION-TIMING.md` would also serve if it prints Operation
+blocks, since the V70 is instruction-set compatible — that is the cheapest
+remaining avenue and it has not been tried here.
+
+**If it is implemented as `dst − src`, the risk is bounded and detectable.**
+`CMPF` prints `Flags ← src2 − src1`, which for a first operand `src1` and a
+second operand `src2` is *second minus first* — the same direction as
+`dst − src`. So `SUBF` and `CMPF` agree under the decision and disagree under
+the printed line, and a program that subtracts and then compares the same pair
+would expose the difference immediately. That is worth a test either way.
