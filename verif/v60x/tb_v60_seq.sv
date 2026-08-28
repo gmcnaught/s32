@@ -1361,6 +1361,24 @@ initial begin
     mem[11'h6F1] = 8'h5D; mem[11'h6F2] = 8'hA9; mem[11'h6F3] = 8'h08;
     mem[11'h6F4] = 8'h00; mem[11'h6F5] = 8'h60; mem[11'h6F6] = 8'h69;
 
+    // The decimal group.  Format VIIc, three operands, the third being the
+    // extension byte -- carrying a PATTERN here where INSBF's carries a length.
+    // ADDDC [R10], [R8], #0   59 00 6A 68 00
+    mem[11'h6F7] = 8'h59; mem[11'h6F8] = 8'h00; mem[11'h6F9] = 8'h6A;
+    mem[11'h6FA] = 8'h68; mem[11'h6FB] = 8'h00;
+    // CVTD.PZ [R10], [R8], #0x30   59 10 6A 68 30   -- a byte source into a
+    //   HALFWORD destination, with the pattern supplying the zone by OR.
+    mem[11'h184] = 8'h59; mem[11'h185] = 8'h10; mem[11'h186] = 8'h6A;
+    mem[11'h187] = 8'h68; mem[11'h188] = 8'h30;
+    // CVTD.ZP [R10], [R8], #0x30   59 18 6A 68 30   -- the inverse, and the
+    //   only one of the five that raises for something that is not a bad digit.
+    mem[11'h189] = 8'h59; mem[11'h18A] = 8'h18; mem[11'h18B] = 8'h6A;
+    mem[11'h18C] = 8'h68; mem[11'h18D] = 8'h30;
+
+    // SBT entry 23, Decimal Arithmetic (Figure 8-2's +92) -> 0x1C0, which is
+    // vector 21's handler -- the two share a frame and this reuses it.
+    mem[11'h05C] = 8'hC0; mem[11'h05D] = 8'h01;
+
     // CHLVL R5, R6    4B E0 65 66   -- both operands in REGISTERS, which is the
     //   only way a byte operand arrives unmasked: a memory source is
     //   zero-extended by the address unit and a register source is not.
@@ -3605,6 +3623,100 @@ initial begin
     step;
     chk(seq_pc === 32'h00000790,
         "a length of 96 raises, though its low six bits are a legal 32");
+
+    // =======================================================================
+    // The decimal group, end to end.  The same Format VIIc the bit field group
+    // uses, and the same extension byte -- carrying a mask PATTERN here rather
+    // than a length, which only the opcode distinguishes.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    mem[11'h700] = 8'h59;                    // the destination byte
+    mem[11'h710] = 8'h59;                    // the source
+    rf.gpr[10] = 32'h0000_0710;
+    seq.psw[PSW_CY] = 1'b0;
+    seq.psw[PSW_Z]  = 1'b1;                  // preset, to watch it survive
+    repeat (2) @(negedge clk);
+    jump(32'h000006F7);
+    step;
+    chk(mem[11'h700] === 8'h18,
+        "ADDDC 59 + 59 stored 18: the carry is DECIMAL, not bit 8 of a binary sum");
+    chk(seq_psw[PSW_CY] === 1'b1, "and set CY out of the top digit");
+    chk(seq_psw[PSW_Z] === 1'b0, "clearing the preset Z, the result being non-zero");
+    chk(seq_pc === 32'h000006FC, "five bytes: op, base word, mod, mod', ext'");
+
+    // The carry threads the next byte, which is the whole point of the group.
+    @(negedge clk);
+    mem[11'h700] = 8'h00;
+    mem[11'h710] = 8'h00;
+    repeat (2) @(negedge clk);
+    jump(32'h000006F7);
+    step;
+    chk(mem[11'h700] === 8'h01,
+        "the next byte up takes the carry in: 00 + 00 + 1 is 01");
+
+    // Z is sticky across the chain: a zero byte with no carry leaves it.
+    @(negedge clk);
+    mem[11'h700] = 8'h00;
+    mem[11'h710] = 8'h00;
+    seq.psw[PSW_CY] = 1'b0;
+    seq.psw[PSW_Z]  = 1'b1;
+    repeat (2) @(negedge clk);
+    jump(32'h000006F7);
+    step;
+    chk(mem[11'h700] === 8'h00 && seq_psw[PSW_Z] === 1'b1,
+        "a zero byte with no carry LEAVES Z: it accumulates across the whole number");
+
+    // The two conversions, where the pattern byte is actually READ -- the
+    // arithmetic three never look at it, so nothing above can tell whether it
+    // was captured at all.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    mem[11'h710] = 8'h59;                    // the packed source
+    put_word(13'h700, 32'h0000_0000);
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    jump(32'h00000184);
+    step;
+    chk(mem[11'h700] === 8'h35 && mem[11'h701] === 8'h39,
+        "CVTD.PZ wrote '5' then '9' -- the digits cross, and the PATTERN supplied the zone");
+
+    // And back, which raises when a zone does not match the pattern.  This is
+    // the only Decimal Format exception in the group that is not a bad digit:
+    // §3 says "There is no restriction on the contents of the zone field", so
+    // the restriction comes from the INSTRUCTION.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    mem[11'h710] = 8'h35; mem[11'h711] = 8'h39;
+    mem[11'h700] = 8'hCC;                    // the destination, to stay put
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    jump(32'h00000189);
+    step;
+    chk(mem[11'h700] === 8'h59, "CVTD.ZP converts back exactly");
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    mem[11'h710] = 8'h45; mem[11'h711] = 8'h39;   // a zone of 4, not 3
+    mem[11'h700] = 8'hCC;
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    jump(32'h00000189);
+    step;
+    chk(seq_pc === 32'h000001C0,
+        "a zone that does not match the pattern raises the Decimal Format exception");
+    chk(mem_word(13'h5F8) === 32'h17800008,
+        "with code 0x1780 beside a parameter count of 8 -- the Arithmetic frame");
+    chk(mem[11'h700] === 8'hCC,
+        "and the destination remains unchanged, which every one of the five promises");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

@@ -94,8 +94,16 @@ module v60_alu
     // because a length of 32 is legal and 32 does not fit in five.
     input                 [2:0] bf_resid,
     input                 [5:0] bf_len,
+    // The decimal group's third operand: Format VII's extension byte again,
+    // carrying a MASK PATTERN here rather than a length.  §6 admits the reuse
+    // in one clause -- "This field is also used to store the mask pattern for
+    // the ADDDC, SUBDC, SUBRDC, and CVTD instructions."
+    input                 [7:0] dec_pat,
     input                 [3:0] flags_in,  // {CY, OV, S, Z} as the PSW holds them
 
+    // The Decimal Format exception, which every one of the five can raise and
+    // which the sequencer turns into vector 23.
+    output logic                dec_bad,
     output logic         [31:0] result,
     output logic          [3:0] flags_out,
     output logic                writes      // CMP and TEST leave no result
@@ -195,6 +203,101 @@ wire [31:0] bf_left   = (bf_len == 6'd0) ? 32'd0 : (bf_field << (6'd32 - bf_len)
 // Justified" its high ones.
 wire [31:0] bf_ins_r  = x & bf_mask;
 wire [31:0] bf_ins_l  = (bf_len == 6'd0) ? 32'd0 : ((x >> (6'd32 - bf_len)) & bf_mask);
+
+// ---------------------------------------------------------------------------
+// The decimal group.
+// ---------------------------------------------------------------------------
+// A packed byte is TWO digits, high nibble the more significant, and both must
+// be 0-9: "When a nibble is expected to contain a digit, only the valid BCD
+// values [0..9] can be specified."  A zoned byte is ONE digit in the low
+// nibble with an unrestricted zone above it.
+//
+// Neither is signed.  §3 gives the decimal data type no sign nibble, no sign
+// byte and no convention at all, which is why S never moves on any of the five
+// and why OV never moves either: there is no sign to report and no range to
+// overflow beyond the byte, whose overflow IS the carry.
+wire  [3:0] dec_x_hi = x[7:4];
+wire  [3:0] dec_x_lo = x[3:0];
+wire  [3:0] dec_y_hi = y[7:4];
+wire  [3:0] dec_y_lo = y[3:0];
+wire  [7:0] dec_xv   = dec_x_hi * 4'd10 + dec_x_lo;   // 0..99
+wire  [7:0] dec_yv   = dec_y_hi * 4'd10 + dec_y_lo;
+wire        dec_cy_in = flags_in[PSW_CY];
+
+// "The CY flag and the decimal source operand are added to the decimal
+// destination operand."  CY is an INPUT, and the carry out is DECIMAL -- out of
+// the top digit at 100, not bit 8 of a binary sum.  0x59 + 0x59 is 0xB2 in
+// binary with no carry; as decimal it is 118, which is 0x18 with CY set.
+wire  [8:0] dec_add  = {1'b0, dec_yv} + {1'b0, dec_xv} + {8'd0, dec_cy_in};
+wire signed [8:0] dec_sub  = $signed({1'b0, dec_yv}) - $signed({1'b0, dec_xv})
+                             - $signed({8'd0, dec_cy_in});
+wire signed [8:0] dec_subr = $signed({1'b0, dec_xv}) - $signed({1'b0, dec_yv})
+                             - $signed({8'd0, dec_cy_in});
+
+wire        dec_is_add  = (op == ALU_ADDDC);
+wire        dec_is_sub  = (op == ALU_SUBDC);
+wire        dec_is_subr = (op == ALU_SUBRDC);
+wire        dec_is_arith = dec_is_add || dec_is_sub || dec_is_subr;
+
+wire signed [8:0] dec_raw = dec_is_add  ? $signed(dec_add)
+                          : dec_is_sub  ? dec_sub : dec_subr;
+// "The CY flag will be set if there is a carry out" / "if there is a borrow".
+wire        dec_cy_out = dec_is_add ? (dec_add >= 9'd100) : (dec_raw < 0);
+// Brought back into 0..99 the way a decimal adder does.
+wire  [7:0] dec_val    = dec_cy_out ? (dec_is_add ? (dec_add[7:0] - 8'd100)
+                                                  : (dec_raw[7:0] + 8'd100))
+                                    : dec_raw[7:0];
+// And back to packed BCD.  The two halves are named rather than concatenated
+// inline: `{dec_val / 10, dec_val % 10}` concatenates two EIGHT-bit results and
+// an eight-bit target keeps only the low half of that, which is the remainder
+// alone -- 118 came out as 0x08 rather than 0x18.
+wire  [3:0] dec_res_hi = dec_val / 8'd10;
+wire  [3:0] dec_res_lo = dec_val % 8'd10;
+wire  [7:0] dec_res    = {dec_res_hi, dec_res_lo};
+
+// The conversions.  "The byte length source operand is unpacked by performing
+// a bit-wise OR of the digits with the pattern operand" -- and the digit order
+// CROSSES, which is the thing a summary would lose: the packed byte's HIGH
+// nibble becomes the digit of the zoned halfword's LOW byte.
+// `pat` is OR'd in as a WHOLE BYTE into both halves, so its low nibble lands on
+// top of the digit -- a pattern with pat[3:0] non-zero corrupts the digit it is
+// meant to decorate.  No page forbids it and no page says what the result is;
+// this does what the Operation block prints.
+wire  [7:0] dec_pz_lo = {4'd0, dec_x_hi} | dec_pat;
+wire  [7:0] dec_pz_hi = {4'd0, dec_x_lo} | dec_pat;
+wire [15:0] dec_pz    = {dec_pz_hi, dec_pz_lo};
+// The exact inverse: dst[7:4] <- src[3:0], dst[3:0] <- src[11:8].
+wire  [7:0] dec_zp = {x[3:0], x[11:8]};
+
+// "Following the addition operation, the result is checked to verify that a
+// valid BCD representation exists" -- the ARITHMETIC three check the RESULT and
+// not their operands, which the page is explicit about and which is worth
+// stating because it is the reverse of the conversions.
+// UNREACHABLE BY CONSTRUCTION, and that is a finding rather than an oversight.
+// This adder works in VALUES -- both operands are converted to 0..99, the sum
+// is reduced modulo 100 and split back with /10 and %10 -- so dec_res is valid
+// BCD for every input, including an input whose own nibbles are not.  A
+// mutation deleting this check passes every test, and no test can be written
+// that makes it fire.
+//
+// The page's rule is nevertheless transcribed rather than dropped, because it
+// is a rule and because it constrains an adder built differently: "Following
+// the addition operation, the result is checked to verify that a valid BCD
+// representation exists in the unmasked portion of the result."  Note it checks
+// the RESULT and not the operands -- docs/v60/DECIMAL.md records the page's own
+// open question, whether a decimal adder can produce a valid-BCD result from
+// invalid-BCD inputs.  This one always can, so it always does.
+wire        dec_res_bad = (dec_res[7:4] > 4'd9) || (dec_res[3:0] > 4'd9);
+// CVTD.PZ checks its SOURCE, prior to the conversion.
+wire        dec_pz_bad  = (dec_x_hi > 4'd9) || (dec_x_lo > 4'd9);
+// CVTD.ZP checks two different things, and the zone check is the only place in
+// the group where a well-formed digit position still raises: "The upper
+// nibbles are then compared to the upper nibble of the mask pattern."  §3 says
+// "There is no restriction on the contents of the zone field", so this
+// restriction comes from the INSTRUCTION and not from the data type.
+wire        dec_zp_bad  = (x[7:4]   != dec_pat[7:4]) ||
+                          (x[15:12] != dec_pat[7:4]) ||
+                          (x[3:0]   > 4'd9) || (x[11:8] > 4'd9);
 
 // CMPBF's subtraction runs the OTHER WAY from CMP's.  Its Operation block is
 // "flags <- src - bitfield" and its Description says the same in words -- "The
@@ -452,6 +555,24 @@ always_comb begin
         // destination operand", which falls out: a zero-length mask is zero.
         // "Three reads, no write -- the result is the flags."
         ALU_CMPBFS, ALU_CMPBFZ, ALU_CMPBFL: writes = 1'b0;
+        // "The decimal addition operation occurs only for the unmasked portion
+        // of the operands, as determined by the mask pattern."
+        //
+        // NOT IMPLEMENTED, and it cannot be from what is held: no page in
+        // either book defines what a mask pattern looks like, which bit or
+        // nibble masks what, or what "unmasked portion" means at nibble
+        // granularity.  The two CVTD instructions give bit-level Operation
+        // blocks for THEIR use of the same byte -- OR'd in on .PZ, compared
+        // against pat[7:4] on .ZP -- but that is a zone value, a different use
+        // of the field.  Same byte, two meanings, and only one of them printed.
+        //
+        // s32_v60.sv decodes the pattern and then never reads it on these
+        // three, so there is no oracle for it either.  The operation here is
+        // over the whole byte, which is what an all-unmasked pattern means, and
+        // the gap is recorded in docs/v60/DECIMAL.md rather than guessed.
+        ALU_ADDDC, ALU_SUBDC, ALU_SUBRDC: raw = {24'd0, dec_res};
+        ALU_CVTDPZ: raw = {16'd0, dec_pz};
+        ALU_CVTDZP: raw = {24'd0, dec_zp};
         ALU_EXTBFS: raw = bf_sx;
         ALU_EXTBFZ: raw = bf_field;
         ALU_EXTBFL: raw = bf_left;
@@ -576,6 +697,40 @@ wire tasi_op = (op == ALU_TASI);
 // subtraction rather than the ALU's, so it takes its own branch.
 wire cmpbf_op = (op == ALU_CMPBFS) || (op == ALU_CMPBFZ) || (op == ALU_CMPBFL);
 
+// The decimal five, whose flag rule is unlike anything else here.
+//
+// Z IS STICKY: "Unchanged if the result is zero, otherwise cleared."  It is
+// never SET by any of the five.  A program presets it and it survives to the
+// end of a multi-byte chain only if every byte produced zero -- an accumulated
+// "the whole number was zero" rather than a per-byte result.
+//
+// The Condition Codes block and the Description DISAGREE on one clause.  The
+// block says Z is cleared when the result is non-zero; the Description says
+// "If the result is non-zero OR A CARRY IS GENERATED, the Z flag will be
+// cleared".  The Description is the more specific statement and the one that
+// makes the chained use correct -- a byte that produces 00 with a carry out is
+// not a zero result of the whole number -- so it is the reading taken here.
+// Same page, same book, and nothing reconciles them; recorded in
+// docs/v60/DECIMAL.md.
+wire dec_op = dec_is_arith || (op == ALU_CVTDPZ) || (op == ALU_CVTDZP);
+// Which quantity Z tests differs across the group and is transcribed as
+// printed: the arithmetic three test their RESULT, CVTD.PZ tests its SOURCE
+// and CVTD.ZP tests its DESTINATION.  For an exact conversion the last two are
+// the same test, so nothing observable turns on it -- but they are printed
+// differently.
+wire dec_z_clear = dec_is_arith        ? ((dec_res != 8'd0) || dec_cy_out)
+                 : (op == ALU_CVTDPZ)  ? (x[7:0] != 8'd0)
+                                       : (dec_zp != 8'd0);
+
+// "a Decimal Format exception will occur and the destination will remain
+// unchanged", on all five pages.  WHEN each checks differs and is transcribed
+// as printed: the arithmetic three check the RESULT following the operation,
+// and the two conversions check their SOURCE prior to it.
+assign dec_bad = dec_is_arith        ? dec_res_bad
+               : (op == ALU_CVTDPZ)  ? dec_pz_bad
+               : (op == ALU_CVTDZP)  ? dec_zp_bad
+                                     : 1'b0;
+
 assign result    = raw & mask;
 assign f_s       = sign_of(raw, msb);
 assign f_z       = ((raw & mask) == 32'd0);
@@ -584,6 +739,12 @@ always_comb begin
     else if (keep_but_ov)  begin
         flags_out           = flags_in;
         flags_out[PSW_OV]   = f_ov;
+    end else if (dec_op) begin
+        // "OV Unchanged / S Unchanged" on all five, and CY moves only on the
+        // arithmetic three -- the plate's `- - - .` against `. - - .`.
+        flags_out          = flags_in;
+        if (dec_is_arith) flags_out[PSW_CY] = dec_cy_out;
+        if (dec_z_clear)  flags_out[PSW_Z]  = 1'b0;
     end else if (cmpbf_op) begin
         flags_out = {bf_cmp[32], bf_cmp_ov, bf_cmp[31], (bf_cmp[31:0] == 32'd0)};
     end else if (tasi_op)  begin

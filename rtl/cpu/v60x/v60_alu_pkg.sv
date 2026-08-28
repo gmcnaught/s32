@@ -213,6 +213,27 @@ typedef enum logic [6:0] {
     ALU_CMPBFL  = 7'd68,
     ALU_INSBFR  = 7'd69,   // right justified
     ALU_INSBFL  = 7'd70,   // left justified
+    // The decimal group -- one primitive each, not string operations: both data
+    // operands of the arithmetic three are BYTES, two packed digits.
+    //
+    //   ADDDC   dst <- dst + src + CY
+    //   SUBDC   dst <- dst - src - CY
+    //   SUBRDC  dst <- src - dst - CY     (the operands reverse, not the home)
+    //
+    // CY is an INPUT here, which nothing else on the read side of an
+    // arithmetic instruction in this set is -- these five are the inner step of
+    // a multi-byte decimal loop and the carry threads the digits together.
+    // That is why all three mnemonics say "with Carry" and why there is no
+    // plain ADDD.
+    ALU_ADDDC   = 7'd71,
+    ALU_SUBDC   = 7'd72,
+    ALU_SUBRDC  = 7'd73,
+    // "Convert Packed to Zoned" and back.  The digit order CROSSES: the high
+    // nibble of the packed byte becomes the digit of the LOW half of the zoned
+    // halfword, which is what makes a zoned string run most-significant-digit
+    // at the lowest address.
+    ALU_CVTDPZ  = 7'd74,
+    ALU_CVTDZP  = 7'd75,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 7'd19,

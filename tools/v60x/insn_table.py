@@ -603,6 +603,12 @@ EXEC_OP = {
 # (p.3.295).  Format VII's `ext` is a BYTE IN THE OPERAND STREAM carrying the
 # field's length (p.3.293).  Two fields, one name, one page apart.
 EXEC_OP_ESCAPE = {
+    # The decimal group: 0x59 with five sub-ops, and the sub-op picks the
+    # operation outright rather than a variant.  Keyed by (mnemonic, 0) because
+    # each has one sub-op of its own -- the `ext` variant field is the bit
+    # field group's, not this one's.
+    ('ADDDC', 0): 'ADDDC', ('SUBDC', 1): 'SUBDC', ('SUBRDC', 2): 'SUBRDC',
+    ('CVTD.PZ', 0): 'CVTDPZ', ('CVTD.ZP', 0): 'CVTDZP',
     ('CMPBF', 0): 'CMPBFS', ('CMPBF', 1): 'CMPBFZ', ('CMPBF', 2): 'CMPBFL',
     ('EXTBF', 0): 'EXTBFS', ('EXTBF', 1): 'EXTBFZ', ('EXTBF', 2): 'EXTBFL',
     # INSBF has only two: the Reference prints insbfr and insbfl and no third,

@@ -37,9 +37,11 @@ wire         writes;
 
 reg  [2:0] bf_resid = 3'd0;
 reg  [5:0] bf_len   = 6'd0;
+reg  [7:0] dec_pat  = 8'd0;
+wire       dec_bad;
 
 v60_alu dut (.op(op), .opbytes(opbytes), .xbytes(xbytes), .x(x), .y(y),
-             .bf_resid(bf_resid), .bf_len(bf_len),
+             .bf_resid(bf_resid), .bf_len(bf_len), .dec_pat(dec_pat), .dec_bad(dec_bad),
              .flags_in(flags_in),
              .result(result), .flags_out(flags_out), .writes(writes));
 
@@ -807,6 +809,115 @@ initial begin
            "a zero-length CMPBF subtracts zero, leaving the source's own sign");
 
     bf_resid = 3'd0; bf_len = 6'd0;
+
+    // =======================================================================
+    // The decimal group.  Both data operands of the arithmetic three are BYTES
+    // -- two packed digits -- so these are a primitive, not a string
+    // operation, and CY is an INPUT: they are the inner step of a multi-byte
+    // loop and the carry threads the digits together.
+    // =======================================================================
+    opbytes = 4'd1; xbytes = 4'd1; bf_resid = 3'd0; bf_len = 6'd0;
+
+    // The carry is DECIMAL and not binary, which is the whole point.
+    // 0x59 + 0x59 as binary is 0xB2 with no carry out; as decimal it is
+    // 59 + 59 = 118, which is 0x18 with CY set.
+    op = ALU_ADDDC; flags_in = 4'b0000; x = 32'h59; y = 32'h59;
+    #1 chk(result === 32'h18, "ADDDC 59 + 59 is 118: the low two digits are 18");
+    #1 chk(flags_out[PSW_CY] === 1'b1,
+           "with CY set -- a DECIMAL carry out of the top digit, not bit 8 of a binary sum");
+
+    // CY on the way IN is what chains the bytes.
+    flags_in = 4'b1000;                  // CY set
+    #1 chk(result === 32'h19, "and the incoming CY is added: 59 + 59 + 1 is 119");
+
+    // No carry either way.
+    flags_in = 4'b0000; x = 32'h12; y = 32'h34;
+    #1 chk(result === 32'h46 && flags_out[PSW_CY] === 1'b0,
+           "12 + 34 is 46 with no carry");
+
+    // SUBDC borrows.
+    op = ALU_SUBDC; x = 32'h34; y = 32'h12;
+    #1 chk(result === 32'h78 && flags_out[PSW_CY] === 1'b1,
+           "SUBDC 12 - 34 borrows: 78 with CY set");
+    x = 32'h12; y = 32'h34;
+    #1 chk(result === 32'h22 && flags_out[PSW_CY] === 1'b0,
+           "and 34 - 12 is 22 with none");
+
+    // SUBRDC reverses the OPERANDS, not the result's home.
+    op = ALU_SUBRDC; x = 32'h34; y = 32'h12;
+    #1 chk(result === 32'h22 && flags_out[PSW_CY] === 1'b0,
+           "SUBRDC computes src - dst: 34 - 12 is 22");
+
+    // Z is STICKY and is never SET.  "Unchanged if the result is zero,
+    // otherwise cleared."
+    op = ALU_ADDDC; flags_in = 4'b0001;   // Z preset
+    x = 32'h00; y = 32'h00;
+    #1 chk(flags_out[PSW_Z] === 1'b1, "a zero result LEAVES a preset Z alone");
+    x = 32'h01; y = 32'h00;
+    #1 chk(flags_out[PSW_Z] === 1'b0, "a non-zero one clears it");
+    flags_in = 4'b0000; x = 32'h00; y = 32'h00;
+    #1 chk(flags_out[PSW_Z] === 1'b0,
+           "and a zero result never SETS it: Z is accumulated across a chain, not per byte");
+
+    // The Description's extra clearing condition, which the Condition Codes
+    // block omits: "if the result is non-zero OR A CARRY IS GENERATED".
+    // 50 + 50 is 100, whose low two digits are 00 with a carry out.
+    flags_in = 4'b0001; x = 32'h50; y = 32'h50;
+    #1 chk(result === 32'h00, "50 + 50 leaves 00 in the byte");
+    #1 chk(flags_out[PSW_CY] === 1'b1, "with a carry");
+    #1 chk(flags_out[PSW_Z] === 1'b0,
+           "and Z is CLEARED -- a zero byte with a carry is not a zero number");
+
+    // OV and S never move on any of the five.
+    flags_in = 4'b0110;                   // OV and S set
+    x = 32'h12; y = 32'h34;
+    #1 chk(flags_out[PSW_OV] === 1'b1 && flags_out[PSW_S] === 1'b1,
+           "OV and S are Unchanged: decimal has no sign and no range beyond the byte");
+
+    // The Decimal Format exception, checked on the RESULT for the arithmetic
+    // three -- not on the operands, which the page is explicit about.
+    flags_in = 4'b0000;
+    x = 32'h12; y = 32'h34;
+    #1 chk(dec_bad === 1'b0, "a valid result raises nothing");
+
+    // And an INVALID input does not raise either, because the page checks the
+    // RESULT and this adder works in values -- 0x1A reads as twenty and comes
+    // back as valid BCD.  Pinning the behaviour rather than leaving it to be
+    // discovered: docs/v60/DECIMAL.md records the page's own open question
+    // about whether a decimal adder can produce invalid BCD at all.
+    x = 32'h1A; y = 32'h00;
+    #1 chk(dec_bad === 1'b0,
+           "an input nibble of A does not raise: the check is on the result, not the operands");
+    #1 chk(result === 32'h20, "and it is read as the value twenty");
+
+    // CVTD.PZ: the digit order CROSSES and `pat` supplies the zone by OR.
+    // Its destination is a HALFWORD, which is what opbytes carries here -- the
+    // sequencer takes it from the table's (1, 2) for this row.
+    opbytes = 4'd2; flags_in = 4'b1000;   // CY set, so "Unchanged" can fail
+    op = ALU_CVTDPZ; dec_pat = 8'h30; x = 32'h59;
+    #1 chk(result === 32'h3935,
+           "CVTD.PZ 0x59 with pattern 0x30 gives 0x3935 -- the digits cross");
+    #1 chk(dec_bad === 1'b0, "and 5 and 9 are both valid BCD");
+    #1 chk(flags_out[PSW_CY] === flags_in[PSW_CY],
+           "CY is Unchanged on a conversion -- it moves only on the arithmetic three");
+    x = 32'h5A;
+    #1 chk(dec_bad === 1'b1, "a nibble of A is not a digit, and CVTD.PZ checks its SOURCE");
+
+    // CVTD.ZP is the exact inverse -- a halfword source into a byte
+    // destination -- and checks the ZONE against pat[7:4].
+    opbytes = 4'd1; xbytes = 4'd2;
+    op = ALU_CVTDZP; dec_pat = 8'h30; x = 32'h3935;
+    #1 chk(result === 32'h59, "CVTD.ZP 0x3935 with pattern 0x30 gives back 0x59");
+    #1 chk(dec_bad === 1'b0, "with both zones matching");
+    #1 chk(flags_out[PSW_CY] === flags_in[PSW_CY], "and CY Unchanged here too");
+    x = 32'h3945;
+    #1 chk(dec_bad === 1'b1,
+           "a zone of 4 where the pattern says 3 raises -- the only case in the group "
+           );
+    x = 32'h393A;
+    #1 chk(dec_bad === 1'b1, "and a digit nibble of A raises too");
+
+    dec_pat = 8'd0; flags_in = 4'b0000;
 
     if (errors == 0) $display("V60 ALU PASS");
     else             $display("V60 ALU FAIL (%0d errors)", errors);

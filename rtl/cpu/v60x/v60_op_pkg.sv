@@ -1155,6 +1155,11 @@ function automatic alu_op_e op_alu_escape(input logic [7:0] op,
     alu_op_e r;
     begin
         case ({op, 3'b000, subop})
+            16'h5900: r = ALU_ADDDC;   // ADDDC
+            16'h5901: r = ALU_SUBDC;   // SUBDC
+            16'h5902: r = ALU_SUBRDC;  // SUBRDC
+            16'h5910: r = ALU_CVTDPZ;  // CVTD.PZ
+            16'h5918: r = ALU_CVTDZP;  // CVTD.ZP
             16'h5D00: r = ALU_CMPBFS;  // CMPBF
             16'h5D01: r = ALU_CMPBFZ;  // CMPBF
             16'h5D02: r = ALU_CMPBFL;  // CMPBF

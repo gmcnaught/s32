@@ -389,6 +389,15 @@ localparam logic [7:0] VEC_BREAKPOINT    = 8'd13;
 // that reaches it, and it shares the Arithmetic Exceptions frame with the
 // integer overflow and the zero divide above.
 localparam logic [7:0] VEC_FP_ARITH      = 8'd22;
+// +92  Decimal Arithmetic Exception   vector 23   code 1780
+// Both off databook plates: p.3.270's SBT figure prints "23 Decimal Arithmetic
+// Exception" directly under "22 Floating Point Arithmetic", and p.3.272's
+// Exception Codes table ends the Arithmetic block with "1780 decimal format
+// exception", under "1680 reserved floating point operand".  The numbering
+// carries the split even though the databook has no separate decimal heading:
+// 15xx integer, 16xx floating point, 17xx decimal.
+localparam logic  [7:0] VEC_DEC_ARITH  = 8'd23;
+localparam logic [15:0] CODE_DEC_FORMAT = 16'h1780;
 // +96..+108  Change to Execution Level 0..3   vectors 24..27
 // The databook's p.3.270 SBT plate prints these individually --
 // "24 Change to Execution Level 0" through "27 ... Level 3" -- immediately
@@ -582,6 +591,7 @@ logic [31:0] r28_r;
 logic  [5:0] bf_len_r;
 logic        bf_bad_r;    // INSBF's check, latched so the open access can close
 logic  [2:0] bf_resid_r;  // where the field starts within the word read
+logic  [7:0] dec_pat_r;   // the decimal group's mask pattern
 logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
                           // or -- for CALL, before either -- the argument list
 logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
@@ -669,6 +679,9 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              // "extbfs bsrc.w.r, blen.b.r, dst.w.w"
                              (aop == ALU_EXTBFS) || (aop == ALU_EXTBFZ) ||
                              (aop == ALU_EXTBFL) ||
+                             // "cvtd.pz src.b.r, dst.h.w" -- both conversions
+                             // print a write-only destination.
+                             (aop == ALU_CVTDPZ) || (aop == ALU_CVTDZP) ||
                              // "dst <- [SP+]": POP's one encoded operand is
                              // written and never read.
                              (aop == ALU_POP);
@@ -1009,6 +1022,18 @@ wire  [4:0] bf_len_rn   = bf_ext_raw[4:0];
 wire        bf_addr_bad = is_bf &&
                           (({4'd0, ea_bit_resid} + {1'b0, bf_len_r}) > 7'd32);
 
+// The decimal group.  Format VIIc again, and the SAME extension byte -- but
+// carrying a mask PATTERN rather than a length, which §6 admits in one clause:
+// "This field is also used to store the mask pattern for the ADDDC, SUBDC,
+// SUBRDC, and CVTD instructions."  So the format alone does not say what the
+// byte means; the opcode does.  0x5D is the bit field group and 0x59 is this
+// one.
+wire        fmt_vii_bf  = (idu_op == 8'h5D);
+wire        fmt_vii_dec = (idu_op == 8'h59);
+wire        is_dec_ar = (aop == ALU_ADDDC) || (aop == ALU_SUBDC) ||
+                        (aop == ALU_SUBRDC);
+wire        is_dec    = is_dec_ar || (aop == ALU_CVTDPZ) || (aop == ALU_CVTDZP);
+
 wire        is_xch = (aop == ALU_XCH);
 // Format I with d = 0 puts dst1 in the register field, where it cannot be
 // anything else.  Every other encoding puts it in op1's addressing mode.
@@ -1097,6 +1122,7 @@ wire [3:0] w_dst = fmt_iii ? w_src : w_dst_raw;
 
 // The ALU is combinational; its inputs are the two operand values.
 wire  [3:0] alu_flags;
+wire        alu_dec_bad;
 wire [31:0] alu_result;
 wire        alu_writes;
 
@@ -1115,7 +1141,8 @@ wire [3:0] alu_xbytes = ((w_src == 4'd1) || (w_src == 4'd2) ||
 v60_alu alu (
     .op(aop), .opbytes(alu_bytes), .xbytes(alu_xbytes),
     .x(val1[31:0]), .y(val2[31:0]), .flags_in(psw_flags(psw)),
-    .bf_resid(bf_resid_r), .bf_len(bf_len_r),
+    .bf_resid(bf_resid_r), .bf_len(bf_len_r), .dec_pat(dec_pat_r),
+    .dec_bad(alu_dec_bad),
     .result(alu_result), .flags_out(alu_flags), .writes(alu_writes)
 );
 
@@ -1156,7 +1183,10 @@ logic        md_writes_r, md_zd_r, md_used;
 
 wire [31:0] eff_result = md_used ? md_result_r : alu_result;
 wire  [3:0] eff_flags  = md_used ? md_flags_r  : alu_flags;
-wire        eff_writes = md_used ? md_writes_r : alu_writes;
+// "a Decimal Format exception will occur and the destination will remain
+// unchanged" -- so the writeback is gated on it, the way the zero divide's is.
+wire        dec_fault = is_dec && alu_dec_bad;
+wire        eff_writes = md_used ? md_writes_r : (alu_writes && !dec_fault);
 
 // A doubleword destination -- the four X forms and MOV.D.  Its width comes
 // from the table (w_dst = 8), not from a decision here.
@@ -1214,6 +1244,7 @@ always_ff @(posedge clk) begin
         bf_len_r        <= 6'd0;
         bf_bad_r        <= 1'b0;
         bf_resid_r      <= 3'd0;
+        dec_pat_r       <= 8'd0;
         ea_bit_mode     <= 1'b0;
         stk_val         <= 32'd0;
         stk_cnt         <= 32'd0;
@@ -1497,6 +1528,15 @@ always_ff @(posedge clk) begin
                 // INC and DEC, whose operand is `y`, are both served without
                 // the sequencer having to know which.
                 state <= S_OP2;
+            end else if (fmt_vii_dec) begin
+                // The decimal group's extension byte is a mask PATTERN, and it
+                // is taken verbatim.  §6's bit-7 register redirection is
+                // defined entirely in terms of the LENGTH operand and no
+                // decimal page extends it to a pattern, so a pattern of 0x80
+                // or above is undefined by the documents -- recorded in
+                // docs/v60/DECIMAL.md rather than given a reading here.
+                dec_pat_r <= op2_ext;
+                state     <= S_OP1;
             end else if (fmt_viib || fmt_viic) begin
                 // The bit field group.  Its length comes from the ext byte the
                 // format carries, or -- when bit 7 is set -- from the register
@@ -2018,6 +2058,19 @@ always_ff @(posedge clk) begin
                 md_zd_r    <= 1'b0;
                 exc_vec_r  <= VEC_INT_ARITH;
                 exc_code_r <= CODE_ZERO_DIVIDE;
+                exc_kind   <= EK_ARITH;
+                state      <= S_EXC_SW;
+            end else if (dec_fault) begin
+                // "a Decimal Format exception will occur and the destination
+                // will remain unchanged" -- eff_writes above is what keeps the
+                // destination, and this is the exception.  Figure 8-5 puts #21,
+                // #22 and #23 under one Arithmetic Exceptions heading with ONE
+                // frame, so this is the frame the zero divide already builds:
+                // the Current PC as a parameter above the code word, count 8,
+                // and the NEXT PC on top.  A handler therefore returns PAST the
+                // instruction that trapped, onto an unchanged destination.
+                exc_vec_r  <= VEC_DEC_ARITH;
+                exc_code_r <= CODE_DEC_FORMAT;
                 exc_kind   <= EK_ARITH;
                 state      <= S_EXC_SW;
             end else if (is_chlvl) begin
