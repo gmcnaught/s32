@@ -1,0 +1,144 @@
+# The next four goals, ready to set
+
+**Written 2026-08-27.** `docs/v60/NEXT-STEPS.md` says what is open and why.
+This file says it in the form the work is actually started in: four
+self-contained goal texts, each carrying its own pages, its own acceptance
+criteria and the standing rules, so none of them depends on the conversation
+that produced it.
+
+The order is not the order `NEXT-STEPS.md` lists its items in, and the
+difference is deliberate. The return pairs are listed first there because they
+finish a group; they gate nothing, since `BSR`/`JSR` already pair with `RSR`.
+**Goal 1 is what blocks running System 32 code at all** — that machine raises
+interrupts and `v60_biu` cannot receive one. Goal 4 pays off outside this tree
+rather than inside it and can run at any point.
+
+---
+
+## Goal 1 — the externally raised exceptions
+
+```
+Add the externally raised exceptions to the clean-room V60 in
+~/MisterFPGA-Projects/s32-v60-cleanroom (branch v60/cleanroom): the NMI*, INT
+and BERR* pins on v60_biu, and their recognition in v60_seq.
+
+What the pages give: NMI* is "an active low interrupt input that cannot be
+masked ... at the completion of the current instruction, the PC and PSW are
+pushed" (databook §1), and its SBT entry is +12, so vector 3. INT is "an
+active high interrupt input that can be masked by the IE bit", and when it is
+taken "the uPD70616 will perform a pair of back-to-back interrupt acknowledge
+cycles. On the second interrupt acknowledge cycle, an 8-bit interrupt vector is
+read from the external uPD71059" — BST_INTERRUPT_ACK already exists in
+v60_bus_pkg and nothing issues it. BERR* "indicates the presence of a fault in
+the current bus cycle and requests a retry", and its family's exception codes
+are 0300-031E. Read the bus-error and stack-invalid entries off Figure 8-2
+before using them: the low end of that figure OCRs ambiguously in both books,
+so check the plate.
+
+Recognition happens between instructions, which is where v60_seq already
+raises. An interrupt's frame is the PSW and the PC and nothing else, which
+v60_exc already builds. Done when: a bench drives each pin and the handler
+runs, INT is held off while PSW.IE is clear and taken when it is set, the
+vector comes off the second acknowledge cycle, and tb_v60_pfu's continuous
+bus-ownership assertions still hold with a third kind of cycle on the bus.
+
+Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
+solve yourself.
+```
+
+## Goal 2 — the two return pairs
+
+`RETIU`/`RETIS` became cheaper than `NEXT-STEPS.md` first described them: the
+frame carries the parameter count they need, in the same word as the exception
+code.
+
+```
+Implement the V60's two return pairs in ~/MisterFPGA-Projects/s32-v60-cleanroom
+(branch v60/cleanroom): RETIU/RETIS, then CALL/RET.
+
+RETIU and RETIS are the other end of v60_exc, which pushes exactly what they
+pop: the return PC on top, the PSW under it, then the word holding the
+exception code beside the parameter count, then any parameters. The count is
+"used by exception handlers to determine the number of bytes to discard from
+the stack following the processing of the exception" (§8), so read it off the
+frame rather than being told. They restore the PSW as well as the PC, so they
+need the register file's stack switch on the way out, which v60_seq already
+drives on the way in. The two differ in which stack they return to.
+
+CALL and RET pass the argument pointer, which is R29 (p.3.247). RET's
+operation is "tmp1 <- num ; tmp2 <- [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ;
+PC <- tmp2" (§7).
+
+Done when: tb_v60_seq runs an exception handler that returns and the
+interrupted program continues, with the stack pointer back where it started;
+and a subroutine called with arguments returns and its frame is gone.
+
+Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
+solve yourself.
+```
+
+## Goal 3 — the multiplies and divides
+
+The first execution unit here that is not one cycle of combinational logic,
+and the first exception raised by something other than a decode failure.
+
+```
+Add MUL, MULU, DIV, DIVU, REM and REMU to the clean-room V60 in
+~/MisterFPGA-Projects/s32-v60-cleanroom (branch v60/cleanroom).
+
+These are not one cycle of combinational logic, so they need a unit with a
+busy/done handshake and a sequencer state that waits on it -- v60_alu stays
+combinational. The generated table already reports ALU_NONE for them and
+v60_seq stops rather than inventing an answer, so the table is where they get
+switched on. The X forms (MULX, MULUX, DIVX, DIVUX) produce a doubleword,
+which is a register PAIR, low register first (§3): v60_regfile has ra_pair and
+nothing uses it, and v60_ea only warns when asked for one.
+
+A zero divide is the Integer Arithmetic Exception -- vector 21, which BRKV's
+page and Figure 8-2's +84 confirm each other on -- with its own code from the
+Arithmetic Exceptions group. That is a second raise site for v60_exc and the
+first that is not a decode failure.
+
+Done when: byte width is checked exhaustively against integer arithmetic in
+the bench (as ADD and SUB are), halfword and word at their boundaries, the
+signed/unsigned pairs disagree where they should, and a divide by zero reaches
+its handler through v60_exc.
+
+Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
+solve yourself.
+```
+
+## Goal 4 — the co-simulation oracle
+
+The cheapest thing on the list, and the only one that pays off for the
+*shipping* core rather than for this one.
+
+```
+Build the co-simulation oracle described in docs/v60/NEXT-STEPS.md in
+~/MisterFPGA-Projects/s32-v60-cleanroom (branch v60/cleanroom): feed the same
+instruction stream to rtl/cpu/v60/s32_v60.sv and to the clean-room decoder,
+and assert that they agree on instruction boundaries and lengths.
+
+It needs no new RTL and carries no integration risk, and it tests s32_v60.sv
+in a way nothing currently does. Where they disagree, the databook page
+decides: report each disagreement with the opcode, both lengths, and the page,
+and do not "fix" either side without one.
+
+While there: tools/v60x/insn_table.py resolves the operand-access CSV relative
+to the working directory, so a hand-run from tools/v60x/ silently skips its
+66-row cross-check and still prints a pass. Make the path relative to the
+script.
+
+Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
+solve yourself.
+```
+
+---
+
+## What is deliberately not a goal yet
+
+**Synthesis**, because area and timing on this tree are unknown and any claim
+about replacing `rtl/cpu/v60/` starts with a fit rather than with more RTL.
+**The bit-string group, the floating point group, the MMU, task and context
+switching, address traps and emulation mode**, each of which is its own
+subsystem. `NEXT-STEPS.md` carries the reasoning for both.

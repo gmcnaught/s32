@@ -11,6 +11,11 @@ it came from, every bench runs under both simulators, every bench is
 mutation-checked and what survives is closed rather than noted, and anything not
 from a page is marked at the point of decision.
 
+`docs/v60/GOALS.md` is this list in the form the work is started in — four
+paste-ready goal texts, each carrying its own pages and acceptance criteria.
+Its order differs from this file's on purpose: item 2 below is what blocks
+running System 32 code, and item 1 gates nothing.
+
 ---
 
 ## 1. The two return pairs
