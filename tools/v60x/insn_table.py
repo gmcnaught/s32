@@ -283,10 +283,22 @@ SHARED_ENCODINGS = {
 # both readings are first hand.  In each case the FORMAT is the same on both
 # readings, so nothing the RTL uses depends on the resolution.
 DISAGREEMENTS = {
-    'IN':  'databook p.3.299 prints 00100.siz.0 (20 22 24); the Programmer\'s '
-           'Reference S7 page for IN prints "Opcode 21 23 25".  OUT takes the '
-           'other half of the pair either way, and both are Format I,II.',
-    'OUT': 'the other half of the IN disagreement, above.',
+    'IN':  'RESOLVED in the databook\'s favour -- the Reference prints "Opcode '
+           '21 23 25" on the IN page AND on the OUT page, which cannot be '
+           'right because the two would collide.  OUT\'s value matches the '
+           'p.3.299 plate exactly, so the corrupted column is IN\'s: its page '
+           'carries OUT\'s opcodes.  IN is 20/22/24.  '
+           'See docs/v60/TRANCHE-ONE.md.',
+    # RESOLVED, in the databook's favour.  The Programmer's Reference prints
+    # "Opcode 21 23 25" on the IN page AND on the OUT page -- the same three
+    # bytes for two different instructions, which cannot be right because they
+    # would collide.  The plate at p.3.299 gives IN 00100.siz.0 (20 22 24) and
+    # OUT 00100.siz.1 (21 23 25), and OUT's value matches the Reference
+    # exactly.  So the corrupted column is IN's: its page carries OUT's
+    # opcodes.  This is not an OCR artefact of the 5O08-for-5C-08 kind -- the
+    # digits are individually plausible; it is the whole column repeated.
+    # See docs/v60/TRANCHE-ONE.md.  IN is 20/22/24, which is what this table
+    # has always had.
     'MOVCS': 'the databook prints only the c=0 form (58); the Programmer\'s '
              'Reference gives 58-0C and 5A-0C, so the c bit is live.  Taken '
              'from the Reference.',
@@ -511,6 +523,9 @@ EXEC_OP = {
     # for three of them written back), and CY and Z always describe the bit as
     # it was BEFORE.
     'TEST1': 'TEST1', 'SET1': 'SET1', 'CLR1': 'CLR1', 'NOT1': 'NOT1',
+    # The I/O pair.  The only instructions that issue an I/O bus cycle -- and
+    # so the only way v60_bus_pkg's three-TI recovery rule is reachable.
+    'IN': 'IN', 'OUT': 'OUT',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

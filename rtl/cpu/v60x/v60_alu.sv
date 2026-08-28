@@ -342,6 +342,9 @@ always_comb begin
         ALU_LDPR: writes = 1'b0;
         // No operand, and all four flags Unchanged.
         ALU_HALT: writes = 1'b0;
+        // Both are "dst <- port" / "port <- src": a move, and all four flags
+        // Unchanged.  Which side is the port is the sequencer's business.
+        ALU_IN, ALU_OUT: raw = x;
         // "test1 offset.w.r, base.w.r" -- both operands read, nothing written.
         ALU_TEST1: begin writes = 1'b0; f_cy = bit_old; end
         ALU_SET1:  begin raw = y |  bit_one; f_cy = bit_old; end
@@ -421,7 +424,7 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_NOP)   || (op == ALU_MOVEA) || (op == ALU_GETPSW) ||
                 (op == ALU_BRKV)  || (op == ALU_BRK)    || (op == ALU_TRAP) ||
                 (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR) ||
-                (op == ALU_HALT);
+                (op == ALU_HALT)   || (op == ALU_IN)    || (op == ALU_OUT);
 wire keep_but_ov = (op == ALU_MOVT);
 // "CY Set if the designated bit is 1, otherwise cleared / OV Unchanged /
 // S Unchanged / Z Set if the designated bit is 0, otherwise cleared" -- the

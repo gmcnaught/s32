@@ -1012,6 +1012,12 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h1B: r = ALU_MOV;  // MOV.H
             8'h1C: r = ALU_MOVS; // MOVS.HW
             8'h1D: r = ALU_MOVZ; // MOVZ.HW
+            8'h20: r = ALU_IN;   // IN
+            8'h21: r = ALU_OUT;  // OUT
+            8'h22: r = ALU_IN;   // IN
+            8'h23: r = ALU_OUT;  // OUT
+            8'h24: r = ALU_IN;   // IN
+            8'h25: r = ALU_OUT;  // OUT
             8'h29: r = ALU_MOVT; // MOVT.WB
             8'h2B: r = ALU_MOVT; // MOVT.WH
             8'h2C: r = ALU_RVBYT; // RVBYT

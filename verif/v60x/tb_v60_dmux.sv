@@ -39,11 +39,12 @@ wire        overlap;
 
 v60_dmux dut (
     .a_req(a_req), .a_addr(a_addr), .a_nbytes(a_nbytes), .a_we(a_we),
+    .a_io(1'b0),
     .a_wdata(a_wdata), .a_rdata(a_rdata), .a_done(a_done), .a_cycles(a_cycles),
     .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we), .b_intack(1'b0),
     .b_wdata(b_wdata), .b_rdata(b_rdata), .b_done(b_done), .b_cycles(b_cycles),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
-    .dx_intack(dx_intack),
+    .dx_intack(dx_intack), .dx_io(),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles), .overlap(overlap)
 );

@@ -111,6 +111,13 @@ typedef enum logic [5:0] {
     ALU_SET1    = 6'd44,
     ALU_CLR1    = 6'd45,
     ALU_NOT1    = 6'd46,
+    // "dst <- port" and "port <- src".  Both are a move; what makes them I/O
+    // is that the bus cycle for ONE of their two operands is directed at the
+    // I/O address space -- the source's for IN, the destination's for OUT.
+    // Both are privileged, and "Rn" is Illegal for the port operand, a
+    // register having no address to send.
+    ALU_IN      = 6'd47,
+    ALU_OUT     = 6'd48,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

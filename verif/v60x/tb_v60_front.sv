@@ -117,10 +117,11 @@ v60_ea ea (
     .start(e_start), .mode(e_mode), .has_index(e_index),
     .disp(e_disp), .disp_outer(e_outer), .imm(e_imm),
     .rn_val(e_rn), .rx_val(e_rx), .pc_val(e_pc),
-    .opbytes(e_bytes), .we(e_we), .wdata(e_wdata),
+    .opbytes(e_bytes), .we(e_we), .io(1'b0), .wdata(e_wdata),
     .ea(e_ea), .rdata(e_rdata), .rn_wb(), .rn_wb_val(),
     .illegal(), .busy(), .done(e_done), .bus_cycles(e_cycles),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
+    .dx_io(),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles)
 );

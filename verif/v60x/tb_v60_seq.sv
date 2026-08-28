@@ -142,7 +142,8 @@ v60_regfile rf (
 
 // ---- address unit and data unit ------------------------------------------------
 wire        ea_start, ea_index, ea_we, ea_rmw, ea_rmw_go, ea_rmw_pending;
-wire        ea_addr_only;
+wire        ea_addr_only, ea_io;
+wire        a_io, dx_io;
 am_mode_e   ea_mode;
 wire [31:0] ea_disp, ea_douter, ea_rn_val, ea_rx_val, ea_pc_val, ea_ea;
 wire [63:0] ea_imm, ea_wdata, ea_rmw_data, ea_rdata;
@@ -180,13 +181,14 @@ v60_ea ea (
     .start(ea_start), .mode(ea_mode), .has_index(ea_index),
     .disp(ea_disp), .disp_outer(ea_douter), .imm(ea_imm),
     .rn_val(ea_rn_val), .rx_val(ea_rx_val), .pc_val(ea_pc_val),
-    .opbytes(ea_opbytes), .we(ea_we), .wdata(ea_wdata),
+    .opbytes(ea_opbytes), .we(ea_we), .io(ea_io), .wdata(ea_wdata),
     .addr_only(ea_addr_only),
     .rmw(ea_rmw), .rmw_pending(ea_rmw_pending), .rmw_go(ea_rmw_go),
     .rmw_data(ea_rmw_data),
     .ea(ea_ea), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
     .illegal(), .busy(), .done(ea_done), .bus_cycles(ea_cycles),
     .dx_req(a_req), .dx_addr(a_addr), .dx_nbytes(a_nbytes), .dx_we(a_we),
+    .dx_io(a_io),
     .dx_wdata(a_wdata), .dx_rdata(a_rdata), .dx_done(a_done),
     .dx_cycles(a_cycles)
 );
@@ -214,7 +216,9 @@ v60_dmux dmux (
     .a_wdata(a_wdata), .a_rdata(a_rdata), .a_done(a_done), .a_cycles(a_cycles),
     .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we), .b_intack(exc_intack),
     .b_wdata(b_wdata), .b_rdata(b_rdata), .b_done(b_done), .b_cycles(b_cycles),
+    .a_io(a_io),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
+    .dx_io(dx_io),
     .dx_intack(dx_intack),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles),
@@ -229,7 +233,7 @@ wire  [15:0] d_wdata;
 
 v60_dxu dxu (
     .clk(clk), .rst(rst),
-    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(1'b0), .intack(dx_intack),
+    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(dx_io), .intack(dx_intack),
     .wdata(dx_wdata), .rdata(dx_rdata), .busy(), .done(dx_done),
     .cycles(dx_cycles),
     .biu_req(d_req), .biu_status(d_status), .biu_addr(d_addr),
@@ -261,7 +265,7 @@ v60_seq seq (
     .ea_start(ea_start), .ea_mode(ea_mode), .ea_index(ea_index),
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
     .ea_rn_val(ea_rn_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
-    .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_wdata(ea_wdata),
+    .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_io(ea_io), .ea_wdata(ea_wdata),
     .ea_addr_only(ea_addr_only),
     .ea_rmw(ea_rmw), .ea_rmw_go(ea_rmw_go), .ea_rmw_data(ea_rmw_data),
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
@@ -368,6 +372,18 @@ always @(*) d_in = is_iack ? {8'h00, (iack_n == 0) ? iack_first : iack_second}
 
 integer n_writes = 0;
 always @(posedge clk) if (!rst && biu_ack && !rw_n) n_writes = n_writes + 1;
+
+// The I/O address space, watched at the PINS.  "MRQ*,ST2-ST0 = 1011" is a
+// single mode I/O access (p.3.233), and MRQ is the bit that says I/O at all --
+// so this is the pin pattern and not a decode of anything internal.  Nothing
+// but IN and OUT can produce it.
+wire       is_io      = ({mrq_n, st} === 4'b1011);
+wire       is_mem_sgl = ({mrq_n, st} === 4'b0011);
+integer    n_io = 0, n_io_wr = 0, n_mem_sgl = 0;
+always @(posedge clk) if (!rst && biu_ack && is_io)      n_io      = n_io + 1;
+always @(posedge clk) if (!rst && biu_ack && is_io && !rw_n)
+                                                          n_io_wr   = n_io_wr + 1;
+always @(posedge clk) if (!rst && biu_ack && is_mem_sgl) n_mem_sgl = n_mem_sgl + 1;
 
 always @(posedge clk) if (!rst && biu_ack && !rw_n) begin
     case ({ube_n, a[0]})
@@ -1081,6 +1097,24 @@ initial begin
     mem[11'h3E0] = 8'hB7; mem[11'h3E1] = 8'hA0; mem[11'h3E2] = 8'hF4;
     mem[11'h3E3] = 8'h03; mem[11'h3E4] = 8'h00; mem[11'h3E5] = 8'h00;
     mem[11'h3E6] = 8'h00; mem[11'h3E7] = 8'h88;
+
+    // The I/O pair, Format II.  R10 holds the port address.
+    // IN.b [R10], R9    20 A0 6A 69   -- the port on the SOURCE side
+    mem[11'h3F0] = 8'h20; mem[11'h3F1] = 8'hA0; mem[11'h3F2] = 8'h6A;
+    mem[11'h3F3] = 8'h69;
+    // OUT.b R9, [R10]   21 C0 69 6A   -- the port on the DESTINATION side.
+    //   The C0 prefix is m = 1 on the first operand (R9 direct) and m = 0 on
+    //   the second, which is what makes 6A the INDIRECT [R10] a port needs.
+    mem[11'h3F4] = 8'h21; mem[11'h3F5] = 8'hC0; mem[11'h3F6] = 8'h69;
+    mem[11'h3F7] = 8'h6A;
+    // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
+    //   at [R10] is read from MEMORY and only the operand it names is an I/O
+    //   access: an addressing mode's own accesses are not the instruction's.
+    mem[11'h280] = 8'h20; mem[11'h281] = 8'hA0; mem[11'h282] = 8'h8A;
+    mem[11'h283] = 8'h00; mem[11'h284] = 8'h69;
+    // IN.b R10, R9      20 E0 6A 69   -- the port names a REGISTER: illegal
+    mem[11'h3F8] = 8'h20; mem[11'h3F9] = 8'hE0; mem[11'h3FA] = 8'h6A;
+    mem[11'h3FB] = 8'h69;
 
     // TRAPFL at 0x2B0 -- CB, Format V, one byte
     mem[11'h2B0] = 8'hCB;
@@ -2464,6 +2498,100 @@ initial begin
         "and the CURRENT PC, so the handler restarts it");
     chk(rf.gpr[9] === 32'h1234_5678,
         "having touched nothing: the base was never even addressed");
+
+    // =======================================================================
+    // IN and OUT.  The only instructions that put an I/O bus cycle on the
+    // pins, and the only reason v60_bus_pkg's three-TI recovery rule is
+    // reachable at all.
+    //
+    // Their asymmetry is the thing to get right: "in.b port.b.r, dst.b.w" puts
+    // the port on the SOURCE and "out.b src.b.r, port.b.w" on the DESTINATION,
+    // so one wire cannot drive both.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0710;              // the port address
+    rf.gpr[9]  = 32'h0000_0000;
+    mem[11'h710] = 8'h5B;
+    repeat (2) @(negedge clk);
+    n_io = 0; n_io_wr = 0; n_mem_sgl = 0;
+    jump(32'h000003F0);
+    step;
+    chk(rf.gpr[9] === 32'h0000_005B, "IN.b read the port into its destination");
+    chk(n_io == 1, "in exactly one I/O bus cycle");
+    chk(n_io_wr == 0, "which was a READ");
+    chk(n_mem_sgl == 0,
+        "and no single-mode MEMORY cycle: its destination is a register");
+
+    // OUT, whose port is the other operand.
+    @(negedge clk);
+    rf.gpr[9] = 32'h0000_00C4;
+    repeat (2) @(negedge clk);
+    n_io = 0; n_io_wr = 0;
+    jump(32'h000003F4);
+    step;
+    chk(mem[11'h710] === 8'hC4, "OUT.b wrote its source to the port");
+    chk(n_io == 1 && n_io_wr == 1,
+        "in one I/O cycle, and this time a WRITE -- the port is the DESTINATION");
+
+    // The pointer chase, which is the distinction worth proving: an indirect
+    // addressing mode reads its pointer from MEMORY even when the operand it
+    // finally reaches is a port.  Only the last access is I/O.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0710;
+    rf.gpr[9]  = 32'h0000_0000;
+    put_word(13'h710, 32'h0000_0720);        // the pointer, in memory
+    mem[11'h720] = 8'h9E;                    // the port, behind it
+    repeat (2) @(negedge clk);
+    n_io = 0; n_io_wr = 0; n_mem_sgl = 0;
+    jump(32'h00000280);
+    step;
+    chk(rf.gpr[9] === 32'h0000_009E,
+        "IN through an indirect port read the byte the pointer named");
+    chk(n_io == 1, "in exactly ONE I/O cycle -- the operand access");
+    chk(n_mem_sgl == 2,
+        "while the pointer itself was read from MEMORY, in two cycles on a 16-bit bus");
+
+    // A register port is Illegal.  "Rn" is marked X in the Addressing Modes
+    // column of both pages, because the I/O address is the port operand's
+    // effective address and a register has none.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    n_io = 0;
+    jump(32'h000003F8);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "IN with a register port is the Illegal Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+    chk(n_io == 0, "and no I/O cycle was issued");
+
+    // Both are privileged: "I/O space accesses are always generated by the
+    // execution of the privileged IN and OUT instructions."
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd1; pr_wdata = 32'h0000_0680; pr_wr = 1'b1;   // PR_L0SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    rf.gpr[10] = 32'h0000_0710;
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    n_io = 0;
+    jump(32'h000003F0);
+    step;
+    chk(seq_pc === 32'h00000780,
+        "IN at execution level 3 is the Privileged Instruction exception");
+    chk(n_io == 0, "raised before any I/O cycle went out");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
