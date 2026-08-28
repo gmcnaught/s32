@@ -172,6 +172,24 @@ typedef enum logic [5:0] {
     // CMP's exactly, so that is all this does; which of the two writes happens
     // is the sequencer's.
     ALU_CAXI    = 6'd58,
+    // The X forms, whose destination is a DOUBLEWORD -- "a register pair, low
+    // register first" (S3), or eight contiguous bytes "identified by the
+    // address of the low order byte" (S2).
+    //
+    //   MULX/MULUX  dst.d <- dst.LOW_WORD * src.w      (a 64-bit product)
+    //   DIVX/DIVUX  dst.d <- dst.d / src.w, and the two halves of the
+    //               destination take DIFFERENT quantities: "The resulting
+    //               32-bit quotient is stored in the lower word of the
+    //               destination and the 32-bit remainder is stored in the
+    //               upper word."
+    //
+    // So DIVX is not a 64-bit result; it is two independent 32-bit results
+    // sharing one operand, which is why v60_muldiv gained a second result
+    // port rather than a wider one.
+    ALU_MULX    = 6'd59,
+    ALU_MULUX   = 6'd60,
+    ALU_DIVX    = 6'd61,
+    ALU_DIVUX   = 6'd62,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

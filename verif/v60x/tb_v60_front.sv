@@ -116,7 +116,7 @@ v60_ea ea (
     .clk(clk), .rst(rst),
     .start(e_start), .mode(e_mode), .has_index(e_index),
     .disp(e_disp), .disp_outer(e_outer), .imm(e_imm),
-    .rn_val(e_rn), .rx_val(e_rx), .pc_val(e_pc),
+    .rn_val(e_rn), .rn1_val(32'd0), .rx_val(e_rx), .pc_val(e_pc),
     .opbytes(e_bytes), .we(e_we), .io(1'b0), .lock(1'b0), .wdata(e_wdata),
     .ea(e_ea), .rdata(e_rdata), .rn_wb(), .rn_wb_val(),
     .illegal(), .busy(), .done(e_done), .bus_cycles(e_cycles),

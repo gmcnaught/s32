@@ -115,6 +115,7 @@ wire  [1:0] rf_new_el;
 wire  [1:0] seq_exc_new_el;
 wire [31:0] rf_sbr;
 wire [31:0] rf_ra, rf_rb, rf_wr_data;
+wire [63:0] rf_ra_pair;
 wire        rf_wr_en;
 
 // The privileged register port has two drivers: this bench, which places SBR
@@ -132,7 +133,8 @@ wire [31:0] mux_pr_wdata = pr_wr ? pr_wdata : seq_pr_wdata;
 
 v60_regfile rf (
     .clk(clk), .rst(rst),
-    .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb), .ra_pair(),
+    .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb),
+    .ra_pair(rf_ra_pair),
     .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data),
     .psw_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
     .stack_switch(rf_stack_switch), .new_el(rf_new_el), .new_is(rf_new_is),
@@ -148,6 +150,8 @@ wire        a_io, dx_io;
 wire        ea_lock, a_lock, dx_lock, d_lock, biu_lock;
 am_mode_e   ea_mode;
 wire [31:0] ea_disp, ea_douter, ea_rn_val, ea_rx_val, ea_pc_val, ea_ea;
+wire [31:0] ea_rn1_val, ea_rn_wb_hi;
+wire        ea_rn_wb_pair;
 wire [63:0] ea_imm, ea_wdata, ea_rmw_data, ea_rdata;
 wire  [3:0] ea_opbytes, ea_cycles;
 wire        ea_done, ea_rn_wb;
@@ -182,12 +186,13 @@ v60_ea ea (
     .clk(clk), .rst(rst),
     .start(ea_start), .mode(ea_mode), .has_index(ea_index),
     .disp(ea_disp), .disp_outer(ea_douter), .imm(ea_imm),
-    .rn_val(ea_rn_val), .rx_val(ea_rx_val), .pc_val(ea_pc_val),
+    .rn_val(ea_rn_val), .rn1_val(ea_rn1_val), .rx_val(ea_rx_val), .pc_val(ea_pc_val),
     .opbytes(ea_opbytes), .we(ea_we), .io(ea_io), .lock(ea_lock), .wdata(ea_wdata),
     .addr_only(ea_addr_only),
     .rmw(ea_rmw), .rmw_pending(ea_rmw_pending), .rmw_go(ea_rmw_go),
     .rmw_data(ea_rmw_data),
     .ea(ea_ea), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
+    .rn_wb_pair(ea_rn_wb_pair), .rn_wb_hi(ea_rn_wb_hi),
     .illegal(), .busy(), .done(ea_done), .bus_cycles(ea_cycles),
     .dx_req(a_req), .dx_addr(a_addr), .dx_nbytes(a_nbytes), .dx_we(a_we),
     .dx_io(a_io), .dx_lock(a_lock),
@@ -263,16 +268,18 @@ v60_seq seq (
     .op2_valid(o2_valid), .op2_mode(o2_mode), .op2_rn(o2_rn), .op2_rx(o2_rx),
     .op2_index(o2_index), .op2_disp(o2_disp), .op2_disp_outer(o2_douter),
     .op2_imm(o2_imm), .op2_bytes(o2_bytes),
-    .rf_ra_sel(rf_ra_sel), .rf_rb_sel(rf_rb_sel), .rf_ra(rf_ra), .rf_rb(rf_rb),
+    .rf_ra_sel(rf_ra_sel), .rf_rb_sel(rf_rb_sel), .rf_ra(rf_ra),
+    .rf_ra_pair(rf_ra_pair), .rf_rb(rf_rb),
     .rf_wr_en(rf_wr_en), .rf_wr_sel(rf_wr_sel), .rf_wr_data(rf_wr_data),
     .ea_start(ea_start), .ea_mode(ea_mode), .ea_index(ea_index),
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
-    .ea_rn_val(ea_rn_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
+    .ea_rn_val(ea_rn_val), .ea_rn1_val(ea_rn1_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
     .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_io(ea_io), .ea_lock(ea_lock), .ea_wdata(ea_wdata),
     .ea_addr_only(ea_addr_only),
     .ea_rmw(ea_rmw), .ea_rmw_go(ea_rmw_go), .ea_rmw_data(ea_rmw_data),
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
-    .ea_rn_wb(ea_rn_wb), .ea_rn_wb_val(ea_rn_wb_val), .ea_done(ea_done),
+    .ea_rn_wb(ea_rn_wb), .ea_rn_wb_val(ea_rn_wb_val),
+    .ea_rn_wb_pair(ea_rn_wb_pair), .ea_rn_wb_hi(ea_rn_wb_hi), .ea_done(ea_done),
     .ea_bus_cycles(ea_cycles),
     .rf_pr_id(seq_pr_id), .rf_pr_wr(seq_pr_wr), .rf_pr_wdata(seq_pr_wdata),
     .rf_pr_rdata(rf_pr_rdata), .rf_pr_rd_ok(rf_pr_rd_ok),
@@ -561,10 +568,8 @@ initial begin
     mem[11'h135] = 8'h02; mem[11'h136] = 8'h68;
     // MULX #2, R8           86 A0 F4 02 00 00 00 68
     //   The X form, whose destination is a DOUBLEWORD -- "a register pair, low
-    //   register first" -- and nothing in this tree addresses one.  So it is
-    //   decoded and addressed and not executed, which is what the previous
-    //   occupant of this test was for.  Its source is a word, so its immediate
-    //   is four bytes where MUL.b's was one.
+    //   register first" -- so this writes R8 AND R9.  Its source is a word, so
+    //   its immediate is four bytes where MUL.b's was one.
     mem[11'h137] = 8'h86; mem[11'h138] = 8'hA0; mem[11'h139] = 8'hF4;
     mem[11'h13A] = 8'h02; mem[11'h13B] = 8'h00; mem[11'h13C] = 8'h00;
     mem[11'h13D] = 8'h00; mem[11'h13E] = 8'h68;
@@ -1225,6 +1230,43 @@ initial begin
     mem[11'h150] = 8'h09; mem[11'h151] = 8'h80; mem[11'h152] = 8'hF4;
     mem[11'h153] = 8'hE2; mem[11'h154] = 8'h68;
 
+    // The X forms end to end, Format II.
+    // MULX #0x10000, R9    86 A0 F4 00 00 01 00 69
+    //   R9/R10 is the destination PAIR -- and it is an ODD low register on
+    //   purpose: neither page puts an evenness constraint on the pair, and an
+    //   implementation that masked the low bit to "align" it would be wrong on
+    //   every odd n.
+    mem[11'h158] = 8'h86; mem[11'h159] = 8'hA0; mem[11'h15A] = 8'hF4;
+    mem[11'h15B] = 8'h00; mem[11'h15C] = 8'h00; mem[11'h15D] = 8'h01;
+    mem[11'h15E] = 8'h00; mem[11'h15F] = 8'h69;
+    // DIVX #10, [R8]       A6 80 F4 0A 00 00 00 68
+    //   A MEMORY doubleword: eight bytes at R8, quotient at [R8] and remainder
+    //   at [R8+4].
+    mem[11'h160] = 8'hA6; mem[11'h161] = 8'h80; mem[11'h162] = 8'hF4;
+    mem[11'h163] = 8'h0A; mem[11'h164] = 8'h00; mem[11'h165] = 8'h00;
+    mem[11'h166] = 8'h00; mem[11'h167] = 8'h68;
+    // DIVX #0, [R8]        A6 80 F4 00 00 00 00 68   -- the zero divide
+    mem[11'h168] = 8'hA6; mem[11'h169] = 8'h80; mem[11'h16A] = 8'hF4;
+    mem[11'h16B] = 8'h00; mem[11'h16C] = 8'h00; mem[11'h16D] = 8'h00;
+    mem[11'h16E] = 8'h00; mem[11'h16F] = 8'h68;
+
+    // DIVX #0x10000, R9    A6 A0 F4 00 00 01 00 69
+    //   A REGISTER-PAIR dividend whose value genuinely needs its high word --
+    //   the only shape that can tell "reads the pair" from "reads Rn twice"
+    //   or from "reads only Rn".  MULX cannot: it reads the low word by
+    //   design, so its high word could be anything.
+    mem[11'h170] = 8'hA6; mem[11'h171] = 8'hA0; mem[11'h172] = 8'hF4;
+    mem[11'h173] = 8'h00; mem[11'h174] = 8'h00; mem[11'h175] = 8'h01;
+    mem[11'h176] = 8'h00; mem[11'h177] = 8'h69;
+
+    // DIVX R12, R9    A6 4C 69   -- Format I: m = 1 (bit 6), d = 0 (bit 5),
+    //   reg = 12.  With d = 0 the register field is the SOURCE and the mod
+    //   field is the destination, so the destination pair R9/R10 is reached
+    //   through v60_ea's register-direct path rather than the sequencer's own
+    //   -- which is the only way that path's pair read and pair writeback are
+    //   exercised at all.
+    mem[11'h178] = 8'hA6; mem[11'h179] = 8'h4C; mem[11'h17A] = 8'h69;
+
     // CAXI R9, [R8]   4C 09 68   -- Format I, d = 0 (the page requires it),
     //   so the register field is Rn and the mod field is the destination.
     mem[11'h721] = 8'h4C; mem[11'h722] = 8'h09; mem[11'h723] = 8'h68;
@@ -1386,12 +1428,15 @@ initial begin
     chk(seq_psw[PSW_Z] === 1'b0,     "and it is not zero");
     chk(seq_pc === 32'h00000137,     "the PC advances by the instruction's length");
 
-    // ---- 10. something it cannot execute ---------------------------------------
+    // ---- 10. the X form, whose destination is a register PAIR ------------------
     step;
-    chk(stopped === 1'b1,
-        "the X form is decoded and addressed and not executed");
-    chk(stop_reason === 2'd0,
-        "and it says why: the table has the opcode, no unit has the operation");
+    chk(!stopped, "the X form executes");
+    chk(rf.gpr[8] === 32'h0000_00D8,
+        "MULX put the product's low word in Rn");
+    chk(rf.gpr[9] === 32'h0000_0000,
+        "and its high word in Rn+1 -- the pair, low register first");
+    chk(seq_psw[PSW_OV] === 1'b0,
+        "with OV cleared: a 32x32 product always fits 64 bits, so an X multiply cannot overflow");
 
     // ---- 10. a format whose semantics are not documented -------------------------
     // Format I's `d` bit decides which operand is the destination and no page
@@ -3138,6 +3183,92 @@ initial begin
         "so Rn receives what was ACTUALLY there -- the retry value, without a second read");
     chk(mem_word(13'h700) === 32'hFACE_0FF1,
         "and the destination keeps its own contents");
+
+    // =======================================================================
+    // The X forms end to end.  A doubleword operand is "a register pair, low
+    // register first" (§3) or eight contiguous bytes "identified by the
+    // address of the low order byte" (§2) -- the same little-endian statement
+    // in the two media.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[9]  = 32'h0001_0000;              // the multiplicand: the LOW word
+    rf.gpr[10] = 32'hDEAD_BEEF;              // the high word, which MULX never reads
+    repeat (2) @(negedge clk);
+    jump(32'h00000158);
+    step;
+    chk(rf.gpr[9] === 32'h0000_0000,
+        "MULX 0x10000 x 0x10000 leaves the product's low word in R9");
+    chk(rf.gpr[10] === 32'h0000_0001,
+        "and its high word in R10 -- an ODD low register, which the pages allow");
+    chk(seq_psw[PSW_Z] === 1'b0,
+        "Z is clear: it tests all sixty-four bits, and the low word alone is zero");
+    chk(seq_psw[PSW_OV] === 1'b0, "and OV is cleared, always, on an X multiply");
+
+    // A register-pair DIVIDEND, which is the only case that proves the pair is
+    // read rather than the low register twice.  0x1_0000_0005 / 0x10000.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9]  = 32'h0000_0005;              // the dividend's LOW word
+    rf.gpr[10] = 32'h0000_0001;              //   and its HIGH word
+    repeat (2) @(negedge clk);
+    jump(32'h00000170);
+    step;
+    chk(rf.gpr[9] === 32'h0001_0000,
+        "DIVX read the whole PAIR as its dividend: the quotient needs the high word");
+    chk(rf.gpr[10] === 32'h0000_0005,
+        "and the remainder replaced it -- quotient low, remainder high");
+
+    // The same dividend through the ADDRESS UNIT's register-direct path, which
+    // Format I with d = 0 is the only way to reach.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9]  = 32'h0000_0005;
+    rf.gpr[10] = 32'h0000_0001;
+    rf.gpr[12] = 32'h0001_0000;              // the divisor
+    repeat (2) @(negedge clk);
+    jump(32'h00000178);
+    step;
+    chk(rf.gpr[9] === 32'h0001_0000 && rf.gpr[10] === 32'h0000_0005,
+        "a doubleword pair reached through the address unit reads and writes BOTH registers");
+
+    // A MEMORY doubleword, where the two halves of the destination carry two
+    // different quantities.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'd12345);            // the dividend, low word
+    put_word(13'h704, 32'd0);                //   and high
+    repeat (2) @(negedge clk);
+    jump(32'h00000160);
+    step;
+    chk(mem_word(13'h700) === 32'd1234,
+        "DIVX through memory put the QUOTIENT at the operand's own address");
+    chk(mem_word(13'h704) === 32'd5,
+        "and the REMAINDER four bytes above it -- two different quantities, one operand");
+
+    // A zero divide still raises, and the destination survives it.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'd12345);
+    put_word(13'h704, 32'd99);
+    repeat (2) @(negedge clk);
+    jump(32'h00000168);
+    step;
+    chk(seq_pc === 32'h000001C0,
+        "an X divide by zero reaches the Integer Arithmetic handler");
+    chk(mem_word(13'h700) === 32'd12345 && mem_word(13'h704) === 32'd99,
+        "and NEITHER half of the destination changed");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

@@ -1051,6 +1051,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h83: r = ALU_MUL;  // MUL
             8'h84: r = ALU_ADD;  // ADD
             8'h85: r = ALU_MUL;  // MUL
+            8'h86: r = ALU_MULX; // MULX
             8'h87: r = ALU_TEST1; // TEST1
             8'h88: r = ALU_OR;   // OR
             8'h89: r = ALU_ROT;  // ROT
@@ -1064,6 +1065,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h93: r = ALU_MULU; // MULU
             8'h94: r = ALU_ADDC; // ADDC
             8'h95: r = ALU_MULU; // MULU
+            8'h96: r = ALU_MULUX; // MULUX
             8'h97: r = ALU_SET1; // SET1
             8'h98: r = ALU_SUBC; // SUBC
             8'h99: r = ALU_ROTC; // ROTC
@@ -1077,6 +1079,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hA3: r = ALU_DIV;  // DIV
             8'hA4: r = ALU_AND;  // AND
             8'hA5: r = ALU_DIV;  // DIV
+            8'hA6: r = ALU_DIVX; // DIVX
             8'hA7: r = ALU_CLR1; // CLR1
             8'hA8: r = ALU_SUB;  // SUB
             8'hA9: r = ALU_SHL;  // SHL
@@ -1090,6 +1093,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hB3: r = ALU_DIVU; // DIVU
             8'hB4: r = ALU_XOR;  // XOR
             8'hB5: r = ALU_DIVU; // DIVU
+            8'hB6: r = ALU_DIVUX; // DIVUX
             8'hB7: r = ALU_NOT1; // NOT1
             8'hB8: r = ALU_CMP;  // CMP
             8'hB9: r = ALU_SHA;  // SHA

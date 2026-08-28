@@ -28,17 +28,17 @@ reg rst = 1'b1;
 reg          start = 1'b0;
 alu_op_e     op    = ALU_MUL;
 reg    [3:0] obytes = 4'd1;
-reg   [31:0] x = 32'd0, y = 32'd0;
+reg   [31:0] x = 32'd0, y = 32'd0, y_hi = 32'd0;
 reg    [3:0] fin = 4'd0;
 
-wire  [31:0] result;
+wire  [31:0] result, result_hi;
 wire   [3:0] flags;
 wire         writes, zero_div, busy, done;
 
 v60_muldiv dut (
     .clk(clk), .rst(rst),
-    .start(start), .op(op), .opbytes(obytes), .x(x), .y(y), .flags_in(fin),
-    .result(result), .flags_out(flags), .writes(writes),
+    .start(start), .op(op), .opbytes(obytes), .x(x), .y(y), .y_hi(y_hi), .flags_in(fin),
+    .result(result), .result_hi(result_hi), .flags_out(flags), .writes(writes),
     .zero_div(zero_div), .busy(busy), .done(done)
 );
 
@@ -58,7 +58,19 @@ task run(input [4:0] o, input [3:0] w, input [31:0] xv, input [31:0] yv,
          input [3:0] f);
 begin
     @(negedge clk);
-    op = alu_op_e'(o); obytes = w; x = xv; y = yv; fin = f;
+    op = alu_op_e'(o); obytes = w; x = xv; y = yv; y_hi = 32'd0; fin = f;
+    start = 1'b1;
+    @(negedge clk);
+    start = 1'b0;
+    while (!done) @(negedge clk);
+end
+endtask
+
+// The X forms, whose dividend is sixty-four bits wide.
+task runx(input alu_op_e o, input [31:0] xv, input [63:0] yv);
+begin
+    @(negedge clk);
+    op = o; obytes = 4'd4; x = xv; y = yv[31:0]; y_hi = yv[63:32]; fin = 4'd0;
     start = 1'b1;
     @(negedge clk);
     start = 1'b0;
@@ -292,6 +304,100 @@ initial begin
     chk(!busy, "and it is idle again afterwards");
 
     $display("      %0d checks", nchk);
+    // =======================================================================
+    // The X forms.  Their destination is a DOUBLEWORD, so the unit produces
+    // two words rather than one -- and for the divides the two carry
+    // DIFFERENT quantities.
+    // =======================================================================
+
+    // MULX: "The word designated by the destination operand is multiplied by
+    // the word contents of the source operand.  The resulting doubleword
+    // product is stored in destination operand."  Only the LOW word is an
+    // input, so y_hi is not read at all.
+    runx(ALU_MULX, 32'h0001_0000, 64'hDEAD_BEEF_0001_0000);
+    chk(result === 32'h0000_0000 && result_hi === 32'h0000_0001,
+        "MULX 0x10000 x 0x10000 is 2^32: low word zero, high word one");
+    chk(flags[PSW_Z] === 1'b0,
+        "and Z is CLEAR -- it tests all sixty-four bits, not the low word");
+    chk(flags[PSW_OV] === 1'b0, "OV cleared: an X multiply cannot overflow");
+    nchk = nchk + 3;
+
+    // The sign comes from bit 63 of the product, not from the low word.
+    runx(ALU_MULX, 32'hFFFF_FFFF, 64'h0000_0000_0000_0002);
+    chk(result === 32'hFFFF_FFFE && result_hi === 32'hFFFF_FFFF,
+        "MULX -1 x 2 is -2 as a signed doubleword");
+    chk(flags[PSW_S] === 1'b1, "with S from bit 63");
+    nchk = nchk + 2;
+
+    // MULUX reads the same bits unsigned, which is a different product.
+    runx(ALU_MULUX, 32'hFFFF_FFFF, 64'h0000_0000_0000_0002);
+    chk(result === 32'hFFFF_FFFE && result_hi === 32'h0000_0001,
+        "MULUX of the same bits is 0x1_FFFFFFFE -- unsigned, so a different product");
+    chk(flags[PSW_S] === 1'b0, "and its S is bit 63 of THAT, which is clear");
+    nchk = nchk + 2;
+
+    // A product that is zero in the low word only.
+    runx(ALU_MULX, 32'h0000_0000, 64'h0000_0000_1234_5678);
+    chk(result === 32'd0 && result_hi === 32'd0 && flags[PSW_Z] === 1'b1,
+        "a genuinely zero product sets Z");
+    nchk = nchk + 1;
+
+    // DIVX: "The resulting 32-bit quotient is stored in the lower word of the
+    // destination and the 32-bit remainder is stored in the upper word."
+    runx(ALU_DIVX, 32'd10, 64'd12345);
+    chk(result === 32'd1234, "DIVX 12345 / 10 puts the QUOTIENT in the low word");
+    chk(result_hi === 32'd5, "and the REMAINDER in the high word");
+    chk(writes === 1'b1, "and it writes");
+    nchk = nchk + 3;
+
+    // A dividend that genuinely needs its upper word.
+    runx(ALU_DIVX, 32'h0001_0000, 64'h0000_0001_0000_0000);
+    chk(result === 32'h0001_0000 && result_hi === 32'd0,
+        "a dividend above 2^32 divides correctly -- the upper word is really read");
+    nchk = nchk + 1;
+
+    // The remainder takes the sign of the dividend, as REM's page says of its
+    // own, and the quotient the sign of the division.
+    runx(ALU_DIVX, 32'd10, -64'd12345);
+    chk(result === -32'd1234 && result_hi === -32'd5,
+        "a negative dividend gives a negative quotient AND a negative remainder");
+    nchk = nchk + 2;
+
+    // Overflow: the quotient does not fit thirty-two bits.  This is the case
+    // the page's Description fails to enumerate and its Condition Codes block
+    // plainly intends -- "OV Set if integer overflow occurs".
+    runx(ALU_DIVUX, 32'd1, 64'hFFFF_FFFF_FFFF_FFFF);
+    chk(flags[PSW_OV] === 1'b1,
+        "DIVUX by 1 of a full doubleword overflows: the quotient needs 64 bits");
+    chk(writes === 1'b0,
+        "and the destination does not change when an overflow occurs");
+    nchk = nchk + 2;
+
+    // The same divisor one step lower does fit, which is what makes the test
+    // above about the boundary rather than about large numbers.
+    runx(ALU_DIVUX, 32'h0000_0002, 64'h0000_0001_FFFF_FFFE);
+    chk(flags[PSW_OV] === 1'b0 && result === 32'hFFFF_FFFF,
+        "and a quotient of exactly 0xFFFFFFFF does NOT overflow an unsigned X divide");
+    nchk = nchk + 1;
+
+    // Signed, where the bound is one lower again because a sign bit is spent.
+    runx(ALU_DIVX, 32'd1, 64'h0000_0000_8000_0000);
+    chk(flags[PSW_OV] === 1'b1,
+        "a signed X divide overflows at +2^31, which is not representable");
+    chk(writes === 1'b0, "leaving the destination alone");
+    nchk = nchk + 2;
+
+    runx(ALU_DIVX, 32'd1, 64'h0000_0000_7FFF_FFFF);
+    chk(flags[PSW_OV] === 1'b0 && result === 32'h7FFF_FFFF,
+        "and does not overflow one below it");
+    nchk = nchk + 1;
+
+    // Zero divide is still an exception, not a flag.
+    runx(ALU_DIVX, 32'd0, 64'd12345);
+    chk(zero_div === 1'b1 && writes === 1'b0,
+        "an X divide by zero raises, and the destination does not change");
+    nchk = nchk + 1;
+
     if (errors == 0) $display("V60 MULDIV PASS");
     else             $display("V60 MULDIV FAIL (%0d errors)", errors);
     $finish;

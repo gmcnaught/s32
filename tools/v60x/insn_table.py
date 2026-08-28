@@ -566,12 +566,15 @@ EXEC_OP = {
     # widths table, as `pat` and `blen` have none elsewhere.
     'CAXI': 'CAXI',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
-    # v60_muldiv's, which is not combinational.  The X forms are deliberately
-    # NOT here: their destination is a doubleword, "a register pair, low
-    # register first" (S3), and nothing in this tree addresses one yet.
+    # v60_muldiv's, which is not combinational.
     'MUL': 'MUL', 'MULU': 'MULU',
     'DIV': 'DIV', 'DIVU': 'DIVU',
     'REM': 'REM', 'REMU': 'REMU',
+    # The X forms, whose destination is a doubleword register pair or eight
+    # contiguous bytes.  DIVX and DIVUX write TWO different quantities into
+    # one destination -- quotient low, remainder high.
+    'MULX': 'MULX', 'MULUX': 'MULUX',
+    'DIVX': 'DIVX', 'DIVUX': 'DIVUX',
     # The shift group.  Their source operand is the count and their
     # destination is what moves, which is the pairing v60_alu's x and y
     # already are.  See docs/v60/SHIFTS.md.

@@ -92,9 +92,19 @@ module v60_muldiv
     input         [3:0] opbytes,    // the operands' width: 1, 2 or 4
     input        [31:0] x,          // src -- the multiplier, or the divisor
     input        [31:0] y,          // dst -- the multiplicand, or the dividend
+    // The X forms' extra half.  For DIVX and DIVUX the dividend is the whole
+    // doubleword, so its HIGH word arrives here; for MULX and MULUX only the
+    // low word is an input at all -- "The word designated by the destination
+    // operand is multiplied by the word contents of the source operand" -- so
+    // this is ignored by them.
+    input        [31:0] y_hi,
     input         [3:0] flags_in,   // {CY, OV, S, Z}; CY is unchanged by all six
 
     output logic [31:0] result,
+    // The upper word of a doubleword destination: the product's high half for
+    // MULX and MULUX, and the REMAINDER for DIVX and DIVUX -- which is not the
+    // same quantity as `result` at all.
+    output logic [31:0] result_hi,
     output logic  [3:0] flags_out,
     output logic        writes,     // "the destination will remain unchanged"
     output logic        zero_div,   // the Integer Arithmetic Exception
@@ -102,9 +112,13 @@ module v60_muldiv
     output logic        done
 );
 
-wire is_mul = (op == ALU_MUL) || (op == ALU_MULU);
-wire is_rem = (op == ALU_REM) || (op == ALU_REMU);
-wire is_sgn = (op == ALU_MUL) || (op == ALU_DIV) || (op == ALU_REM);
+wire is_mulx = (op == ALU_MULX) || (op == ALU_MULUX);
+wire is_divx = (op == ALU_DIVX) || (op == ALU_DIVUX);
+wire is_dbl  = is_mulx || is_divx;
+wire is_mul  = (op == ALU_MUL) || (op == ALU_MULU) || is_mulx;
+wire is_rem  = (op == ALU_REM) || (op == ALU_REMU);
+wire is_sgn  = (op == ALU_MUL)  || (op == ALU_DIV) || (op == ALU_REM) ||
+               (op == ALU_MULX) || (op == ALU_DIVX);
 
 wire [31:0] mask = (opbytes == 4'd1) ? 32'h0000_00FF :
                    (opbytes == 4'd2) ? 32'h0000_FFFF : 32'hFFFF_FFFF;
@@ -127,6 +141,31 @@ wire [31:0] ye = (is_sgn && ys) ? (yz | ~mask) : yz;
 // Magnitudes, so one unsigned engine serves both signednesses.
 wire [31:0] xm = (is_sgn && xs) ? (~xe + 32'd1) : xe;
 wire [31:0] ym = (is_sgn && ys) ? (~ye + 32'd1) : ye;
+
+// And the doubleword dividend, for DIVX and DIVUX.  "the lower numbered
+// register contains the least significant word while the higher numbered
+// register contains the most significant word" (S2), and in memory the
+// doubleword is "identified by the address of the low order byte" -- so the
+// machine is consistently little-endian about this and {y_hi, y} is the value.
+wire [63:0] yd  = {y_hi, y};
+wire        yds = yd[63];
+wire [63:0] ydm = (is_sgn && yds) ? (~yd + 64'd1) : yd;
+
+// The X divides overflow on ordinary inputs, which no other divide here does:
+// a 64-bit dividend over a 32-bit divisor needs up to 64 quotient bits and has
+// 32 to put them in.  The magnitude test is the classic one -- if the high
+// word alone is already at least the divisor, the quotient has run off the top
+// before the loop starts.
+//
+// NOT ENUMERATED BY THE PAGE, and this is a decision.  DIVX's Description
+// names exactly one overflow case, "the negative maximum integer divided by
+// -1", which is the WORD DIV rule copied across; it does not mention the
+// quotient-does-not-fit case, which for a doubleword dividend is far commoner.
+// Its Condition Codes block says "OV Set if integer overflow occurs", so the
+// general condition is plainly intended and the Description simply fails to
+// list it.  The plate agrees that OV moves here where DIVU's prints a literal
+// 0.  See docs/v60/DOUBLEWORD.md.
+wire        divx_ovf = is_divx && (ydm[63:32] >= xm) && (xm != 32'd0);
 
 typedef enum logic [1:0] { S_IDLE, S_RUN, S_FIN } state_e;
 state_e      state;
@@ -154,6 +193,8 @@ logic  [3:0] r_bytes;
 logic [31:0] r_mask, r_msb;
 logic [31:0] r_ye;                // the dividend, for the DIV overflow test
 logic        r_divov;
+logic        r_dbl, r_mulx, r_divx;
+logic        r_qneg64;            // the doubleword quotient's sign, for the fit test
 logic  [3:0] r_flags_in;
 
 assign busy = (state != S_IDLE);
@@ -182,6 +223,21 @@ wire [31:0] rem_v  = r_rneg ? (~acc[63:32] + 32'd1) : acc[63:32];
 
 wire [31:0] raw = r_mul ? prod[31:0] : (r_rem ? rem_v : quo);
 
+// The upper word of a doubleword destination.  For a multiply it is the
+// product's high half; for a divide it is the REMAINDER, which the DIVX page
+// draws with its own caption -- "Upper Word/Register" over the remainder and
+// "Lower Word/Register" over the quotient, one picture covering the register
+// pair and the memory operand alike.
+wire [31:0] raw_hi = r_mul ? prod[63:32] : rem_v;
+
+// The signed X divide's second overflow test.  divx_ovf above catches a
+// quotient that needs more than 32 bits; this catches one that needs all 32
+// but the destination is signed, so only 31 of them are available.  -2^31 is
+// representable and +2^31 is not, which is why the two bounds differ.
+wire        divx_fit_bad = r_divx && r_sgn &&
+                           (r_qneg64 ? (acc[31:0] > 32'h8000_0000)
+                                     : (acc[31:0] > 32'h7FFF_FFFF));
+
 // "does [not] fit within the precision of the destination operand".  Signed for
 // MUL, unsigned for MULU -- see the header for where MAME reads this
 // differently.
@@ -196,11 +252,43 @@ wire        fit_unsigned =
 
 logic f_ov, f_s, f_z;
 always_comb begin
-    if (r_mul)      f_ov = r_sgn ? !fit_signed : !fit_unsigned;
-    else if (r_rem) f_ov = 1'b0;                 // "OV Cleared", both pages
-    else            f_ov = r_divov;              // min / -1, and only that
-    f_s = |(raw & r_msb);
-    f_z = ((raw & r_mask) == 32'd0);
+    if (r_mulx) begin
+        // "OV Cleared", unconditionally, on both X multiply pages -- and it is
+        // coherent: a 32x32 product always fits 64 bits, so an X multiply
+        // CANNOT overflow.  That is exactly the property distinguishing them
+        // from MUL and MULU, whose OV reports a product too wide for the
+        // destination.
+        //
+        // The plate disagrees, printing the same four glyphs on the X rows as
+        // on the non-X rows above them, which is what a copied row looks like.
+        // DECISION: take the Reference, because its reading is the only one
+        // with a mechanism behind it.  docs/v60/DOUBLEWORD.md records it.
+        f_ov = 1'b0;
+    end else if (r_mul) begin
+        f_ov = r_sgn ? !fit_signed : !fit_unsigned;
+    end else if (r_rem) begin
+        f_ov = 1'b0;                             // "OV Cleared", both pages
+    end else if (r_divx) begin
+        f_ov = r_divov || divx_fit_bad;
+    end else begin
+        f_ov = r_divov;                          // min / -1, and only that
+    end
+
+    if (r_mulx) begin
+        // "The result" is the DOUBLEWORD product, so S is bit 63 and Z tests
+        // all sixty-four.  Reading them off the low word instead would report
+        // a 64-bit product of 0x1_00000000 as zero.
+        f_s = prod[63];
+        f_z = (prod == 64'd0);
+    end else begin
+        // DIVX's S and Z describe the QUOTIENT.  DECISION, marked: its
+        // destination holds two different quantities and the page's "the
+        // result" does not say which, but the quotient is what the division
+        // produced and the remainder is a by-product -- and DIV's own flags
+        // are the quotient's.
+        f_s = |(raw & r_msb);
+        f_z = ((raw & r_mask) == 32'd0);
+    end
 end
 
 always_ff @(posedge clk) begin
@@ -224,6 +312,11 @@ always_ff @(posedge clk) begin
         r_msb      <= 32'h8000_0000;
         r_ye       <= 32'd0;
         r_divov    <= 1'b0;
+        r_dbl      <= 1'b0;
+        r_mulx     <= 1'b0;
+        r_divx     <= 1'b0;
+        r_qneg64   <= 1'b0;
+        result_hi  <= 32'd0;
         r_flags_in <= 4'd0;
     end else begin
         done <= 1'b0;
@@ -241,6 +334,10 @@ always_ff @(posedge clk) begin
             zero_div   <= 1'b0;
             writes     <= 1'b1;
             r_divov    <= 1'b0;
+            r_dbl      <= is_dbl;
+            r_mulx     <= is_mulx;
+            r_divx     <= is_divx;
+            r_qneg64   <= is_sgn && (xs ^ yds);
 
             if (is_mul) begin
                 // The multiplier goes in the low half and is consumed a bit at
@@ -260,6 +357,19 @@ always_ff @(posedge clk) begin
                 flags_out <= flags_in;      // nothing said; nothing moved
                 done      <= 1'b1;
                 state     <= S_IDLE;
+            end else if (is_divx) begin
+                // The dividend is the whole doubleword.  It goes in as
+                // {remainder, quotient} with the high word in the remainder
+                // half, and thirty-two steps shift it through -- which is the
+                // same engine, given a starting value that occupies all of it
+                // rather than only the bottom half.
+                acc    <= {1'b0, ydm};
+                opnd   <= xm;
+                r_qneg <= is_sgn && (xs ^ yds);
+                r_rneg <= is_sgn && yds;
+                r_divov <= divx_ovf;
+                cnt     <= 6'd32;
+                state   <= S_RUN;
             end else begin
                 acc    <= {33'd0, ym};
                 opnd   <= xm;
@@ -285,13 +395,22 @@ always_ff @(posedge clk) begin
         end
 
         S_FIN: begin
-            result <= raw & r_mask;
+            // A doubleword destination is not masked to the operand width:
+            // its width IS eight bytes.  The mask belongs to the source's
+            // size field, which the X forms fix at a word anyway.
+            result    <= r_dbl ? raw : (raw & r_mask);
+            result_hi <= raw_hi;
             // "CY Unchanged" on all six, so it comes back as it went in.
             flags_out <= {r_flags_in[PSW_CY], f_ov, f_s, f_z};
             // "The destination will remain unchanged if an integer overflow
             // ... occurs" -- DIV's page, and DIVUX's says the same.  The flags
             // still move, which is what its Condition Codes block describes.
-            writes <= !(r_divov);
+            // "The destination operand does not change when an overflow or a
+            // Zero Divide exception occurs" -- one sentence covering two
+            // different things, and for the X divides the overflow half is the
+            // common case rather than the exotic one.  So the whole
+            // doubleword writeback is gated, both halves together.
+            writes <= !(r_divov || divx_fit_bad);
             done   <= 1'b1;
             state  <= S_IDLE;
         end
@@ -305,7 +424,11 @@ end
 // The reachability argument above, as a check.  If a doubleword dividend ever
 // reaches this unit, this is what will say the divider needed its 33rd bit.
 always_ff @(posedge clk) begin
-    if (!rst && (state == S_RUN) && !r_mul && acc[64])
+    // The 33rd bit is UNREACHABLE for a 32-bit dividend and reachable on every
+    // step for a doubleword one, which is why the accumulator was built 65 bits
+    // wide before there was anything to use it.  So this stays a warning for
+    // the word divides and is expected for the X forms.
+    if (!rst && (state == S_RUN) && !r_mul && !r_divx && acc[64])
         $display("WARN v60_muldiv: the divider's remainder reached its 33rd bit, which a 32-bit dividend cannot do (t=%0t)",
                  $time);
 end

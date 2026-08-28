@@ -243,6 +243,10 @@ module v60_seq
     output logic  [4:0] rf_ra_sel,
     output logic  [4:0] rf_rb_sel,
     input        [31:0] rf_ra,
+    // {Rn+1, Rn} for the same select, which v60_regfile has always produced
+    // and nothing has used until now.  A doubleword operand is a register PAIR
+    // and the low-numbered one holds the least significant word.
+    input        [63:0] rf_ra_pair,
     input        [31:0] rf_rb,
     output logic        rf_wr_en,
     output logic  [4:0] rf_wr_sel,
@@ -263,6 +267,7 @@ module v60_seq
     output logic        ea_io,
     // The `rwi` access type: TASI and CAXI, and nothing else in the set.
     output logic        ea_lock,
+    output logic [31:0] ea_rn1_val,
     output logic [63:0] ea_wdata,
     output logic        ea_addr_only,
     output logic        ea_rmw,
@@ -273,6 +278,8 @@ module v60_seq
     input        [63:0] ea_rdata,
     input               ea_rn_wb,
     input        [31:0] ea_rn_wb_val,
+    input               ea_rn_wb_pair,
+    input        [31:0] ea_rn_wb_hi,
     input               ea_done,
     input         [3:0] ea_bus_cycles,
 
@@ -503,6 +510,14 @@ typedef enum logic [5:0] {
     // CAXI: fetch the implicit R28, then -- on a mismatch -- give Rn what the
     // destination held, which is what makes a retry loop possible.
     S_CAXI_R, S_CAXI_W,
+    // The upper word of a doubleword REGISTER destination.  Two registers, one
+    // write port -- the same reason the frame pair and the stack engine need
+    // extra states.
+    S_WB_HI,
+    // And the same for a doubleword destination reached through the address
+    // unit's register-direct path, whose writeback is retired rather than
+    // written at S_WB.
+    S_RETIRE_HI,
     // PUSHM and POPM: read the stack pointer, then walk the mask one register
     // at a time -- select, access, write back, repeat -- and write the stack
     // pointer once at the end.  The loop is here rather than unrolled because
@@ -537,6 +552,8 @@ logic [31:0] next_pc;
 logic [31:0] wb_rn_val;
 logic        wb_rn_en;
 logic  [4:0] wb_rn_sel;
+logic        wb_rn_pair;   // a doubleword register-direct destination
+logic [31:0] wb_rn_hi;
 logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
 logic  [7:0] exc_vec_r;   // the exception being raised, and its code
 logic [15:0] exc_code_r;
@@ -1017,31 +1034,45 @@ v60_alu alu (
 // two operand values and produce the same three things -- a result, four flags
 // and whether the destination is written at all -- so everything downstream of
 // S_WB is unchanged and only the wait is new.
-wire        md_is    = (aop == ALU_MUL)  || (aop == ALU_MULU) ||
+// The X forms iterate in the same unit.  Their destination is eight bytes
+// wide, so alu_bytes -- which clamps anything that is not 1, 2 or 4 to a word
+// -- gives v60_muldiv the SOURCE's width, which is what its arithmetic uses.
+wire        is_x_md  = (aop == ALU_MULX) || (aop == ALU_MULUX) ||
+                       (aop == ALU_DIVX) || (aop == ALU_DIVUX);
+wire        md_is    = is_x_md ||
+                       (aop == ALU_MUL)  || (aop == ALU_MULU) ||
                        (aop == ALU_DIV)  || (aop == ALU_DIVU) ||
                        (aop == ALU_REM)  || (aop == ALU_REMU);
 logic       md_start;
 wire        md_done, md_busy, md_writes, md_zero_div;
-wire [31:0] md_result;
+wire [31:0] md_result, md_result_hi;
 wire  [3:0] md_flags;
 
 v60_muldiv muldiv (
     .clk(clk), .rst(rst),
     .start(md_start), .op(aop), .opbytes(alu_bytes),
-    .x(val1[31:0]), .y(val2[31:0]), .flags_in(psw_flags(psw)),
-    .result(md_result), .flags_out(md_flags), .writes(md_writes),
+    .x(val1[31:0]), .y(val2[31:0]), .y_hi(val2[63:32]),
+    .flags_in(psw_flags(psw)),
+    .result(md_result), .result_hi(md_result_hi),
+    .flags_out(md_flags), .writes(md_writes),
     .zero_div(md_zero_div), .busy(md_busy), .done(md_done)
 );
 
 // What S_WB and S_RETIRE see: the combinational unit's answer, or the
 // iterative one's, held from the cycle it finished in.
 logic [31:0] md_result_r;
+logic [31:0] md_result_hi_r;
 logic  [3:0] md_flags_r;
 logic        md_writes_r, md_zd_r, md_used;
 
 wire [31:0] eff_result = md_used ? md_result_r : alu_result;
 wire  [3:0] eff_flags  = md_used ? md_flags_r  : alu_flags;
 wire        eff_writes = md_used ? md_writes_r : alu_writes;
+
+// A doubleword destination -- the four X forms and MOV.D.  Its width comes
+// from the table (w_dst = 8), not from a decision here.
+wire        dst_is_dbl = (w_dst == 4'd8);
+wire [31:0] eff_hi     = md_used ? md_result_hi_r : val1[63:32];
 
 // "if ( Z = 1 ) then dst <- R28 else Rn <- dst".  The comparison is CMP's, so
 // its Z is the match, and the ALU is already producing it.
@@ -1112,6 +1143,8 @@ always_ff @(posedge clk) begin
         aop           <= ALU_NONE;
         wb_rn_en      <= 1'b0;
         wb_rn_sel     <= 5'd0;
+        wb_rn_pair    <= 1'b0;
+        wb_rn_hi      <= 32'd0;
         ea_rn_sel     <= 5'd0;
         wb_rn_val     <= 32'd0;
         md_start      <= 1'b0;
@@ -1161,9 +1194,11 @@ always_ff @(posedge clk) begin
                 stop_reason <= STOP_TWO_WB;
                 state       <= S_STOP;
             end
-            wb_rn_en  <= 1'b1;
-            wb_rn_sel <= ea_rn_sel;
-            wb_rn_val <= ea_rn_wb_val;
+            wb_rn_en   <= 1'b1;
+            wb_rn_sel  <= ea_rn_sel;
+            wb_rn_val  <= ea_rn_wb_val;
+            wb_rn_pair <= ea_rn_wb_pair;
+            wb_rn_hi   <= ea_rn_wb_hi;
         end
 
         case (state)
@@ -1425,8 +1460,9 @@ always_ff @(posedge clk) begin
         // and v60_ea samples its inputs on the cycle `start` is high, so the
         // values are presented first and the start comes after.
         S_OP1R: begin
-            ea_rn_val <= rf_ra;
-            ea_rx_val <= rf_rb;
+            ea_rn_val  <= rf_ra;
+            ea_rn1_val <= rf_ra_pair[63:32];
+            ea_rx_val  <= rf_rb;
             if (src_is_reg) begin
                 val1  <= {32'd0, rf_ra};
                 // STPR's source is not a value but the NAME of one.
@@ -1546,10 +1582,13 @@ always_ff @(posedge clk) begin
         end
 
         S_OP2R: begin
-            ea_rn_val <= rf_ra;
-            ea_rx_val <= rf_rb;
+            ea_rn_val  <= rf_ra;
+            ea_rn1_val <= rf_ra_pair[63:32];
+            ea_rx_val  <= rf_rb;
             if (dst_is_reg) begin
-                val2  <= {32'd0, rf_ra};
+                // A doubleword register destination is the PAIR, and the low
+                // register holds the least significant word.
+                val2  <= dst_is_dbl ? rf_ra_pair : {32'd0, rf_ra};
                 // Format III's one operand is usually both the thing read and
                 // the thing written, so it is mirrored into val1 -- but not
                 // when the operand is write-only.  GETPSW is Format III with a
@@ -1639,7 +1678,8 @@ always_ff @(posedge clk) begin
         end
 
         S_MD: if (md_done) begin
-            md_result_r <= md_result;
+            md_result_r    <= md_result;
+            md_result_hi_r <= md_result_hi;
             md_flags_r  <= md_flags;
             md_writes_r <= md_writes;
             md_zd_r     <= md_zero_div;
@@ -1690,10 +1730,16 @@ always_ff @(posedge clk) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= reg_operand;
                 rf_wr_data <= eff_result;
-                if (is_xch) state <= S_XCH;
-                else        state <= S_RETIRE;
+                if      (dst_is_dbl) state <= S_WB_HI;
+                else if (is_xch)     state <= S_XCH;
+                else                 state <= S_RETIRE;
             end else if (ea_rmw_pending) begin
-                ea_rmw_data <= {32'd0, eff_result};
+                // Eight bytes when the destination is a doubleword, and for
+                // DIVX the two halves carry DIFFERENT quantities -- the
+                // quotient low and the remainder high, which its page draws
+                // with those captions.
+                ea_rmw_data <= dst_is_dbl ? {eff_hi, eff_result}
+                                          : {32'd0, eff_result};
                 ea_rmw_go   <= 1'b1;
                 state       <= S_WBW;
             end else begin
@@ -1702,10 +1748,23 @@ always_ff @(posedge clk) begin
                 // descriptor in S_OP2 -- it is still set here, which is what
                 // makes the write an I/O cycle.
                 ea_we    <= 1'b1;
-                ea_wdata <= {32'd0, eff_result};
+                ea_wdata <= dst_is_dbl ? {eff_hi, eff_result}
+                                       : {32'd0, eff_result};
                 ea_start <= 1'b1;
                 state    <= S_WBW;
             end
+        end
+
+        // The doubleword's upper word.
+        S_WB_HI: begin
+            rf_wr_en   <= 1'b1;
+            // "the operand resides in the registers Rn and Rn+1, with the
+            // least significant word located in register Rn" -- so the high
+            // word goes one register UP, with no evenness constraint on which
+            // register that is.
+            rf_wr_sel  <= reg_operand + 5'd1;
+            rf_wr_data <= eff_hi;
+            state      <= S_RETIRE;
         end
 
         S_WBW: if (ea_done) begin
@@ -1792,11 +1851,27 @@ always_ff @(posedge clk) begin
                 exc_code_r <= trap_code;
                 exc_kind   <= EK_TRAP;
                 state      <= S_EXC_SW;
+            end else if (wb_rn_en && wb_rn_pair) begin
+                // A doubleword register-direct destination has a second word
+                // to place, and retirement waits for it: an instruction that
+                // has written half its destination has not finished.  The low
+                // word went out above, on the one write port.
+                state <= S_RETIRE_HI;
             end else begin
                 pc      <= idu_pc + {27'd0, idu_len};
                 retired <= 1'b1;
                 state   <= S_IDLE;
             end
+        end
+
+        S_RETIRE_HI: begin
+            rf_wr_en   <= 1'b1;
+            rf_wr_sel  <= wb_rn_sel + 5'd1;
+            rf_wr_data <= wb_rn_hi;
+            wb_rn_pair <= 1'b0;
+            pc         <= idu_pc + {27'd0, idu_len};
+            retired    <= 1'b1;
+            state      <= S_IDLE;
         end
 
         // ---- control transfers ------------------------------------------------

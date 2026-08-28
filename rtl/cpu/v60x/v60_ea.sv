@@ -59,6 +59,17 @@ module v60_ea
 
     // ---- what the sequencer read for it -----------------------------------
     input        [31:0] rn_val,
+    // The register ABOVE rn, for a doubleword register-direct operand.  "the
+    // operand resides in the registers Rn and Rn+1, with the least significant
+    // word located in register Rn" (S3), and "the lower numbered register
+    // contains the least significant word" (S2) -- the same statement twice,
+    // in two sections, and the p.2-3 diagram draws Rn+1 above Rn.
+    //
+    // There is NO evenness constraint: both sentences say Rn and Rn+1 for the
+    // specified Rn, with no restriction on n, so R7/R8 is as legal a pair as
+    // R6/R7.  An implementation that masked the low bit to "align" the pair
+    // would be wrong on every odd n.
+    input        [31:0] rn1_val,
     input        [31:0] rx_val,
     input        [31:0] pc_val,
 
@@ -99,6 +110,11 @@ module v60_ea
     output logic [63:0] rdata,       // the operand, however it was obtained
     output logic        rn_wb,       // Rn takes rn_wb_val
     output logic [31:0] rn_wb_val,
+    // A doubleword register-direct DESTINATION writes two registers, and the
+    // sequencer has one write port to do it with -- so this reports the pair
+    // and the sequencer spends two cycles on it.
+    output logic        rn_wb_pair,
+    output logic [31:0] rn_wb_hi,
     output logic        illegal,     // illegal addressing mode
     output logic        busy,
     output logic        done,
@@ -187,6 +203,8 @@ always_ff @(posedge clk) begin
         rdata      <= 64'd0;
         rn_wb      <= 1'b0;
         rn_wb_val  <= 32'd0;
+        rn_wb_pair <= 1'b0;
+        rn_wb_hi   <= 32'd0;
         illegal     <= 1'b0;
         rmw_pending <= 1'b0;
         rmw_r       <= 1'b0;
@@ -202,7 +220,8 @@ always_ff @(posedge clk) begin
         wdata_r    <= 64'd0;
     end else begin
         done  <= 1'b0;
-        rn_wb <= 1'b0;
+        rn_wb      <= 1'b0;
+        rn_wb_pair <= 1'b0;
 
         case (state)
         S_IDLE: if (start) begin
@@ -223,10 +242,14 @@ always_ff @(posedge clk) begin
             if (am_is_reg_direct(mode)) begin
                 // The operand is the register.  Nothing reaches the bus.
                 ea    <= 32'd0;
-                rdata <= {32'd0, rn_val};
+                // Or the PAIR, when the access type is doubleword.
+                rdata <= (opbytes == 4'd8) ? {rn1_val, rn_val}
+                                           : {32'd0, rn_val};
                 if (we) begin
-                    rn_wb     <= 1'b1;
-                    rn_wb_val <= wdata[31:0];
+                    rn_wb      <= 1'b1;
+                    rn_wb_val  <= wdata[31:0];
+                    rn_wb_pair <= (opbytes == 4'd8);
+                    rn_wb_hi   <= wdata[63:32];
                 end
                 done <= 1'b1;
             end else if (am_is_immediate(mode)) begin
@@ -341,9 +364,6 @@ end
 
 // synthesis translate_off
 always_ff @(posedge clk) begin
-    if (!rst && start && am_is_reg_direct(mode) && (opbytes == 4'd8))
-        $display("WARN v60_ea: a doubleword register-direct operand needs a register PAIR, and this module is given one register (t=%0t)",
-                 $time);
     if (!rst && start && (mode == AM_RESERVED))
         $display("WARN v60_ea: started on a reserved addressing mode -- the sequencer should have taken the exception (t=%0t)",
                  $time);
