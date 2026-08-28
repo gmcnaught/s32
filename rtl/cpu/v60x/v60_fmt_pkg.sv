@@ -69,14 +69,6 @@ function automatic logic [3:0] fmt_disp_bytes(input insn_fmt_e f,
     end
 endfunction
 
-// Everything the format defines before its first mod field, derived from the
-// two above so there is one statement of it and not three.
-function automatic logic [3:0] fmt_base_bytes(input insn_fmt_e f,
-                                              input logic [1:0] iv_disp);
-    fmt_base_bytes = 4'd1 + {3'd0, fmt_has_second_byte(f)} +
-                     fmt_disp_bytes(f, iv_disp);
-endfunction
-
 // The mod fields a format carries, in the order they appear: mod, then ext if
 // the format has one, then mod', then ext'.  Format I's second operand is the
 // `reg` field, not a mod field, which is why it has only one.

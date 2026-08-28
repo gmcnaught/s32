@@ -575,6 +575,7 @@ def cross_check(csv_path):
     if not os.path.exists(csv_path):
         return ['(no CSV at %s -- cross-check skipped)' % csv_path], 0
 
+
     want = {}
     for row in _csv.DictReader(open(csv_path)):
         ops = row['opcodes'].strip()
@@ -612,7 +613,17 @@ def main():
     for (b, s), a, c in collisions:
         print('COLLIDE  %02X%s  %s vs %s'
               % (b, '' if s is None else '-%02X' % s, a, c))
-    problems, checked = cross_check('docs/v60/v60_operand_access.csv')
+    # Relative to THIS FILE and not to the working directory.  Run from
+    # tools/v60x/ -- which is where the generator is run from -- the old
+    # relative path did not exist, cross_check() returned "skipped", and this
+    # printed "0 cross-checked" underneath a pass.  A check that silently does
+    # not run is worse than no check; the same lesson as the 20-clock reset
+    # assertion in v60_biu.
+    import os as _os
+    _here = _os.path.dirname(_os.path.abspath(__file__))
+    _csv_path = _os.path.join(_here, '..', '..', 'docs', 'v60',
+                              'v60_operand_access.csv')
+    problems, checked = cross_check(_csv_path)
     for pr in problems:
         print('CROSSCHK', pr)
     print('%d rows, %d encodings, %d errors, %d collisions, %d cross-checked'
@@ -622,6 +633,11 @@ def main():
              len(errors), len(collisions), checked))
     hard = [x for x in problems
             if not x.startswith('(') and not x.startswith('KNOWN')]
+    # And say so loudly if it did not run at all, rather than printing a pass
+    # with a zero in it.
+    if checked == 0:
+        print('ERROR    the operand-access cross-check did not run')
+        return 1
     return 1 if (errors or collisions or hard) else 0
 
 

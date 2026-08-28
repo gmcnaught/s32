@@ -86,6 +86,20 @@ run tb_v60_muldiv      "V60 MULDIV PASS"
 run tb_v60_exc         "V60 EXC PASS"
 run tb_v60_seq         "V60 SEQ PASS"
 
+# The co-simulation oracle needs the SHIPPING core beside the clean-room one,
+# so it compiles a different file list.  Everything else about it is the same:
+# both simulators, one marker.
+COSIM_RTL="rtl/s32_pkg.sv \
+     rtl/cpu/v60/s32_v60.sv rtl/cpu/v60/s32_v60_bus.sv \
+     rtl/cpu/v60/s32_v60_timebase.sv \
+     rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
+     rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
+     rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
+     rtl/cpu/v60x/v60_psw_pkg.sv rtl/cpu/v60x/v60_alu_pkg.sv \
+     rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
+     rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv"
+RTL="$COSIM_RTL" run tb_v60_cosim "V60 COSIM PASS"
+
 echo "======================================================"
 echo "V60X: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] && echo "V60X: ALL PASS"

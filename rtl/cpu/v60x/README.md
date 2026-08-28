@@ -211,6 +211,25 @@ register file, the address unit and the ALU, and retires it.
 | its frame: the Current PC as a PARAMETER and the Next PC on top | Fig 8-5 | `tb_v60_seq` |
 | the sequencer waiting for a unit that is not combinational | — | `tb_v60_seq`, `tb_v60_muldiv` |
 
+### Against the shipping core
+
+**They agree about where instructions end.** `tb_v60_cosim` puts
+`rtl/cpu/v60/s32_v60.sv` and this decoder on one instruction stream and compares
+instruction boundaries — the one question both answer for every instruction
+without either having to implement the same operation. It is also the only
+thing in this repository that tests the shipping core's length arithmetic
+against a second opinion.
+
+| | source | checked by |
+|---|---|---|
+| every mod field's length: immediate, quick, register, indirect, disp8/16/32, absolute, PC-relative | p. 3.294 | `tb_v60_cosim` |
+| every format's base length and displacement: I, II, III, IV both widths, V, VI | p. 3.293 | `tb_v60_cosim` |
+| the shipping core writing its PC once per instruction, forward | — | `tb_v60_cosim` |
+
+One divergence is recorded rather than resolved: opcodes `6B` and `7B`, which
+this tree decodes as Format IV branches with the "False / Never" condition and
+`s32_v60.sv` raises on as reserved. See `docs/v60/COSIM.md`.
+
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.

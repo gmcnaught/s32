@@ -84,12 +84,9 @@ timing are unknown, on a core whose *existing* V60 already sits at the edge of
 closure and whose placement marginality is an open problem. Any claim about
 whether this could replace `rtl/cpu/v60/` starts with a fit, not with more RTL.
 
-**A co-simulation oracle.** The clean-room decoder can consume the same
-instruction stream as the shipping core and assert instruction boundaries and
-lengths against it. That needs no new RTL, carries no integration risk, and
-tests `s32_v60.sv` in a way nothing currently does — the cheapest useful thing
-on this page, and the only one that pays off for the shipping core rather than
-for this one.
+**A co-simulation oracle.** Built — `verif/v60x/tb_v60_cosim.sv`, with
+`docs/v60/COSIM.md` for what it found. It is the one item here that paid off for
+the *shipping* core rather than for this one.
 
 ---
 
@@ -97,6 +94,15 @@ for this one.
 
 Three items, all closed, and each one turned up something that was not the
 work itself:
+
+**The co-simulation oracle** — the two cores on one instruction stream,
+compared on instruction boundaries. One divergence, recorded and not resolved:
+opcodes `6B` and `7B` are Format IV branches with the "False / Never" condition
+here and reserved opcodes in `s32_v60.sv`, which says they are "holes in MAME's
+authoritative primary dispatch table". Two things around it were also wrong:
+`fmt_base_bytes` had no caller at all, and `insn_table.py`'s operand-access
+cross-check silently did not run when the tool was invoked from the directory
+the generator is invoked from.
 
 **The multiplies and divides** — `MUL`, `MULU`, `DIV`, `DIVU`, `REM` and
 `REMU` in `v60_muldiv`, with `docs/v60/MULTIPLY-DIVIDE.md` for the pages, and

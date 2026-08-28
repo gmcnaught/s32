@@ -174,7 +174,24 @@ Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
 solve yourself.
 ```
 
-## Goal 4 — the co-simulation oracle
+## Goal 4 — the co-simulation oracle — **DONE**
+
+`verif/v60x/tb_v60_cosim.sv`, and `docs/v60/COSIM.md` for what it found. The
+CSV path is fixed too, and `insn_table.py` now fails outright if the
+cross-check did not run rather than printing a zero underneath a pass.
+
+It found one divergence, which is recorded and not resolved: opcodes `6B` and
+`7B` decode here as Format IV branches with the "False / Never" condition that
+p. 3.295's Condition Encodings table prints, and `s32_v60.sv` raises the
+reserved-opcode exception on them because they are "holes in MAME's
+authoritative primary dispatch table". A hole in a dispatch table is not an
+absent encoding.
+
+Two smaller things came with it: `v60_fmt_pkg`'s `fmt_base_bytes` had no caller
+in the whole tree — which is how a mutation to it passed every bench — and the
+bench's own program had to be rewritten around two coincidences, because a
+decoder that reads a short immediate lands on the bytes it skipped and can
+arrive at the right total length by accident.
 
 The cheapest thing on the list, and the only one that pays off for the
 *shipping* core rather than for this one.
