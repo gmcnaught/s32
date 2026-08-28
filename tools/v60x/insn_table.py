@@ -484,6 +484,11 @@ EXEC_OP = {
     # Conditional on PSW.OV, and its frame is the Arithmetic Exceptions one
     # v60_seq already builds for a zero divide.
     'BRKV': 'BRKV',
+    # Unconditional, vector 13, and its frame is the Instruction Exceptions
+    # shape -- code word, PSW, CURRENT PC.  See docs/v60/BREAK-AND-TRAP.md for
+    # why the Current PC and not the Next one, which its own Operation block
+    # gets wrong.
+    'BRK': 'BRK',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

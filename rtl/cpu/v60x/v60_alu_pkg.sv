@@ -66,6 +66,9 @@ typedef enum logic [5:0] {
     // instruction."  Format V, one byte, no operand -- the sequencer does all
     // of it and nothing reaches the ALU.
     ALU_BRKV    = 6'd36,
+    // Unconditional breakpoint trap.  Format V, one byte, nothing reaches the
+    // ALU.
+    ALU_BRK     = 6'd37,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

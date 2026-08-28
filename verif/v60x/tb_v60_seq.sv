@@ -972,6 +972,14 @@ initial begin
     mem[11'h24D] = 8'h00; mem[11'h24E] = 8'h00; mem[11'h24F] = 8'h01;
     mem[11'h250] = 8'h00; mem[11'h251] = 8'hF4; mem[11'h252] = 8'h00;
     mem[11'h253] = 8'h00; mem[11'h254] = 8'h01; mem[11'h255] = 8'h00;
+    // SBT entry 13, Instruction Breakpoint (Figure 8-2's +52) -> 0x1A0
+    mem[11'h034] = 8'hA0; mem[11'h035] = 8'h01;
+    // handler 13: MOV.B #0xB9, [R8]
+    mem[11'h1A0] = 8'h09; mem[11'h1A1] = 8'h80; mem[11'h1A2] = 8'hF4;
+    mem[11'h1A3] = 8'hB9; mem[11'h1A4] = 8'h68;
+    // BRK at 0x27C -- C8, Format V, one byte
+    mem[11'h27C] = 8'hC8;
+
     // BRKV at 0x270, twice: once with OV clear and once with it set.
     // BRKV is C9, Format V, one byte.
     mem[11'h270] = 8'hC9;
@@ -1911,6 +1919,27 @@ initial begin
     chk(mem_word(13'h5F0) === 32'h00000277,
         "and the NEXT PC on top, so a handler returns past the BRKV");
     chk(rf.gpr[31] === 32'h000005F0, "four words of frame");
+
+    // =======================================================================
+    // BRK: vector 13, unconditionally, and the CURRENT PC.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    psw_before = seq_psw;
+    jump(32'h0000027C);
+    step;
+    chk(seq_pc === 32'h000001A0,
+        "BRK vectors through SBT entry 13");
+    chk(mem_word(13'h5FC) === 32'h0D000004,
+        "with the instruction breakpoint code beside a parameter count of 4");
+    chk(mem_word(13'h5F8) === psw_before, "then the PSW");
+    chk(mem_word(13'h5F4) === 32'h0000027C,
+        "and the CURRENT PC: the address of the BRK itself, not the next byte");
+    chk(rf.gpr[31] === 32'h000005F4, "three words of frame, no parameter");
+    step;
+    chk(mem[11'h700] === 8'hB9, "and the breakpoint handler runs");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

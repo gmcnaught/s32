@@ -315,7 +315,7 @@ always_comb begin
         // written -- both syntax lines are ".r" -- so the merge is the
         // sequencer's, at retirement, and nothing is produced here.
         ALU_UPDPSWH, ALU_UPDPSWW: writes = 1'b0;
-        ALU_BRKV: writes = 1'b0;
+        ALU_BRKV, ALU_BRK: writes = 1'b0;
         ALU_RVBIT: raw = {24'd0, rvbit_res};
         ALU_RVBYT: raw = rvbyt_res;
         // "If the specified condition is satisfied by the integer PSW
@@ -385,7 +385,7 @@ end
 wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_RVBIT) || (op == ALU_RVBYT) || (op == ALU_SETF) ||
                 (op == ALU_NOP)   || (op == ALU_MOVEA) || (op == ALU_GETPSW) ||
-                (op == ALU_BRKV);
+                (op == ALU_BRKV)   || (op == ALU_BRK);
 wire keep_but_ov = (op == ALU_MOVT);
 
 assign result    = raw & mask;

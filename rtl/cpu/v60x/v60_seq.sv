@@ -354,6 +354,8 @@ localparam logic [7:0] VEC_ILLEGAL_MODE  = 8'd19;
 localparam logic [7:0] VEC_ILLEGAL_DATA  = 8'd20;
 // +84  Integer Arithmetic Exception       vector 21   code 1500 (zero divide)
 localparam logic [7:0] VEC_INT_ARITH     = 8'd21;
+// +52  Instruction Breakpoint Exception   vector 13   code 0D00
+localparam logic [7:0] VEC_BREAKPOINT    = 8'd13;
 localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
 localparam logic [15:0] CODE_PRIVILEGED    = 16'h1100;
 localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
@@ -362,6 +364,7 @@ localparam logic [15:0] CODE_ILLEGAL_DATA  = 16'h1400;
 localparam logic [15:0] CODE_ZERO_DIVIDE   = 16'h1500;
 // The other Arithmetic Exceptions code, and the one BRKV raises.
 localparam logic [15:0] CODE_INT_OVERFLOW  = 16'h1501;
+localparam logic [15:0] CODE_BREAKPOINT    = 16'h0D00;
 
 // The two externally raised vectors this module names.  A maskable interrupt's
 // is not here because it is not chosen here -- it comes off the acknowledge
@@ -850,6 +853,28 @@ always_ff @(posedge clk) begin
                 // attempting the instruction, not for what it would have read.
                 exc_vec_r  <= VEC_PRIVILEGED;
                 exc_code_r <= CODE_PRIVILEGED;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (op_alu(idu_op) == ALU_BRK) begin
+                // Vector 13, unconditionally, with the Instruction Exceptions
+                // frame -- the code word, the PSW, and the CURRENT PC.
+                //
+                // The Current PC is the whole point and its own Operation
+                // block gets it wrong, printing NextPC last.  §8's prose names
+                // BRK as the only source of exception 13 and says the pushed
+                // PC "contains the address of the instruction breakpoint ...
+                // This allows the exception handler to restart the instruction
+                // following the removal of the breakpoint" -- which only works
+                // if the saved PC is the patched address.  §8's general rule
+                // agrees: an exception DURING an instruction stacks the
+                // Current PC, and BRK's whole effect is the exception.  See
+                // docs/v60/BREAK-AND-TRAP.md.
+                //
+                // So a handler that returns with RETIS #4 without first
+                // removing the breakpoint re-executes it forever, which is the
+                // intended behaviour.
+                exc_vec_r  <= VEC_BREAKPOINT;
+                exc_code_r <= CODE_BREAKPOINT;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
             end else if (op_alu(idu_op) == ALU_BRKV) begin
