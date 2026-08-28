@@ -534,6 +534,106 @@ initial begin
     #1 chk(flags_out === 4'b0001,      "still without disturbing them");
     flags_in = 4'd0;
 
+    // =======================================================================
+    // INC and DEC at every width, and the seven operations that had no
+    // ALU-level case at all.  Their pages define them as "add #1, dst" and
+    // "sub #1, dst", so the model here is ADD's and SUB's -- computed from the
+    // definition rather than copied from the DUT.
+    // =======================================================================
+    begin : incdec
+        integer wi2, vi2;
+        reg [3:0]  bw;
+        reg [31:0] v, want, msk;
+        reg        want_cy, want_ov, want_s, want_z;
+        reg [32:0] wide;
+        for (wi2 = 0; wi2 < 3; wi2 = wi2 + 1) begin
+            bw  = (wi2 == 0) ? 4'd1 : (wi2 == 1) ? 4'd2 : 4'd4;
+            msk = wmask(bw);
+            for (vi2 = 0; vi2 < 6; vi2 = vi2 + 1) begin
+                // 0, 1, the signed maximum, the signed minimum, -1, and a
+                // middling value -- the four boundaries the carry and overflow
+                // terms turn on, plus two ordinary ones.
+                case (vi2)
+                    0: v = 32'd0;
+                    1: v = 32'd1;
+                    2: v = msk >> 1;                 // signed maximum
+                    3: v = (msk >> 1) + 32'd1;       // signed minimum
+                    4: v = msk;                      // -1
+                    default: v = 32'h5A;
+                endcase
+
+                // INC
+                op = ALU_INC; opbytes = bw; xbytes = bw;
+                x = 32'hDEAD_BEEF;                   // must be ignored
+                y = v; flags_in = 4'b0000;
+                wide    = {1'b0, v & msk} + 33'd1;
+                want    = wide[31:0] & msk;
+                want_cy = (bw == 4'd1) ? wide[8] : (bw == 4'd2) ? wide[16] : wide[32];
+                want_ov = (((v & msk) & (msk - (msk >> 1))) == 32'd0) &&
+                          ((want & (msk - (msk >> 1))) != 32'd0);
+                want_s  = ((want & (msk - (msk >> 1))) != 32'd0);
+                want_z  = (want == 32'd0);
+                #1;
+                chk(result === want,               "INC result at width");
+                chk(flags_out[PSW_CY] === want_cy, "INC carry at width");
+                chk(flags_out[PSW_OV] === want_ov, "INC overflow at width");
+                chk(flags_out[PSW_S]  === want_s,  "INC sign at width");
+                chk(flags_out[PSW_Z]  === want_z,  "INC zero at width");
+                chk(writes === 1'b1,               "INC writes");
+
+                // DEC
+                op = ALU_DEC;
+                wide    = {1'b0, v & msk} - 33'd1;
+                want    = wide[31:0] & msk;
+                want_cy = (bw == 4'd1) ? wide[8] : (bw == 4'd2) ? wide[16] : wide[32];
+                // SUB's rule with an addend of one: the operands disagree
+                // about sign (1 is positive) and the result follows the
+                // subtrahend.
+                want_ov = (((v & msk) & (msk - (msk >> 1))) != 32'd0) &&
+                          ((want & (msk - (msk >> 1))) == 32'd0);
+                want_s  = ((want & (msk - (msk >> 1))) != 32'd0);
+                want_z  = (want == 32'd0);
+                #1;
+                chk(result === want,               "DEC result at width");
+                chk(flags_out[PSW_CY] === want_cy, "DEC borrow at width");
+                chk(flags_out[PSW_OV] === want_ov, "DEC overflow at width");
+                chk(flags_out[PSW_S]  === want_s,  "DEC sign at width");
+                chk(flags_out[PSW_Z]  === want_z,  "DEC zero at width");
+            end
+        end
+    end
+
+    // The signed minimum decremented is the DEC overflow case the sequencer
+    // bench never reached, named explicitly so a failure says which it was.
+    op = ALU_DEC; opbytes = 4'd1; xbytes = 4'd1; y = 32'h80; flags_in = 4'd0;
+    #1 chk(result === 32'h7F,          "DEC.b 0x80 gives 0x7F");
+    #1 chk(flags_out[PSW_OV] === 1'b1, "which overflows a signed byte");
+    #1 chk(flags_out[PSW_CY] === 1'b0, "without borrowing");
+    #1 chk(flags_out[PSW_S]  === 1'b0, "and the result is positive");
+
+    // The four with no ALU-level assertion at all.  What matters about each is
+    // its `writes` and that it disturbs no flag -- for the UPDPSW pair,
+    // `writes` is the only thing stopping their flags_out from mattering.
+    flags_in = 4'b1010;
+    op = ALU_NOP; opbytes = 4'd4; x = 32'h1234_5678; y = 32'h8765_4321;
+    #1 chk(writes === 1'b0,       "NOP writes nothing");
+    #1 chk(flags_out === 4'b1010, "and disturbs no flag");
+    op = ALU_MOVEA;
+    #1 chk(result === 32'h1234_5678, "MOVEA passes the address through");
+    #1 chk(writes === 1'b1,          "and writes it");
+    #1 chk(flags_out === 4'b1010,    "without disturbing a flag");
+    op = ALU_GETPSW;
+    #1 chk(result === 32'h1234_5678, "GETPSW passes the PSW through");
+    #1 chk(writes === 1'b1,          "and writes it");
+    #1 chk(flags_out === 4'b1010,    "without disturbing a flag");
+    op = ALU_UPDPSWH;
+    #1 chk(writes === 1'b0, "UPDPSW.H writes no OPERAND: the PSW is the sequencer's");
+    op = ALU_UPDPSWW;
+    #1 chk(writes === 1'b0, "and neither does UPDPSW.W");
+    op = ALU_BRKV;
+    #1 chk(writes === 1'b0, "and BRKV writes nothing at all");
+    flags_in = 4'd0;
+
     if (errors == 0) $display("V60 ALU PASS");
     else             $display("V60 ALU FAIL (%0d errors)", errors);
     $finish;
