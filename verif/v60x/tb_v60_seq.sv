@@ -1382,6 +1382,15 @@ initial begin
     mem[11'h764] = 8'h5D; mem[11'h765] = 8'hA9; mem[11'h766] = 8'h8A;
     mem[11'h767] = 8'h04; mem[11'h768] = 8'h08; mem[11'h769] = 8'h69;
 
+    // The floating point three.  Format II, opcode 5C short / 5E long, sub-op
+    // in the second byte -- 08 MOVF, 09 NEGF, 0A ABSF.
+    // NEGF.s [R10], R9    5C A9 6A 69
+    mem[11'h76A] = 8'h5C; mem[11'h76B] = 8'hA9; mem[11'h76C] = 8'h6A;
+    mem[11'h76D] = 8'h69;
+    // MOVF.s [R10], R9    5C A8 6A 69   -- a NaN through this raises
+    mem[11'h76E] = 8'h5C; mem[11'h76F] = 8'hA8; mem[11'h770] = 8'h6A;
+    mem[11'h771] = 8'h69;
+
     // SBT entry 23, Decimal Arithmetic (Figure 8-2's +92) -> 0x1C0, which is
     // vector 21's handler -- the two share a frame and this reuses it.
     mem[11'h05C] = 8'hC0; mem[11'h05D] = 8'h01;
@@ -3754,6 +3763,62 @@ initial begin
         "an indirect bit operand reads at the POINTER, with a residual taken from it");
     chk(seq.bf_resid_r === 3'd0,
         "and the residual is RECOMPUTED from the pointer, not left at the last one");
+
+    // =======================================================================
+    // The floating point three that contain no arithmetic -- and the first
+    // thing in this tree that writes the FLOATING POINT condition codes,
+    // PSW[12:8].  Nothing had, which is why docs/v60/BREAK-AND-TRAP.md could
+    // only record TRAPFL as armable by hand.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    put_word(13'h710, 32'h3F80_0000);        // 1.0f
+    rf.gpr[10] = 32'h0000_0710;
+    rf.gpr[9]  = 32'hDEAD_BEEF;
+    repeat (2) @(negedge clk);
+    jump(32'h0000076A);
+    step;
+    chk(rf.gpr[9] === 32'hBF80_0000, "NEGF.s of 1.0 stored -1.0");
+    chk(seq_psw[PSW_S] === 1'b1 && seq_psw[PSW_CY] === 1'b1,
+        "with S and CY from the result");
+
+    // A NaN raises Reserved Floating Point Operand, and "the flags and
+    // destination will remain unchanged".
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h710, 32'h7FC0_0000);        // a quiet NaN
+    rf.gpr[10] = 32'h0000_0710;
+    rf.gpr[9]  = 32'h1234_5678;
+    seq.psw[PSW_Z] = 1'b1;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h0000076E);
+    step;
+    chk(seq_pc === 32'h000002C0,
+        "a NaN source raises the FLOATING POINT exception, vector 22 -- not the integer one");
+    chk(mem_word(13'h5F8) === 32'h16800008,
+        "with code 0x1680 -- Reserved Floating Point Operand");
+    chk(rf.gpr[9] === 32'h1234_5678, "the destination remains unchanged");
+    chk(mem_word(13'h5F4) === psw_before,
+        "and the FLAGS remain unchanged too, which the page says in the same breath");
+
+    // And a clean value DOES write the floating point condition codes, which
+    // is what finally lets TRAPFL fire from an FP result rather than by hand.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h710, 32'h0000_0001);        // a denormal
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    jump(32'h0000076A);
+    step;
+    chk(seq_psw[PSW_FUD] === 1'b1,
+        "a denormal result sets PSW.FUD -- the first FP condition code this tree writes");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

@@ -40,6 +40,23 @@ reg  [5:0] bf_len   = 6'd0;
 reg  [7:0] dec_pat  = 8'd0;
 wire       dec_bad;
 
+// The floating point unit, checked here beside the ALU because it is the same
+// kind of thing: one cycle of combinational logic over presented operands.
+reg   [3:0] f_bytes = 4'd4;
+reg  [63:0] f_a     = 64'd0;
+reg   [4:0] f_ffl   = 5'd0;
+wire [63:0] f_res;
+wire  [3:0] f_flags;
+wire  [4:0] f_ffl_out;
+wire        f_resv;
+
+v60_fpu fpu (
+    .op(op), .fbytes(f_bytes), .a(f_a),
+    .flags_in(flags_in), .ffl_in(f_ffl),
+    .result(f_res), .flags_out(f_flags), .ffl_out(f_ffl_out),
+    .resv_operand(f_resv)
+);
+
 v60_alu dut (.op(op), .opbytes(opbytes), .xbytes(xbytes), .x(x), .y(y),
              .bf_resid(bf_resid), .bf_len(bf_len), .dec_pat(dec_pat), .dec_bad(dec_bad),
              .flags_in(flags_in),
@@ -918,6 +935,118 @@ initial begin
     #1 chk(dec_bad === 1'b1, "and a digit nibble of A raises too");
 
     dec_pat = 8'd0; flags_in = 4'b0000;
+
+    // =======================================================================
+    // The floating point three that contain no arithmetic.  IEEE 754 single
+    // and double, and the flag sentences are written in terms of the four
+    // classes -- zero, denormal, infinity, NaN -- so the classification is
+    // what is really being tested.
+    // =======================================================================
+    flags_in = 4'b0000; f_ffl = 5'd0;
+
+    // ---- short real ----
+    f_bytes = 4'd4;
+
+    // 1.0f = 0x3F800000: a plain positive normal.
+    op = ALU_MOVF; f_a = 64'h0000_0000_3F80_0000;
+    #1 chk(f_res[31:0] === 32'h3F80_0000, "MOVF copies a short real unchanged");
+    #1 chk(f_flags === 4'b0000, "1.0 is positive, non-zero and not negative");
+    #1 chk(f_resv === 1'b0 && f_ffl_out === 5'd0, "and raises nothing");
+
+    // -1.0f = 0xBF800000.
+    f_a = 64'h0000_0000_BF80_0000;
+    #1 chk(f_flags[PSW_S] === 1'b1 && f_flags[PSW_CY] === 1'b1,
+           "-1.0 sets both S and CY: negative and non-zero");
+    #1 chk(f_flags[PSW_Z] === 1'b0, "and is not zero");
+
+    // NEGATIVE ZERO, which is where CY and S part company.  "CY Set if the
+    // destination is negative AND NON-ZERO"; "S Set if the destination
+    // MANTISSA SIGN BIT is set" -- the bit, not the value.
+    f_a = 64'h0000_0000_8000_0000;
+    #1 chk(f_flags[PSW_S] === 1'b1,
+           "negative zero sets S, because S is the sign BIT");
+    #1 chk(f_flags[PSW_CY] === 1'b0,
+           "and clears CY, because CY needs negative AND non-zero");
+    #1 chk(f_flags[PSW_Z] === 1'b1, "with Z set");
+
+    // Positive zero.
+    f_a = 64'd0;
+    #1 chk(f_flags === 4'b0001, "positive zero sets Z alone");
+
+    // A NaN: exponent all ones, mantissa non-zero.
+    f_a = 64'h0000_0000_7FC0_0000;
+    #1 chk(f_resv === 1'b1, "a NaN source raises Reserved Floating Point Operand");
+    #1 chk(f_ffl_out[4] === 1'b1, "and sets FIV");
+
+    // An infinity: exponent all ones, mantissa zero.
+    f_a = 64'h0000_0000_7F80_0000;
+    #1 chk(f_resv === 1'b1, "an infinity raises it too");
+    #1 chk(f_ffl_out[4] === 1'b1, "and sets FIV -- MOVF names both directly");
+
+    // A denormal: exponent zero, mantissa non-zero.
+    f_a = 64'h0000_0000_0000_0001;
+    #1 chk(f_resv === 1'b0, "a denormal is not a reserved operand");
+    #1 chk(f_ffl_out[1] === 1'b1, "but it sets FUD");
+    #1 chk(f_flags[PSW_Z] === 1'b0, "and is not zero");
+
+    // The floating point flags are STICKY: every sentence is "otherwise
+    // unchanged", so a clean value does not clear what was there.
+    f_ffl = 5'b10000; f_a = 64'h0000_0000_3F80_0000;
+    #1 chk(f_ffl_out[4] === 1'b1, "a clean value leaves FIV as it was: they are sticky");
+    f_ffl = 5'd0;
+
+    // NEGF flips the sign bit and nothing else.
+    op = ALU_NEGF; f_a = 64'h0000_0000_3F80_0000;
+    #1 chk(f_res[31:0] === 32'hBF80_0000, "NEGF 1.0 gives -1.0");
+    #1 chk(f_flags[PSW_S] === 1'b1 && f_flags[PSW_CY] === 1'b1,
+           "with S and CY from the RESULT, not the source");
+    f_a = 64'h0000_0000_BF80_0000;
+    #1 chk(f_res[31:0] === 32'h3F80_0000, "and NEGF -1.0 gives 1.0");
+    #1 chk(f_flags[PSW_S] === 1'b0, "clearing S");
+
+    // ABSF clears the sign bit, and its flag block is the group's distinctive
+    // one: THREE of the four integer flags are unconditionally cleared.
+    op = ALU_ABSF; flags_in = 4'b1111; f_a = 64'h0000_0000_BF80_0000;
+    #1 chk(f_res[31:0] === 32'h3F80_0000, "ABSF -1.0 gives 1.0");
+    #1 chk(f_flags[PSW_CY] === 1'b0 && f_flags[PSW_OV] === 1'b0 &&
+           f_flags[PSW_S] === 1'b0,
+           "and clears CY, OV and S unconditionally -- the result cannot be negative");
+    #1 chk(f_flags[PSW_Z] === 1'b0, "with Z from the result");
+    f_a = 64'h0000_0000_8000_0000;
+    #1 chk(f_res[31:0] === 32'h0000_0000, "ABSF of negative zero gives positive zero");
+    #1 chk(f_flags[PSW_Z] === 1'b1, "and sets Z");
+    flags_in = 4'b0000;
+
+    // ---- long real, where the fields are 1/11/52 rather than 1/8/23 ----
+    f_bytes = 4'd8;
+    op = ALU_MOVF;
+
+    // 1.0 = 0x3FF0000000000000.
+    f_a = 64'h3FF0_0000_0000_0000;
+    #1 chk(f_res === 64'h3FF0_0000_0000_0000, "MOVF copies a long real unchanged");
+    #1 chk(f_flags === 4'b0000, "1.0 is a plain positive normal at double precision too");
+    #1 chk(f_resv === 1'b0, "and raises nothing");
+
+    // The bit pattern that is a NaN at DOUBLE precision is an ordinary normal
+    // at single -- which is the whole reason the width is an input.
+    f_a = 64'h7FF8_0000_0000_0000;
+    #1 chk(f_resv === 1'b1, "a double NaN raises");
+    f_bytes = 4'd4;
+    #1 chk(f_resv === 1'b0,
+           "and the SAME low word read as a short real does not: the width decides the class");
+    f_bytes = 4'd8;
+
+    // A double infinity and a double denormal.
+    f_a = 64'h7FF0_0000_0000_0000;
+    #1 chk(f_resv === 1'b1, "a double infinity raises");
+    f_a = 64'h0000_0000_0000_0001;
+    #1 chk(f_resv === 1'b0 && f_ffl_out[1] === 1'b1, "a double denormal sets FUD");
+    f_a = 64'h8000_0000_0000_0000;
+    #1 chk(f_flags[PSW_Z] === 1'b1 && f_flags[PSW_S] === 1'b1 &&
+           f_flags[PSW_CY] === 1'b0,
+           "and double negative zero behaves as single: S set, CY clear, Z set");
+
+    f_bytes = 4'd4; f_a = 64'd0;
 
     if (errors == 0) $display("V60 ALU PASS");
     else             $display("V60 ALU FAIL (%0d errors)", errors);

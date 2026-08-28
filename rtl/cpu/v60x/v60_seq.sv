@@ -396,6 +396,12 @@ localparam logic [7:0] VEC_FP_ARITH      = 8'd22;
 // exception", under "1680 reserved floating point operand".  The numbering
 // carries the split even though the databook has no separate decimal heading:
 // 15xx integer, 16xx floating point, 17xx decimal.
+// Databook p.3.272's Arithmetic Exceptions block, read at 600 dpi: 1601
+// precision, 1602 underflow, 1604 overflow, 1608 zero divide, 1610 invalid
+// operation, 1680 reserved floating point operand.  The last is the one a NaN
+// or infinity source raises, and it is outside the one-hot low nibble the
+// other five combine in.
+localparam logic [15:0] CODE_FP_RESERVED = 16'h1680;
 localparam logic  [7:0] VEC_DEC_ARITH  = 8'd23;
 localparam logic [15:0] CODE_DEC_FORMAT = 16'h1780;
 // +96..+108  Change to Execution Level 0..3   vectors 24..27
@@ -682,6 +688,8 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              // "cvtd.pz src.b.r, dst.h.w" -- both conversions
                              // print a write-only destination.
                              (aop == ALU_CVTDPZ) || (aop == ALU_CVTDZP) ||
+                             (aop == ALU_MOVF) || (aop == ALU_NEGF) ||
+                             (aop == ALU_ABSF) ||
                              // "dst <- [SP+]": POP's one encoded operand is
                              // written and never read.
                              (aop == ALU_POP);
@@ -1042,6 +1050,11 @@ wire        is_dec_ar = (aop == ALU_ADDDC) || (aop == ALU_SUBDC) ||
                         (aop == ALU_SUBRDC);
 wire        is_dec    = is_dec_ar || (aop == ALU_CVTDPZ) || (aop == ALU_CVTDZP);
 
+// The floating point three that contain no arithmetic.  Their destination is
+// written and not read -- "movf.s src.s.r, dst.s.w", and NEGF and ABSF are the
+// two arithmetic instructions with a `.w` destination rather than `.rw`.
+wire        is_fp = (aop == ALU_MOVF) || (aop == ALU_NEGF) || (aop == ALU_ABSF);
+
 wire        is_xch = (aop == ALU_XCH);
 // Format I with d = 0 puts dst1 in the register field, where it cannot be
 // anything else.  Every other encoding puts it in op1's addressing mode.
@@ -1154,6 +1167,20 @@ v60_alu alu (
     .result(alu_result), .flags_out(alu_flags), .writes(alu_writes)
 );
 
+// The floating point group.  A separate unit because a long real is SIXTY-FOUR
+// bits and v60_alu's operands are thirty-two.
+wire [63:0] fpu_result;
+wire  [3:0] fpu_flags;
+wire  [4:0] fpu_ffl;
+wire        fpu_resv;
+
+v60_fpu fpu (
+    .op(aop), .fbytes(w_dst), .a(val1),
+    .flags_in(psw_flags(psw)), .ffl_in(psw[PSW_FIV:PSW_FPR]),
+    .result(fpu_result), .flags_out(fpu_flags), .ffl_out(fpu_ffl),
+    .resv_operand(fpu_resv)
+);
+
 // The six that are not one cycle of combinational logic.  They take the same
 // two operand values and produce the same three things -- a result, four flags
 // and whether the destination is written at all -- so everything downstream of
@@ -1189,17 +1216,35 @@ logic [31:0] md_result_hi_r;
 logic  [3:0] md_flags_r;
 logic        md_writes_r, md_zd_r, md_used;
 
-wire [31:0] eff_result = md_used ? md_result_r : alu_result;
-wire  [3:0] eff_flags  = md_used ? md_flags_r  : alu_flags;
+wire [31:0] eff_result = md_used ? md_result_r
+                       : is_fp  ? fpu_result[31:0] : alu_result;
+wire  [3:0] eff_flags  = md_used ? md_flags_r
+                       : is_fp  ? fpu_flags : alu_flags;
 // "a Decimal Format exception will occur and the destination will remain
 // unchanged" -- so the writeback is gated on it, the way the zero divide's is.
 wire        dec_fault = is_dec && alu_dec_bad;
-wire        eff_writes = md_used ? md_writes_r : (alu_writes && !dec_fault);
+// "If a source or destination operand is a NaN or an infinity, a Reserved
+// Floating Point Operand exception will occur and THE FLAGS AND DESTINATION
+// WILL REMAIN UNCHANGED" -- ADDF and ABSF both say it in those words, so both
+// the writeback and the flag update are gated.
+//
+// MOVF's page does NOT say it: its Exceptions block lists Reserved Floating
+// Point Operand, its FIV sentence sets a flag on a NaN or infinite
+// destination, and its Description does neither -- so whether a movf of a NaN
+// traps or merely flags is not stated.  docs/v60/FLOATING-POINT.md calls this
+// the sharpest gap in the group.  DECISION: MOVF is treated like the other
+// two, because its Exceptions block is explicit and a divergent MOVF would be
+// the only instruction in the group that flags without trapping.  Marked here
+// because it is a decision.
+wire        fp_resv   = is_fp && fpu_resv;
+wire        eff_writes = md_used ? md_writes_r
+                       : (alu_writes && !dec_fault && !fp_resv);
 
 // A doubleword destination -- the four X forms and MOV.D.  Its width comes
 // from the table (w_dst = 8), not from a decision here.
 wire        dst_is_dbl = (w_dst == 4'd8);
-wire [31:0] eff_hi     = md_used ? md_result_hi_r : val1[63:32];
+wire [31:0] eff_hi     = md_used ? md_result_hi_r
+                       : is_fp  ? fpu_result[63:32] : val1[63:32];
 
 // "if ( Z = 1 ) then dst <- R28 else Rn <- dst".  The comparison is CMP's, so
 // its Z is the match, and the ALU is already producing it.
@@ -2039,8 +2084,26 @@ always_ff @(posedge clk) begin
             // UPDPSW is the exception: it writes the whole PSW under a mask
             // rather than leaving four flags behind, and its Condition Codes
             // block is one line -- "Updated according to mask operand".
-            if (is_updpsw) psw <= updpsw_next;
-            else           psw <= psw_set_flags(psw, eff_flags);
+            if (is_updpsw) begin
+                psw <= updpsw_next;
+            end else if (fp_resv) begin
+                // "the flags ... will remain unchanged".
+                psw <= psw;
+            end else if (is_fp) begin
+                // The FLOATING POINT condition codes, PSW[12:8], which nothing
+                // in this tree has ever written.  Every sentence in the group
+                // is "Set if ... otherwise UNCHANGED", so they are sticky and
+                // v60_fpu returns them already merged with what was there.
+                //
+                // This is what finally makes TRAPFL able to fire as a
+                // consequence of an FP result rather than only by hand:
+                // docs/v60/BREAK-AND-TRAP.md recorded that nothing set these,
+                // so its AND was always zero.
+                psw                     <= psw_set_flags(psw, eff_flags);
+                psw[PSW_FIV:PSW_FPR]    <= fpu_ffl;
+            end else begin
+                psw <= psw_set_flags(psw, eff_flags);
+            end
             if (wb_rn_en) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= wb_rn_sel;
@@ -2067,6 +2130,15 @@ always_ff @(posedge clk) begin
                 md_zd_r    <= 1'b0;
                 exc_vec_r  <= VEC_INT_ARITH;
                 exc_code_r <= CODE_ZERO_DIVIDE;
+                exc_kind   <= EK_ARITH;
+                state      <= S_EXC_SW;
+            end else if (fp_resv) begin
+                // Vector 22, the Floating Point Arithmetic Exception, on the
+                // same Arithmetic Exceptions frame the zero divide and the
+                // decimal fault use -- Figure 8-5 groups #21, #22 and #23
+                // under one heading with one frame.
+                exc_vec_r  <= VEC_FP_ARITH;
+                exc_code_r <= CODE_FP_RESERVED;
                 exc_kind   <= EK_ARITH;
                 state      <= S_EXC_SW;
             end else if (dec_fault) begin

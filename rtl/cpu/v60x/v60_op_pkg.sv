@@ -1160,6 +1160,9 @@ function automatic alu_op_e op_alu_escape(input logic [7:0] op,
             16'h5902: r = ALU_SUBRDC;  // SUBRDC
             16'h5910: r = ALU_CVTDPZ;  // CVTD.PZ
             16'h5918: r = ALU_CVTDZP;  // CVTD.ZP
+            16'h5C08: r = ALU_MOVF;    // MOVF
+            16'h5C09: r = ALU_NEGF;    // NEGF
+            16'h5C0A: r = ALU_ABSF;    // ABSF
             16'h5D00: r = ALU_CMPBFS;  // CMPBF
             16'h5D01: r = ALU_CMPBFZ;  // CMPBF
             16'h5D02: r = ALU_CMPBFL;  // CMPBF
@@ -1168,6 +1171,9 @@ function automatic alu_op_e op_alu_escape(input logic [7:0] op,
             16'h5D0A: r = ALU_EXTBFL;  // EXTBF
             16'h5D18: r = ALU_INSBFR;  // INSBF
             16'h5D19: r = ALU_INSBFL;  // INSBF
+            16'h5E08: r = ALU_MOVF;    // MOVF
+            16'h5E09: r = ALU_NEGF;    // NEGF
+            16'h5E0A: r = ALU_ABSF;    // ABSF
             default: r = ALU_NONE;
         endcase
         op_alu_escape = r;

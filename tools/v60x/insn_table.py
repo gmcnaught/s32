@@ -603,6 +603,11 @@ EXEC_OP = {
 # (p.3.295).  Format VII's `ext` is a BYTE IN THE OPERAND STREAM carrying the
 # field's length (p.3.293).  Two fields, one name, one page apart.
 EXEC_OP_ESCAPE = {
+    # The floating point three that contain no arithmetic.  Both widths share
+    # one entry: MOVF is 5C-08 and 5E-08, and the `s` bit that picks short from
+    # long real is in the PRIMARY byte, not the sub-op -- so the sub-op alone
+    # names the operation and the operand widths carry the width.
+    ('MOVF', 0): 'MOVF', ('NEGF', 1): 'NEGF', ('ABSF', 2): 'ABSF',
     # The decimal group: 0x59 with five sub-ops, and the sub-op picks the
     # operation outright rather than a variant.  Keyed by (mnemonic, 0) because
     # each has one sub-op of its own -- the `ext` variant field is the bit

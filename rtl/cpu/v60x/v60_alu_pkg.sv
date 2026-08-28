@@ -234,6 +234,17 @@ typedef enum logic [6:0] {
     // at the lowest address.
     ALU_CVTDPZ  = 7'd74,
     ALU_CVTDZP  = 7'd75,
+    // The floating point group's three that contain no arithmetic: they move a
+    // value, flip its sign bit, or clear it.  So they need none of the
+    // rounding, subnormal and NaN behaviour docs/v60/FLOATING-POINT.md records
+    // as unsettled, and they are implementable from the pages alone.
+    //
+    // Both widths run through the same operations -- "movf.s src.s.r, dst.s.w"
+    // and "movf.l src.l.r, dst.l.w" -- with the width coming from the operand
+    // sizes, so one ALU op serves each.
+    ALU_MOVF    = 7'd76,
+    ALU_NEGF    = 7'd77,
+    ALU_ABSF    = 7'd78,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 7'd19,

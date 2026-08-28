@@ -24,7 +24,7 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_ea.sv \
      rtl/cpu/v60x/v60_bus_arb.sv rtl/cpu/v60x/v60_pfu.sv \
      rtl/cpu/v60x/v60_psw_pkg.sv rtl/cpu/v60x/v60_regfile.sv \
-     rtl/cpu/v60x/v60_alu_pkg.sv rtl/cpu/v60x/v60_alu.sv \
+     rtl/cpu/v60x/v60_alu_pkg.sv rtl/cpu/v60x/v60_alu.sv rtl/cpu/v60x/v60_fpu.sv \
      rtl/cpu/v60x/v60_muldiv.sv \
      rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
      rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
