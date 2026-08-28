@@ -933,6 +933,14 @@ initial begin
     //   index addressing modes".  The .b form steps R8 by ONE.
     mem[11'h1F4] = 8'h40; mem[11'h1F5] = 8'hE0; mem[11'h1F6] = 8'h88;
     mem[11'h1F7] = 8'h69;
+    // MOVEA.w [R9], [R9]   44 80 69 69
+    //   A MEMORY destination, which is "dst.w.w" -- written and not read.  A
+    //   MOVEA left out of dst_write_only reads it first, which costs two extra
+    //   bus cycles and puts a READ on the pins the page does not describe.
+    //   R9 is 0x700 by now, so both the address taken and the place it is
+    //   stored are that, and the destination is word aligned.
+    mem[11'h1F8] = 8'h44; mem[11'h1F9] = 8'h80; mem[11'h1FA] = 8'h69;
+    mem[11'h1FB] = 8'h69;
 
     // ---- an eleventh program, at 0x200 is taken; use 0x230 -----------------
     // GETPSW and the UPDPSW pair.  The .h form's operands are WORDS, like the
@@ -972,6 +980,17 @@ initial begin
     mem[11'h274] = 8'h31; mem[11'h275] = 8'h68;
     // BRKV again
     mem[11'h276] = 8'hC9;
+
+    // UPDPSW.H #0x00000F00, #0x00000F00 at 0x290, twelve bytes.
+    //   Bits 8-11 are FPR, FUD, FOV and FZD -- four of the five FLOATING POINT
+    //   condition codes, which §3 says UPDPSW.H may modify along with the
+    //   integer ones.  A mask restricted to 0x10FF instead of 0x1F0F writes
+    //   nothing here, and no test using only the integer codes or PSW.TE can
+    //   tell the two apart.
+    mem[11'h290] = 8'h4A; mem[11'h291] = 8'h80; mem[11'h292] = 8'hF4;
+    mem[11'h293] = 8'h00; mem[11'h294] = 8'h0F; mem[11'h295] = 8'h00;
+    mem[11'h296] = 8'h00; mem[11'h297] = 8'hF4; mem[11'h298] = 8'h00;
+    mem[11'h299] = 8'h0F; mem[11'h29A] = 8'h00; mem[11'h29B] = 8'h00;
 
     // UPDPSW.W again, at 0x260, for the privilege test
     mem[11'h260] = 8'h13; mem[11'h261] = 8'h80; mem[11'h262] = 8'hF4;
@@ -1797,6 +1816,16 @@ initial begin
         "and stepped the pointer by ONE, which is what its .b size field is for");
     chk(insn_cycles === 5'd0, "still without a bus cycle");
 
+    // A MEMORY destination.  MOVEA's is "dst.w.w", so it is written and never
+    // read -- an aligned word write is two bus cycles, and a read-modify-write
+    // would be four.
+    n_writes = 0;
+    step;
+    chk(mem_word(13'h700) === 32'h0000_0700,
+        "MOVEA stored the source's address into memory");
+    chk(insn_cycles === 5'd2,
+        "in TWO bus cycles: the destination is written, not read first");
+
     // =======================================================================
     // GETPSW and the UPDPSW pair.
     // =======================================================================
@@ -1824,6 +1853,14 @@ initial begin
     step;
     chk(seq_psw[PSW_TE] === 1'b1,
         "UPDPSW.W, which is privileged, can set it");
+
+    // The FLOATING POINT condition codes, which §3 permits UPDPSW.H to modify
+    // alongside the integer ones.  Nothing else in this bench touches bits
+    // 8-11, and a mask that excluded them would write nothing here.
+    jump(32'h00000290);
+    step;
+    chk(seq_psw[11:8] === 4'b1111,
+        "UPDPSW.H may modify the FLOATING POINT condition codes too");
 
     // And at a non-zero execution level it raises instead.
     @(negedge clk);

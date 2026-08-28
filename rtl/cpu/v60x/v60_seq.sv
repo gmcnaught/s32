@@ -525,7 +525,7 @@ wire        dst_am_is_op2 = fmt_ii;
 // docs/v60/TRANCHE-ONE.md rather than changed in passing.
 wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              (aop == ALU_RVBYT) || (aop == ALU_SETF) ||
-                             (aop == ALU_GETPSW);
+                             (aop == ALU_GETPSW) || (aop == ALU_MOVEA);
 
 // And which ones READ their operand and never write it.  The pages do not call
 // these a destination at all: CMP's syntax line is "cmp.b src1.b.r, src2.b.r"
@@ -554,12 +554,19 @@ wire        src_addr_only = (aop == ALU_MOVEA);
 // the syntax line names newPSW and mask in that order.
 //
 // UPDPSW.H "is restricted to modifying only the condition code fields", and §3
-// names those as the integer and floating point condition codes -- CY OV S Z
-// at 3:0 and FIV FZD FOV FUD FPR at 12:8.  DECISION, because the page does not
-// say: a mask bit outside that set is silently ignored rather than raising.
-// The Exceptions block names only Privileged Instruction and only for the .W
-// form, so there is no exception on offer to raise.
-localparam logic [31:0] UPDPSW_H_FIELDS = 32'h0000_10FF;
+// names those as "the integer and floating point condition codes" -- CY OV S Z
+// at 3:0 and FPR FUD FOV FZD FIV at 12:8.  That is the low halfword minus its
+// reserved bits, which v60_psw_pkg already states once as PSW_RFU, so this
+// takes it from there rather than restating it as a literal.
+//
+// DEFECT this replaces: it was written as the literal 32'h0000_10FF, which is
+// a transposition -- 0x1000 | 0x00FF instead of 0x1F00 | 0x000F.  That
+// excluded bits 8 to 11, four of the five floating point condition codes the
+// page explicitly permits, so a mask of 0x00000F00 wrote nothing; and it
+// included the reserved bits 4 to 7, which only the `& ~PSW_RFU` below made
+// harmless.  The package held the right mask in psw_update_h and nothing
+// called it.
+localparam logic [31:0] UPDPSW_H_FIELDS = ~PSW_RFU & 32'h0000_FFFF;
 wire [31:0] updpsw_mask = (aop == ALU_UPDPSWH)
                           ? (val2[31:0] & UPDPSW_H_FIELDS) : val2[31:0];
 // "Reserved for future use (Must be 0)" at 4-7, 13-15 and 19-23 (p.3.248), so
@@ -575,7 +582,14 @@ wire        is_updpsw   = (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW);
 //
 // UPDPSW.W is in that block and UPDPSW.H is not, which the Reference says the
 // same way: one Exceptions block reading "Privileged Instruction (updpsw.w)".
-wire        privileged_op = (aop == ALU_UPDPSWW);
+//
+// A function rather than a wire on `aop`, because the check has to happen in
+// S_FETCH -- before any operand is fetched, since the exception is for
+// attempting the instruction and not for what it would have read -- and `aop`
+// is only assigned at the end of that state.
+function automatic logic op_privileged(input alu_op_e o);
+    op_privileged = (o == ALU_UPDPSWW);
+endfunction
 
 // The destination operand's addressing mode.  Spelled out rather than
 // selected with a ternary: a ternary between two enum values is not an enum to
@@ -830,7 +844,7 @@ always_ff @(posedge clk) begin
                 stopped     <= 1'b1;
                 stop_reason <= STOP_NO_ALU;
                 state       <= S_STOP;
-            end else if ((op_alu(idu_op) == ALU_UPDPSWW) &&
+            end else if (op_privileged(op_alu(idu_op)) &&
                          (psw[PSW_EL_HI:PSW_EL_LO] != 2'b00)) begin
                 // Checked before any operand is fetched: the exception is for
                 // attempting the instruction, not for what it would have read.
