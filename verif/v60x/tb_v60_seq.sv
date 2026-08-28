@@ -980,6 +980,22 @@ initial begin
     // BRK at 0x27C -- C8, Format V, one byte
     mem[11'h27C] = 8'hC8;
 
+    // TRAP.  Format III, so the same shape as INC and TEST above: the mod
+    // field in the register column with m = 1, and F8/F9 one instruction.
+    //
+    // SBT entry 53 -- Software Trap 5, at 4 x 53 = +212 = 0xD4 -- points at a
+    // handler that writes a byte, so a trap that vectors ANYWHERE else is
+    // visible in two ways rather than one.
+    mem[11'h0D4] = 8'hB0; mem[11'h0D5] = 8'h01;
+    // handler for trap 5: MOV.B #0xC7, [R8]
+    mem[11'h1B0] = 8'h09; mem[11'h1B1] = 8'h80; mem[11'h1B2] = 8'hF4;
+    mem[11'h1B3] = 8'hC7; mem[11'h1B4] = 8'h68;
+    // TRAP R9    F9 69
+    mem[11'h2A0] = 8'hF9; mem[11'h2A1] = 8'h69;
+    // MOV.B #0x5C, [R8]   -- reached only when the TRAP above falls through
+    mem[11'h2A2] = 8'h09; mem[11'h2A3] = 8'h80; mem[11'h2A4] = 8'hF4;
+    mem[11'h2A5] = 8'h5C; mem[11'h2A6] = 8'h68;
+
     // BRKV at 0x270, twice: once with OV clear and once with it set.
     // BRKV is C9, Format V, one byte.
     mem[11'h270] = 8'hC9;
@@ -1940,6 +1956,67 @@ initial begin
     chk(rf.gpr[31] === 32'h000005F4, "three words of frame, no parameter");
     step;
     chk(mem[11'h700] === 8'hB9, "and the breakpoint handler runs");
+
+    // =======================================================================
+    // TRAP: Format III, the condition in the UPPER nibble, and vector 48 + n.
+    //
+    // Both operands below are chosen so that reading the two nibbles the other
+    // way round changes whether the trap is taken at all -- which is the one
+    // mistake this instruction invites, because SETF's condition is in the LOW
+    // nibble and the two share a condition evaluator.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+
+    // Condition FALSE, so nothing happens at all.
+    //   Operand 0xB2: the upper nibble B is "False / Never" and the lower
+    //   nibble 2 is vector offset 2.  Read the other way round the condition
+    //   would be 2, "Carry", which the CY = 1 below satisfies -- so a swap
+    //   takes a trap here where this falls through.
+    @(negedge clk);
+    rf.gpr[9]       = 32'hFFFF_FFB2;
+    seq.psw[PSW_CY] = 1'b1;
+    seq.psw[PSW_Z]  = 1'b1;
+    repeat (2) @(negedge clk);
+    jump(32'h000002A0);
+    step;
+    chk(seq_pc === 32'h000002A2,
+        "with its condition false TRAP advances past its two bytes and does nothing");
+    chk(rf.gpr[31] === 32'h00000600, "pushing nothing");
+    step;
+    chk(mem[11'h700] === 8'h5C, "and the instruction after it runs");
+
+    // Condition TRUE, and everything about the frame.
+    //   Operand 0x45: the upper nibble 4 is "Zero", satisfied by Z = 1, and
+    //   the lower nibble 5 is vector offset 5 -- SBT entry 53.  Swapped, the
+    //   condition would be 5, "Not zero", which Z = 1 makes FALSE.  The high
+    //   bytes are junk: the operand is `.b`, so only the low byte is read.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9]       = 32'h1234_5645;
+    seq.psw[PSW_CY] = 1'b1;
+    seq.psw[PSW_Z]  = 1'b1;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h000002A0);
+    step;
+    chk(seq_pc === 32'h000001B0,
+        "TRAP with vector offset 5 vectors through SBT entry 53 -- 48 + n, not n");
+    chk(mem_word(13'h5FC) === 32'h35000004,
+        "its code puts the trap number in bits 11:8, beside a parameter count of 4");
+    chk(mem_word(13'h5F8) === psw_before, "then the PSW");
+    chk(mem_word(13'h5F4) === 32'h000002A2,
+        "and the NEXT PC, so a handler returns PAST the trap -- unlike BRK");
+    chk(rf.gpr[31] === 32'h000005F4, "three words of frame, no parameter");
+    chk(seq_psw[PSW_IE] === psw_before[PSW_IE],
+        "and an exception leaves PSW.IE alone -- only an interrupt clears it");
+    step;
+    chk(mem[11'h700] === 8'hC7, "and the trap handler runs");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

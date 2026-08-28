@@ -383,14 +383,24 @@ localparam logic [7:0] VEC_BUS_FAULT = 8'd3;
 // Which exception is being raised, which decides the frame rather than the
 // vector: an interrupt has no code word, a bus fault has a parameter above
 // one, and the three instruction exceptions have neither.
-localparam logic [1:0] EK_INSN = 2'd0;
-localparam logic [1:0] EK_BERR = 2'd1;
-localparam logic [1:0] EK_INT  = 2'd2;
+localparam logic [2:0] EK_INSN = 3'd0;
+localparam logic [2:0] EK_BERR = 3'd1;
+localparam logic [2:0] EK_INT  = 3'd2;
 // Figure 8-5's Arithmetic Exceptions frame, which is BRKV's operation printed
 // as a diagram: "+12 PC (Current PC) / +8 Exception Code | 8 / +4 PSW /
 // PC (Next PC)".  One parameter word, and it is the Current PC -- so unlike
 // the Instruction Exceptions, the return PC on top is the NEXT one.
-localparam logic [1:0] EK_ARITH = 2'd3;
+localparam logic [2:0] EK_ARITH = 3'd3;
+// Figure 8-5's "#48-63 Software Traps" frame: "+8 Exception Code | 4 / +4 PSW /
+// PC (Next PC)".  Three words and no parameter, like an instruction exception
+// -- and the NEXT PC, unlike one.  That single difference is why it is its own
+// kind rather than EK_INSN with a flag: a software trap is how user code asks
+// the supervisor for something, so it must return PAST the trap instruction,
+// while an instruction exception returns TO the instruction that faulted.
+//
+// TRAP's own Operation block and Figure 8-5 agree here, which is worth stating
+// because its neighbour BRK's do not (docs/v60/BREAK-AND-TRAP.md).
+localparam logic [2:0] EK_TRAP = 3'd4;
 
 // Table 8-1's Serious System Exceptions, all thirteen, keyed by the bus status
 // of the cycle that failed and its direction.  The group is one code per KIND
@@ -469,7 +479,7 @@ logic  [4:0] wb_rn_sel;
 logic  [4:0] ea_rn_sel;   // whose Rn the running access will move
 logic  [7:0] exc_vec_r;   // the exception being raised, and its code
 logic [15:0] exc_code_r;
-logic  [1:0] exc_kind;    // which of the three shapes of frame it wants
+logic  [2:0] exc_kind;    // which of the shapes of frame it wants
 logic        exc_ack_r;   // and whether its vector comes off the bus
 logic [31:0] sp_r;        // the stack pointer the stack engine is walking
 logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
@@ -542,8 +552,12 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
 // write cycle on the pins, and on a read-sensitive location it is a write that
 // should never have happened.  Neither instruction had a memory-operand cycle
 // count asserted anywhere, which is how it survived.
+// TRAP is here for the same reason: "trap cond&vector.b.r" -- one operand, and
+// it is `.r`.  Its byte is a condition and a vector, and writing it back would
+// be a bus write to a location the page never calls a destination.
 wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
-                            (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW);
+                            (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW) ||
+                            (aop == ALU_TRAP);
 
 // And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
 // line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
@@ -577,6 +591,31 @@ wire [31:0] updpsw_mask = (aop == ALU_UPDPSWH)
 wire [31:0] updpsw_next = (((psw & ~updpsw_mask) |
                             (val1[31:0] & updpsw_mask)) & ~PSW_RFU);
 wire        is_updpsw   = (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW);
+
+// TRAP's operand, taken apart.  "The upper four bit field of the operand
+// contains the condition code field which indicates under what circumstances
+// the trap will be taken.  The lower four bit field contains the vector offset
+// from the software trap base vector."
+//
+// The nibble order is the opposite of SETF's, whose condition is the LOW
+// nibble ("setf cond.b.r").  Sharing one condition evaluator between the two is
+// right; sharing the extraction would be a defect, so the two nibbles are named
+// here and nowhere else.
+wire  [3:0] trap_cond   = val2[7:4];
+wire  [3:0] trap_vector = val2[3:0];
+wire        trap_taken  = (aop == ALU_TRAP) &&
+                          cond_true(trap_cond, psw_flags(psw));
+// SBT entry 48 + n.  The databook's p.3.270 plate prints these one per line for
+// n = 0 to 15 -- "48 Software Trap 0" through "63 Software Trap 15" -- with
+// entry 47 and below marked RFU, so the mapping is read off the figure rather
+// than inferred from a range label.
+wire  [7:0] trap_vec_no = 8'd48 + {4'd0, trap_vector};
+// Databook p.3.272's Software Traps block: 3000, 3100, 3200 ... 3F00.  The trap
+// number sits in bits 11:8 -- the SECOND nibble -- and not in the low byte.
+// The Change Execution Level group on the same plate is indexed the same way
+// (1800/1900/1A00/1B00), and s32_v60.sv builds THAT one as 0x1800 + level,
+// which is wrong; there is no group in the table indexed in the low byte.
+wire [15:0] trap_code   = {4'h3, trap_vector, 8'h00};
 
 // Privileged instructions: "programs executing at other execution levels
 // (levels 1, 2 and 3) are said to be non-privileged and attempts to execute a
@@ -1194,6 +1233,16 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_ZERO_DIVIDE;
                 exc_kind   <= EK_ARITH;
                 state      <= S_EXC_SW;
+            end else if (trap_taken) begin
+                // Raised here rather than at S_EXEC for the reason above: the
+                // operand's access is finished and its addressing-mode
+                // writeback has just been issued, so the exception happens
+                // between accesses.  TRAP's operand is read-only, so there is
+                // no destination write to drop.
+                exc_vec_r  <= trap_vec_no;
+                exc_code_r <= trap_code;
+                exc_kind   <= EK_TRAP;
+                state      <= S_EXC_SW;
             end else begin
                 pc      <= idu_pc + {27'd0, idu_len};
                 retired <= 1'b1;
@@ -1697,6 +1746,24 @@ always_ff @(posedge clk) begin
                 exc_code         <= exc_code_r;
                 exc_param0       <= idu_pc;
                 exc_is_interrupt <= 1'b0;
+                exc_disable_ie   <= 1'b0;
+                exc_int_stack    <= 1'b0;
+                exc_ack_vector   <= 1'b0;
+            end
+            // Figure 8-5's "#48-63 Software Traps": three words, count 4, no
+            // parameter -- and the NEXT PC, which is what TRAP's own Operation
+            // block pushes too.  So a handler returns PAST the trap with a
+            // plain RETIS #4, which is what a system call needs and the exact
+            // opposite of what BRK needs.
+            EK_TRAP: begin
+                exc_ret_pc       <= idu_pc + {27'd0, idu_len};
+                exc_nparams      <= 2'd0;
+                exc_code         <= exc_code_r;
+                exc_param0       <= 32'd0;
+                exc_is_interrupt <= 1'b0;
+                // Step (ii) of the recognition sequence, databook p.3.269:
+                // only an INTERRUPT clears PSW.IE.  "exception ... PSW.IE
+                // unchanged".
                 exc_disable_ie   <= 1'b0;
                 exc_int_stack    <= 1'b0;
                 exc_ack_vector   <= 1'b0;

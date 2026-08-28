@@ -1102,6 +1102,8 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hF5: r = ALU_TEST; // TEST
             8'hF6: r = ALU_GETPSW; // GETPSW
             8'hF7: r = ALU_GETPSW; // GETPSW
+            8'hF8: r = ALU_TRAP; // TRAP
+            8'hF9: r = ALU_TRAP; // TRAP
             default: r = ALU_NONE;
         endcase
         op_alu = r;

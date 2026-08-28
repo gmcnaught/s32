@@ -69,6 +69,12 @@ typedef enum logic [5:0] {
     // Unconditional breakpoint trap.  Format V, one byte, nothing reaches the
     // ALU.
     ALU_BRK     = 6'd37,
+    // "If the specified condition is satisfied by the integer condition codes,
+    // the specified trap handler is entered."  Format III, and its one operand
+    // IS read -- but it is read as a condition and a vector, not as an
+    // arithmetic value, so nothing here computes with it.  The sequencer takes
+    // the two nibbles apart.  See docs/v60/BREAK-AND-TRAP.md.
+    ALU_TRAP    = 6'd38,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

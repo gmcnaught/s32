@@ -489,6 +489,10 @@ EXEC_OP = {
     # why the Current PC and not the Next one, which its own Operation block
     # gets wrong.
     'BRK': 'BRK',
+    # Conditional, Format III, vector 48+n -- the condition is the operand's
+    # UPPER nibble and the vector offset its lower one, which is the opposite
+    # of SETF.  See docs/v60/BREAK-AND-TRAP.md.
+    'TRAP': 'TRAP',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
