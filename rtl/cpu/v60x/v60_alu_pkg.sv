@@ -61,6 +61,11 @@ typedef enum logic [5:0] {
     ALU_GETPSW  = 6'd33,
     ALU_UPDPSWH = 6'd34,
     ALU_UPDPSWW = 6'd35,
+    // "The OV flag is tested and if set, an Integer Overflow Exception
+    // occurs.  Otherwise, instruction execution continues with the next
+    // instruction."  Format V, one byte, no operand -- the sequencer does all
+    // of it and nothing reaches the ALU.
+    ALU_BRKV    = 6'd36,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

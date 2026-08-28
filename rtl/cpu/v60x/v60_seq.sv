@@ -360,6 +360,8 @@ localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
 localparam logic [15:0] CODE_ILLEGAL_MODE  = 16'h1300;
 localparam logic [15:0] CODE_ILLEGAL_DATA  = 16'h1400;
 localparam logic [15:0] CODE_ZERO_DIVIDE   = 16'h1500;
+// The other Arithmetic Exceptions code, and the one BRKV raises.
+localparam logic [15:0] CODE_INT_OVERFLOW  = 16'h1501;
 
 // The two externally raised vectors this module names.  A maskable interrupt's
 // is not here because it is not chosen here -- it comes off the acknowledge
@@ -836,6 +838,24 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_PRIVILEGED;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
+            end else if (op_alu(idu_op) == ALU_BRKV) begin
+                // "The OV flag is tested and if set, an Integer Overflow
+                // Exception occurs.  Otherwise, instruction execution
+                // continues with the next instruction."  Its frame is
+                // Figure 8-5's Arithmetic Exceptions frame -- the Current PC
+                // as a parameter above the code word and the NEXT PC on top --
+                // which is what EK_ARITH already builds for a zero divide, and
+                // its Operation block is where v60_exc's header got the push
+                // order in the first place.
+                if (psw[PSW_OV]) begin
+                    exc_vec_r  <= VEC_INT_ARITH;
+                    exc_code_r <= CODE_INT_OVERFLOW;
+                    exc_kind   <= EK_ARITH;
+                    state      <= S_EXC_SW;
+                end else begin
+                    // One byte, and nothing happens.
+                    state <= S_RETIRE;
+                end
             end else if (op_alu(idu_op) == ALU_GETPSW) begin
                 // Its one operand is write-only and the value it writes is the
                 // PSW, which lives here rather than in the address unit.

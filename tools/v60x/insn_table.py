@@ -481,6 +481,9 @@ EXEC_OP = {
     # The PSW three.  GETPSW copies it out; the UPDPSW pair merges into it
     # under a mask and writes no operand at all.
     'GETPSW': 'GETPSW',
+    # Conditional on PSW.OV, and its frame is the Arithmetic Exceptions one
+    # v60_seq already builds for a zero divide.
+    'BRKV': 'BRKV',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

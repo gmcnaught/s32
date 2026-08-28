@@ -964,6 +964,15 @@ initial begin
     mem[11'h24D] = 8'h00; mem[11'h24E] = 8'h00; mem[11'h24F] = 8'h01;
     mem[11'h250] = 8'h00; mem[11'h251] = 8'hF4; mem[11'h252] = 8'h00;
     mem[11'h253] = 8'h00; mem[11'h254] = 8'h01; mem[11'h255] = 8'h00;
+    // BRKV at 0x270, twice: once with OV clear and once with it set.
+    // BRKV is C9, Format V, one byte.
+    mem[11'h270] = 8'hC9;
+    // MOV.B #0x31, [R8]   -- reached only when the BRKV above does nothing
+    mem[11'h271] = 8'h09; mem[11'h272] = 8'h80; mem[11'h273] = 8'hF4;
+    mem[11'h274] = 8'h31; mem[11'h275] = 8'h68;
+    // BRKV again
+    mem[11'h276] = 8'hC9;
+
     // UPDPSW.W again, at 0x260, for the privilege test
     mem[11'h260] = 8'h13; mem[11'h261] = 8'h80; mem[11'h262] = 8'hF4;
     mem[11'h263] = 8'h00; mem[11'h264] = 8'h00; mem[11'h265] = 8'h01;
@@ -1825,6 +1834,46 @@ initial begin
     chk(seq_pc === 32'h00000780,
         "UPDPSW.W at execution level 3 is the Privileged Instruction exception");
     chk(mem_word(13'h65C) === 32'h11000004, "with vector 17's code");
+
+    // =======================================================================
+    // BRKV: conditional on PSW.OV, and the Arithmetic Exceptions frame.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    // The handler for vector 21 is the one program seven installed at 0x1C0,
+    // and reset_and_arm has left SBR at 0 -- so entry 21 at +84 still points
+    // there.  R31 is the level 0 stack; R8 is where the handler writes.
+    jump(32'h00000440);
+    step; step;                            // R31 = 0x600, R8 = 0x700
+
+    // OV is clear, so BRKV is a one-byte no-op.
+    @(negedge clk);
+    seq.psw[PSW_OV] = 1'b0;
+    repeat (2) @(negedge clk);
+    jump(32'h00000270);
+    step;
+    chk(seq_pc === 32'h00000271,
+        "with OV clear, BRKV does nothing and advances by its one byte");
+    chk(rf.gpr[31] === 32'h00000600, "pushing nothing");
+    step;
+    chk(mem[11'h700] === 8'h31, "and the instruction after it runs");
+
+    // Now with OV set.
+    @(negedge clk);
+    seq.psw[PSW_OV] = 1'b1;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    step;
+    chk(seq_pc === 32'h000001C0,
+        "with OV set, BRKV raises vector 21 -- the same handler a zero divide reaches");
+    chk(mem_word(13'h5FC) === 32'h00000276,
+        "its frame carries the CURRENT PC as a parameter");
+    chk(mem_word(13'h5F8) === 32'h15010008,
+        "with the integer overflow code beside a parameter count of 8");
+    chk(mem_word(13'h5F4) === psw_before, "then the PSW");
+    chk(mem_word(13'h5F0) === 32'h00000277,
+        "and the NEXT PC on top, so a handler returns past the BRKV");
+    chk(rf.gpr[31] === 32'h000005F0, "four words of frame");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
