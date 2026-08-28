@@ -53,10 +53,10 @@ bus_state_e  state;
 v60_biu dut (
     .clk(clk), .rst(rst), .ce_rise(ce_rise), .ce_fall(ce_fall),
     .req(req), .status(status), .addr(addr), .we(we), .dl(dl), .ube(ube),
-    .first(first),
+    .first(first), .lock(1'b0),
     .wdata(wdata), .ack(ack), .rdata(rdata), .busy(busy),
     .a(a), .dl_o(dl_o), .st(st), .mrq_n(mrq_n), .rw_n(rw_n), .ube_n(ube_n),
-    .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
+    .fas_n(fas_n), .bcy_n(bcy_n), .block_n(), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(ready_n), .bmode(bmode), .hldrq_n(hldrq_n), .hldak_n(hldak_n),
     .berr_n(berr_n), .rt_ep_n(rt_ep_n), .nmi_n(nmi_n), .int_req(int_req),

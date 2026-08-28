@@ -144,6 +144,7 @@ v60_regfile rf (
 wire        ea_start, ea_index, ea_we, ea_rmw, ea_rmw_go, ea_rmw_pending;
 wire        ea_addr_only, ea_io;
 wire        a_io, dx_io;
+wire        ea_lock, a_lock, dx_lock, d_lock, biu_lock;
 am_mode_e   ea_mode;
 wire [31:0] ea_disp, ea_douter, ea_rn_val, ea_rx_val, ea_pc_val, ea_ea;
 wire [63:0] ea_imm, ea_wdata, ea_rmw_data, ea_rdata;
@@ -181,14 +182,14 @@ v60_ea ea (
     .start(ea_start), .mode(ea_mode), .has_index(ea_index),
     .disp(ea_disp), .disp_outer(ea_douter), .imm(ea_imm),
     .rn_val(ea_rn_val), .rx_val(ea_rx_val), .pc_val(ea_pc_val),
-    .opbytes(ea_opbytes), .we(ea_we), .io(ea_io), .wdata(ea_wdata),
+    .opbytes(ea_opbytes), .we(ea_we), .io(ea_io), .lock(ea_lock), .wdata(ea_wdata),
     .addr_only(ea_addr_only),
     .rmw(ea_rmw), .rmw_pending(ea_rmw_pending), .rmw_go(ea_rmw_go),
     .rmw_data(ea_rmw_data),
     .ea(ea_ea), .rdata(ea_rdata), .rn_wb(ea_rn_wb), .rn_wb_val(ea_rn_wb_val),
     .illegal(), .busy(), .done(ea_done), .bus_cycles(ea_cycles),
     .dx_req(a_req), .dx_addr(a_addr), .dx_nbytes(a_nbytes), .dx_we(a_we),
-    .dx_io(a_io),
+    .dx_io(a_io), .dx_lock(a_lock),
     .dx_wdata(a_wdata), .dx_rdata(a_rdata), .dx_done(a_done),
     .dx_cycles(a_cycles)
 );
@@ -216,9 +217,9 @@ v60_dmux dmux (
     .a_wdata(a_wdata), .a_rdata(a_rdata), .a_done(a_done), .a_cycles(a_cycles),
     .b_req(b_req), .b_addr(b_addr), .b_nbytes(b_nbytes), .b_we(b_we), .b_intack(exc_intack),
     .b_wdata(b_wdata), .b_rdata(b_rdata), .b_done(b_done), .b_cycles(b_cycles),
-    .a_io(a_io),
+    .a_io(a_io), .a_lock(a_lock),
     .dx_req(dx_req), .dx_addr(dx_addr), .dx_nbytes(dx_nbytes), .dx_we(dx_we),
-    .dx_io(dx_io),
+    .dx_io(dx_io), .dx_lock(dx_lock),
     .dx_intack(dx_intack),
     .dx_wdata(dx_wdata), .dx_rdata(dx_rdata), .dx_done(dx_done),
     .dx_cycles(dx_cycles),
@@ -233,9 +234,10 @@ wire  [15:0] d_wdata;
 
 v60_dxu dxu (
     .clk(clk), .rst(rst),
-    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(dx_io), .intack(dx_intack),
+    .req(dx_req), .addr(dx_addr), .nbytes(dx_nbytes), .we(dx_we), .io(dx_io), .lock(dx_lock), .intack(dx_intack),
     .wdata(dx_wdata), .rdata(dx_rdata), .busy(), .done(dx_done),
     .cycles(dx_cycles),
+    .biu_lock(d_lock),
     .biu_req(d_req), .biu_status(d_status), .biu_addr(d_addr),
     .biu_we(d_we), .biu_dl(d_dl), .biu_ube(d_ube), .biu_first(d_first),
     .biu_wdata(d_wdata), .biu_ack(d_ack), .biu_rdata(biu_rdata)
@@ -265,7 +267,7 @@ v60_seq seq (
     .ea_start(ea_start), .ea_mode(ea_mode), .ea_index(ea_index),
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
     .ea_rn_val(ea_rn_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
-    .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_io(ea_io), .ea_wdata(ea_wdata),
+    .ea_opbytes(ea_opbytes), .ea_we(ea_we), .ea_io(ea_io), .ea_lock(ea_lock), .ea_wdata(ea_wdata),
     .ea_addr_only(ea_addr_only),
     .ea_rmw(ea_rmw), .ea_rmw_go(ea_rmw_go), .ea_rmw_data(ea_rmw_data),
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
@@ -305,12 +307,14 @@ wire  [15:0] biu_wdata;
 v60_bus_arb arb (
     .clk(clk), .rst(rst),
     .d_req(d_req), .d_status(d_status), .d_addr(d_addr), .d_we(d_we),
-    .d_dl(d_dl), .d_ube(d_ube), .d_first(d_first), .d_wdata(d_wdata),
+    .d_dl(d_dl), .d_ube(d_ube), .d_first(d_first), .d_lock(d_lock),
+    .d_wdata(d_wdata),
     .d_ack(d_ack),
     .p_req(p_req), .p_status(p_status), .p_addr(p_addr), .p_dl(p_dl),
     .p_ack(p_ack),
     .biu_req(biu_req), .biu_status(biu_status), .biu_addr(biu_addr),
     .biu_we(biu_we), .biu_dl(biu_dl), .biu_ube(biu_ube), .biu_first(biu_first),
+    .biu_lock(biu_lock),
     .biu_wdata(biu_wdata), .biu_ack(biu_ack), .biu_busy(biu_busy),
     .own_pfu(own_pfu)
 );
@@ -319,6 +323,7 @@ wire [23:0] a;
 wire  [1:0] dl_o;
 wire  [2:0] st;
 wire        mrq_n, rw_n, ube_n, fas_n, bcy_n, ds_n, d_oe, bus_hiz, hldak_n;
+wire        block_n;
 wire [15:0] d_out;
 reg  [15:0] d_in;
 bus_state_e state;
@@ -342,10 +347,10 @@ wire rt_ep_n = 1'b0;
 v60_biu biu (
     .clk(clk), .rst(rst), .ce_rise(ce_rise), .ce_fall(ce_fall),
     .req(biu_req), .status(biu_status), .addr(biu_addr), .we(biu_we),
-    .dl(biu_dl), .ube(biu_ube), .first(biu_first), .wdata(biu_wdata),
+    .dl(biu_dl), .ube(biu_ube), .first(biu_first), .lock(biu_lock), .wdata(biu_wdata),
     .ack(biu_ack), .rdata(biu_rdata), .busy(biu_busy),
     .a(a), .dl_o(dl_o), .st(st), .mrq_n(mrq_n), .rw_n(rw_n), .ube_n(ube_n),
-    .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
+    .fas_n(fas_n), .bcy_n(bcy_n), .block_n(block_n), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(1'b0), .bmode(1'b1), .hldrq_n(1'b1), .hldak_n(hldak_n),
     .berr_n(berr_n), .rt_ep_n(rt_ep_n), .nmi_n(nmi_n), .int_req(int_req),
@@ -377,6 +382,30 @@ always @(posedge clk) if (!rst && biu_ack && !rw_n) n_writes = n_writes + 1;
 // single mode I/O access (p.3.233), and MRQ is the bit that says I/O at all --
 // so this is the pin pattern and not a decode of anything internal.  Nothing
 // but IN and OUT can produce it.
+// BLOCK*, and the invariant it exists to make true.  The pin only ANNOUNCES
+// -- "It is used by external logic to guarantee the integrity of the bus
+// cycle" (databook p.3.236) -- so the enforcement has to be somewhere else,
+// and it is v60_bus_arb's hold-off.  This holds the two to each other: while
+// the bus is locked, no prefetch cycle may be acknowledged.  Checked every
+// cycle rather than at a moment, because it is an invariant and not an event.
+integer n_block = 0;
+always @(posedge clk) if (!rst && biu_ack && !block_n) n_block = n_block + 1;
+always @(posedge clk) if (!rst && biu_ack && own_pfu && !block_n)
+    chk(1'b0, "a prefetch cycle was acknowledged inside a locked operation");
+
+// And BLOCK* must not be RELEASED inside the operation.  Counting asserted
+// cycles cannot see this: the pin is raised at T1 of every bus cycle, so a
+// version that drops it at TI still looks asserted at each acknowledge.  What
+// distinguishes them is the gap BETWEEN the two cycles, which is the only part
+// "indivisible" is about.
+reg block_armed = 1'b0;
+always @(posedge clk) if (!rst) begin
+    if (!block_n)          block_armed <= 1'b1;
+    else if (!biu_lock)    block_armed <= 1'b0;
+end
+always @(posedge clk) if (!rst && biu_lock && block_armed)
+    chk(block_n === 1'b0, "BLOCK* was released inside an indivisible operation");
+
 wire       is_io      = ({mrq_n, st} === 4'b1011);
 wire       is_mem_sgl = ({mrq_n, st} === 4'b0011);
 integer    n_io = 0, n_io_wr = 0, n_mem_sgl = 0;
@@ -1159,6 +1188,9 @@ initial begin
     mem[11'h647] = 8'h0E; mem[11'h648] = 8'h00; mem[11'h649] = 8'h80;
     mem[11'h64A] = 8'hE4; mem[11'h64B] = 8'hF4; mem[11'h64C] = 8'h00;
     mem[11'h64D] = 8'h0E; mem[11'h64E] = 8'h00; mem[11'h64F] = 8'h80;
+
+    // TASI [R8]   E0 68   -- Format III, m = 0, a byte through a pointer
+    mem[11'h650] = 8'hE0; mem[11'h651] = 8'h68;
 
     // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
     //   at [R10] is read from MEMORY and only the operand it names is an I/O
@@ -2872,6 +2904,41 @@ initial begin
         "but PSW.TE was NOT -- only the lower halfword is modified");
     chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b00 && seq_psw[PSW_IS] === 1'b0,
         "so EL and IS are out of reach, and POPM is not a privilege escalation");
+
+    // =======================================================================
+    // TASI.  "lock ; flags <- dst - 0FFH ; dst <- 0FFH ; unlock" -- so Z is
+    // set exactly when the byte was ALREADY 0FFH, which is to say when the
+    // lock was already held.  That is the whole of test-and-set.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    mem[11'h700] = 8'h00;                    // the lock is free
+    repeat (2) @(negedge clk);
+    n_block = 0;
+    jump(32'h00000650);
+    step;
+    chk(mem[11'h700] === 8'hFF,
+        "TASI stored 0FFH into its destination");
+    chk(seq_psw[PSW_Z] === 1'b0,
+        "and Z is CLEAR, because the byte was not already 0FFH -- the lock was free");
+    chk(seq_psw[PSW_CY] === 1'b1,
+        "with CY set: 0x00 - 0xFF borrows, and the codes are a SUBTRACT's");
+    chk(n_block == 2,
+        "and BLOCK* was asserted for both bus cycles of the indivisible pair");
+
+    // Again, on a byte that is now already set.  Same instruction, opposite
+    // answer -- and it still writes 0FFH, unconditionally.
+    @(negedge clk);
+    repeat (2) @(negedge clk);
+    jump(32'h00000650);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "a second TASI reports Z SET: the lock was already held");
+    chk(seq_psw[PSW_CY] === 1'b0, "and no borrow, 0xFF - 0xFF being zero");
+    chk(mem[11'h700] === 8'hFF,
+        "the store happens either way -- TASI is not conditional");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

@@ -68,6 +68,12 @@ module v60_ea
     // privileged IN and OUT instructions" (PgmRef S4), so this comes from the
     // instruction and not from the addressing mode.
     input               io,
+    // TASI and CAXI, whose memory operand's access type is `rwi` -- read-
+    // modify-write INTERLOCKED.  They are the only two instructions in the set
+    // carrying it, which is the architecture's own list of what needs a lock;
+    // everything else that reads then writes (INC, DEC, SET1, CLR1, NOT1) is
+    // plain `rw`.
+    input               lock,
     input        [63:0] wdata,
 
     // A read-modify-write operand: ADD's destination is read, combined and
@@ -104,6 +110,12 @@ module v60_ea
     output logic  [3:0] dx_nbytes,
     output logic        dx_we,
     output logic        dx_io,
+    // High for the whole indivisible operation, INCLUDING the gap between its
+    // read and its write.  That gap is the reason it exists: a
+    // read-modify-write is two bus cycles, and without this the prefetch unit
+    // takes the one in between (v60_bus_arb re-arbitrates at every ack) and
+    // the operation is divisible after all.
+    output logic        dx_lock,
     output logic [63:0] dx_wdata,
     input        [63:0] dx_rdata,
     input               dx_done,
@@ -129,9 +141,17 @@ logic        we_r, rmw_r, addr_r;
 // Held across the pointer chase, so the operand access at the end of an
 // indirect mode is still the I/O one the instruction asked for.
 logic        io_r;
+logic        lock_r;
 logic [63:0] wdata_r;
 
 assign busy = (state != S_IDLE);
+
+// Asserted from the operand's own access to the end of its write-back, and not
+// before: an indirect mode's pointer chase (S_PTR) is address computation, not
+// part of the indivisible read-modify-write, and the databook's rule is
+// "assert at T1 of the first bus cycle of the indivisible operation".
+assign dx_lock = lock_r && ((state == S_ACC)    || (state == S_RMW) ||
+                            (state == S_RMW_GO) || (state == S_ACC2));
 
 // The scaling constant is the operand's size (p.3.257).  1, 2, 4 and 8 are the
 // only sizes, so the multiply is a shift.
@@ -178,6 +198,7 @@ always_ff @(posedge clk) begin
         size_r     <= 4'd0;
         we_r       <= 1'b0;
         io_r       <= 1'b0;
+        lock_r     <= 1'b0;
         wdata_r    <= 64'd0;
     end else begin
         done  <= 1'b0;
@@ -191,6 +212,7 @@ always_ff @(posedge clk) begin
             size_r     <= opbytes;
             we_r        <= we;
             io_r        <= io;
+            lock_r      <= lock;
             rmw_r       <= rmw;
             addr_r      <= addr_only;
             wdata_r     <= wdata;

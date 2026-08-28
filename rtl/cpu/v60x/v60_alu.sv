@@ -158,7 +158,13 @@ wire        cy_in = flags_in[PSW_CY];
 // their Condition Codes blocks identical to ADD's and SUB's without a second
 // derivation to keep in step.
 wire        addend_one = (op == ALU_INC) || (op == ALU_DEC);
-wire [31:0] xa = addend_one ? (32'd1 & mask) : xm;
+// TASI is the same idea with a different constant: its Operation is
+// "flags <- dst - 0FFH", so it IS the subtractor with the subtrahend fixed at
+// 0FFH, exactly as INC and DEC are the adder with the addend fixed at one.
+// Taking it from here rather than having the sequencer fake an operand keeps
+// the constant on the page it came from.
+wire [31:0] xa = addend_one       ? (32'd1 & mask)          :
+                 (op == ALU_TASI) ? (32'h0000_00FF & mask)  : xm;
 
 // Sum and difference one bit wider than the operand, so the carry out and the
 // borrow are bits of the result rather than a separate derivation.
@@ -359,6 +365,15 @@ always_comb begin
         ALU_XCH: raw = x;
         // The mask walk is entirely the sequencer's.
         ALU_PUSHM, ALU_POPM: writes = 1'b0;
+        // "dst <- 0FFH" -- unconditionally, whatever the comparison said.
+        // The flags are the comparison's and the result is the constant, which
+        // is why this cannot be CMP with a different writeback.
+        ALU_TASI: begin
+            raw  = 32'h0000_00FF;
+            f_cy = carry_of(diff, opbytes);          // "Set if a borrow"
+            f_ov = (sign_of(xa, msb) != sign_of(ym, msb)) &&
+                   (sign_of(diff[31:0], msb) != sign_of(ym, msb));
+        end
         // "test1 offset.w.r, base.w.r" -- both operands read, nothing written.
         ALU_TEST1: begin writes = 1'b0; f_cy = bit_old; end
         ALU_SET1:  begin raw = y |  bit_one; f_cy = bit_old; end
@@ -450,6 +465,11 @@ wire keep_but_ov = (op == ALU_MOVT);
 // because Z describes the bit that was read and not the word that was written.
 wire bit_op = (op == ALU_TEST1) || (op == ALU_SET1) ||
               (op == ALU_CLR1)  || (op == ALU_NOT1);
+// TASI's S and Z describe the COMPARISON and not the value written.  "S Set if
+// the comparison results are negative" and "Z Set if the comparison results
+// are zero", where the result written is always 0FFH -- so the ordinary path,
+// which takes both from `raw`, would report S = 1 and Z = 0 every time.
+wire tasi_op = (op == ALU_TASI);
 
 assign result    = raw & mask;
 assign f_s       = sign_of(raw, msb);
@@ -459,6 +479,9 @@ always_comb begin
     else if (keep_but_ov)  begin
         flags_out           = flags_in;
         flags_out[PSW_OV]   = f_ov;
+    end else if (tasi_op)  begin
+        flags_out = {f_cy, f_ov, sign_of(diff[31:0], msb),
+                     ((diff[31:0] & mask) == 32'd0)};
     end else if (bit_op)   begin
         flags_out           = flags_in;
         flags_out[PSW_CY]   = bit_old;

@@ -96,6 +96,18 @@ module v60_biu
     input               ube,        // upper byte enable, active low as a pin
     input               first,      // this is the FIRST bus cycle of a logical
                                     // access -- drives FAS*, see below
+    // "The BLOCK* output is asserted during a bus cycle to indicate an
+    // indivisible read-modify-write bus cycle (TASI, CAXI instructions) is
+    // taking place.  It is used by external logic to guarantee the integrity
+    // of the bus cycle in a multiple bus master system.  BLOCK* is also
+    // asserted for the duration of an interrupt acknowledge bus cycle."
+    // -- databook p.3.236, read on the plate.
+    //
+    // So it is an ANNOUNCEMENT and nothing else: the processor enforces
+    // nothing with it, and its only consumer is external.  Whoever asserts it
+    // owes the enforcement separately -- see v60_bus_arb, which is where the
+    // prefetch unit is actually held off.
+    input               lock,
     input        [15:0] wdata,
     output logic        ack,        // one fast-clock pulse at falling T4
     output logic [15:0] rdata,
@@ -110,6 +122,11 @@ module v60_biu
     output logic        ube_n,
     output logic        fas_n,
     output logic        bcy_n,
+    // BLOCK* (MSMAT).  One pin with two jobs: BLOCK* in master mode and
+    // MSMAT* -- the FRM checker's mismatch output -- in checker mode, which is
+    // why docs/v60/BUS-CYCLE-TIMING.md lists it under both names.  Only the
+    // master-mode meaning is driven here.
+    output logic        block_n,
     output logic        ds_n,
     output logic [15:0] d_out,
     output logic        d_oe,
@@ -211,6 +228,7 @@ always_ff @(posedge clk) begin
         ube_n       <= 1'b1;
         fas_n       <= 1'b1;
         bcy_n       <= 1'b1;
+        block_n     <= 1'b1;
         ds_n        <= 1'b1;
         d_out       <= 16'd0;
         d_oe        <= 1'b0;
@@ -277,6 +295,12 @@ always_ff @(posedge clk) begin
                     // access" (p.3.235), so a fetch may drive it either way.
                     fas_n    <= ~first;
                     bcy_n    <= 1'b0;
+                    // "asserted during a bus cycle".  Raised with the rest of
+                    // the pins at T1 and dropped at TI below, so it spans
+                    // every cycle of the indivisible operation and the gap
+                    // between them -- which is what "indivisible" has to mean
+                    // for a read-modify-write that is two bus cycles.
+                    block_n  <= ~(lock || (status == BST_INTERRUPT_ACK));
                     status_r <= status;
                     we_r     <= we;
                     // A cycle that is not I/O breaks the consecutive pair.
@@ -294,6 +318,13 @@ always_ff @(posedge clk) begin
                 T_TI: begin
                     bus_hiz <= 1'b0;
                     fas_n   <= 1'b1;
+                    // BLOCK* is NOT dropped between the bus cycles of one
+                    // indivisible operation -- that is the whole point of it.
+                    // It falls when `lock` itself falls, which v60_ea does
+                    // when the read-modify-write's write has completed.  An
+                    // interrupt acknowledge, which raises it without `lock`,
+                    // drops it here.
+                    if (!lock) block_n <= 1'b1;
                     // Arm the recovery gap on leaving an I/O cycle.
                     if (st_r == T_T4 && bst_is_io(status_r)) io_recovery <= 2'd3;
                     else if (io_recovery != 2'd0)            io_recovery <= io_recovery - 2'd1;

@@ -542,6 +542,10 @@ EXEC_OP = {
     # and R31 has no bit at all.  POPM restores only PSW[15:0] -- a whole-PSW
     # restore would be a privilege escalation.
     'PUSHM': 'PUSHM', 'POPM': 'POPM',
+    # Test and set, interlocked.  Its operand's access type is `rwi` -- the
+    # architecture's own mark for what needs a bus lock -- and it and CAXI are
+    # the only two instructions in the set carrying it.
+    'TASI': 'TASI',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

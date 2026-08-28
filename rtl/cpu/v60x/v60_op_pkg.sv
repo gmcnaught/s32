@@ -1114,6 +1114,8 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hDD: r = ALU_INC;  // INC
             8'hDE: r = ALU_PREPARE; // PREPARE
             8'hDF: r = ALU_PREPARE; // PREPARE
+            8'hE0: r = ALU_TASI; // TASI
+            8'hE1: r = ALU_TASI; // TASI
             8'hE4: r = ALU_POPM; // POPM
             8'hE5: r = ALU_POPM; // POPM
             8'hE6: r = ALU_POP;  // POP

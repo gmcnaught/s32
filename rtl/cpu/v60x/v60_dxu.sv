@@ -59,6 +59,11 @@ module v60_dxu
     // it: "the interrupt acknowledge status is generated during the pair of
     // interrupt acknowledge bus cycles" (p.3.234).  Its caller issues two
     // one-byte reads and keeps the second; see v60_exc.
+    // Passed STRAIGHT through, not latched with the rest of the descriptor:
+    // the lock spans more than one logical access -- v60_ea holds it across
+    // the gap between a read-modify-write's read and its write -- and this
+    // module only ever knows about one.
+    input               lock,
     input               intack,
     input        [63:0] wdata,
 
@@ -68,6 +73,7 @@ module v60_dxu
     output logic  [3:0] cycles,     // bus cycles this access took
 
     // ---- bus interface unit ----------------------------------------------
+    output logic        biu_lock,
     output logic        biu_req,
     output bus_status_e biu_status,
     output logic [23:0] biu_addr,
@@ -93,6 +99,7 @@ logic        req_d;
 wire halfword_now = !cur[0] && (rem >= 4'd2);
 
 assign busy = biu_req;
+assign biu_lock = lock;
 
 // DL1-DL0 is the LOGICAL length and does not change across the cycles of one
 // access.  DECISION: the table has no code for a doubleword -- byte, halfword,

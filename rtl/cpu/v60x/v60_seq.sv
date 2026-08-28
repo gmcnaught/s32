@@ -261,6 +261,8 @@ module v60_seq
     output logic  [3:0] ea_opbytes,
     output logic        ea_we,
     output logic        ea_io,
+    // The `rwi` access type: TASI and CAXI, and nothing else in the set.
+    output logic        ea_lock,
     output logic [63:0] ea_wdata,
     output logic        ea_addr_only,
     output logic        ea_rmw,
@@ -838,6 +840,14 @@ wire        stk_is_write = is_push || is_prep;
 wire        is_pushm = (aop == ALU_PUSHM);
 wire        is_popm  = (aop == ALU_POPM);
 
+// The interlocked pair, whose memory operand carries the `rwi` access type.
+// docs/v60/INSTRUCTION-TIMING.md §4.1 records against v60_operand_access.csv
+// that these are the ONLY two instructions in the set with it; everything else
+// that reads then writes -- INC, DEC, SET1, CLR1, NOT1 -- is plain `rw`.  That
+// letter is the architecture's own list of what needs a lock.
+wire        is_tasi = (aop == ALU_TASI);
+wire        is_lockop = is_tasi;
+
 wire        is_xch = (aop == ALU_XCH);
 // Format I with d = 0 puts dst1 in the register field, where it cannot be
 // anything else.  Every other encoding puts it in op1's addressing mode.
@@ -1033,6 +1043,7 @@ always_ff @(posedge clk) begin
         next_pc       <= 32'd0;
         ea_addr_only  <= 1'b0;
         ea_io         <= 1'b0;
+        ea_lock       <= 1'b0;
         val1          <= 64'd0;
         val2          <= 64'd0;
         aop           <= ALU_NONE;
@@ -1462,6 +1473,10 @@ always_ff @(posedge clk) begin
                 ea_addr_only  <= 1'b0;
                 // OUT writes its port here.
                 ea_io         <= io_dst;
+                // And TASI and CAXI lock the bus around theirs.  v60_ea holds
+                // it across the gap between the read and the write, which is
+                // the part that matters -- see v60_bus_arb.
+                ea_lock       <= is_lockop;
                 ea_pc_val     <= idu_pc;
                 state         <= S_OP2R;
             end

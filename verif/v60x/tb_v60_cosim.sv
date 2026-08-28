@@ -174,12 +174,12 @@ wire  [15:0] biu_wdata;
 v60_bus_arb arb (
     .clk(clk), .rst(rst),
     .d_req(1'b0), .d_status(BST_MEM_SINGLE), .d_addr(24'd0), .d_we(1'b0),
-    .d_dl(2'd0), .d_ube(1'b1), .d_first(1'b1), .d_wdata(16'd0), .d_ack(),
+    .d_dl(2'd0), .d_ube(1'b1), .d_first(1'b1), .d_lock(1'b0), .d_wdata(16'd0), .d_ack(),
     .p_req(p_req), .p_status(p_status), .p_addr(p_addr), .p_dl(p_dl),
     .p_ack(p_ack),
     .biu_req(biu_req), .biu_status(biu_status), .biu_addr(biu_addr),
     .biu_we(biu_we), .biu_dl(biu_dl), .biu_ube(biu_ube), .biu_first(biu_first),
-    .biu_wdata(biu_wdata), .biu_ack(biu_ack), .biu_busy(biu_busy),
+    .biu_lock(), .biu_wdata(biu_wdata), .biu_ack(biu_ack), .biu_busy(biu_busy),
     .own_pfu()
 );
 
@@ -192,10 +192,10 @@ bus_state_e state;
 v60_biu biu (
     .clk(clk), .rst(rst), .ce_rise(ce_rise), .ce_fall(ce_fall),
     .req(biu_req), .status(biu_status), .addr(biu_addr), .we(biu_we),
-    .dl(biu_dl), .ube(biu_ube), .first(biu_first), .wdata(biu_wdata),
+    .dl(biu_dl), .ube(biu_ube), .first(biu_first), .lock(1'b0), .wdata(biu_wdata),
     .ack(biu_ack), .rdata(biu_rdata), .busy(biu_busy),
     .a(a), .dl_o(), .st(), .mrq_n(mrq_n), .rw_n(rw_n), .ube_n(ube_n),
-    .fas_n(fas_n), .bcy_n(bcy_n), .ds_n(ds_n),
+    .fas_n(fas_n), .bcy_n(bcy_n), .block_n(), .ds_n(ds_n),
     .d_out(d_out), .d_oe(d_oe), .d_in(d_in), .bus_hiz(bus_hiz),
     .ready_n(1'b0), .bmode(1'b1), .hldrq_n(1'b1), .hldak_n(hldak_n),
     .berr_n(1'b1), .rt_ep_n(1'b1), .nmi_n(1'b1), .int_req(1'b0),

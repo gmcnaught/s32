@@ -31,6 +31,11 @@ module v60_dmux (
     // privileged IN and OUT instructions", and an exception's vector read and
     // frame pushes are memory.  So there is no `b_io`.
     input               a_io,
+    // Only the address unit can lock the bus: the two instructions that ask
+    // for it (TASI, CAXI) are operand accesses.  The interrupt acknowledge,
+    // which also asserts BLOCK*, is v60_biu's own doing from the bus status --
+    // it needs nothing here.
+    input               a_lock,
     input        [63:0] a_wdata,
     output logic [63:0] a_rdata,
     output logic        a_done,
@@ -58,6 +63,7 @@ module v60_dmux (
     output logic        dx_we,
     output logic        dx_intack,
     output logic        dx_io,
+    output logic        dx_lock,
     output logic [63:0] dx_wdata,
     input        [63:0] dx_rdata,
     input               dx_done,
@@ -77,6 +83,7 @@ always_comb begin
         dx_we     = b_we;
         dx_intack = b_intack;
         dx_io     = 1'b0;
+        dx_lock   = 1'b0;
         dx_wdata  = b_wdata;
     end else begin
         dx_req    = a_req;
@@ -85,6 +92,7 @@ always_comb begin
         dx_we     = a_we;
         dx_intack = 1'b0;
         dx_io     = a_io;
+        dx_lock   = a_lock;
         dx_wdata  = a_wdata;
     end
 end

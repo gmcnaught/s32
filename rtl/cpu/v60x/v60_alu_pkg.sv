@@ -155,6 +155,11 @@ typedef enum logic [5:0] {
     // walks the mask.
     ALU_PUSHM   = 6'd54,
     ALU_POPM    = 6'd55,
+    // "lock ; flags <- dst - 0FFH ; dst <- 0FFH ; unlock".  Test-and-set: the
+    // comparison is a subtract with the subtrahend fixed at 0FFH, so Z is set
+    // exactly when the byte was ALREADY 0FFH -- that is, when the lock was
+    // already held.  The four condition codes are a SUBTRACT's, not a test's.
+    ALU_TASI    = 6'd56,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,
