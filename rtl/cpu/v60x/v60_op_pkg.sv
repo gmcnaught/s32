@@ -1081,6 +1081,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hBD: r = ALU_SHA;  // SHA
             8'hC8: r = ALU_BRK;  // BRK
             8'hC9: r = ALU_BRKV; // BRKV
+            8'hCB: r = ALU_TRAPFL; // TRAPFL
             8'hCD: r = ALU_NOP;  // NOP
             8'hD0: r = ALU_DEC;  // DEC
             8'hD1: r = ALU_DEC;  // DEC

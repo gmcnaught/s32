@@ -276,6 +276,17 @@ module v60_seq
     // ---- the exception unit --------------------------------------------------
     // Raised between instructions, never during an operand access, which is
     // what lets v60_dmux be a mux rather than a third bus master.
+    // The privileged register port, which LDPR and STPR drive and TRAPFL
+    // reads.  `pr_rdata` is combinational off `pr_id` in v60_regfile, the same
+    // way `ra` is off `ra_sel`, so the id is presented in one state and the
+    // value read in the next.
+    output logic  [4:0] rf_pr_id,
+    output logic        rf_pr_wr,
+    output logic [31:0] rf_pr_wdata,
+    input        [31:0] rf_pr_rdata,
+    input               rf_pr_rd_ok,
+    input               rf_pr_wr_ok,
+
     input        [31:0] sbr,            // from the register file
     output logic        exc_req,
     output logic  [7:0] exc_vector,
@@ -356,6 +367,11 @@ localparam logic [7:0] VEC_ILLEGAL_DATA  = 8'd20;
 localparam logic [7:0] VEC_INT_ARITH     = 8'd21;
 // +52  Instruction Breakpoint Exception   vector 13   code 0D00
 localparam logic [7:0] VEC_BREAKPOINT    = 8'd13;
+// +88  Floating Point Arithmetic Exception   vector 22
+// Named on the databook's p.3.270 SBT plate.  TRAPFL is the only thing here
+// that reaches it, and it shares the Arithmetic Exceptions frame with the
+// integer overflow and the zero divide above.
+localparam logic [7:0] VEC_FP_ARITH      = 8'd22;
 localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
 localparam logic [15:0] CODE_PRIVILEGED    = 16'h1100;
 localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
@@ -447,6 +463,9 @@ typedef enum logic [5:0] {
     S_OP1, S_OP1R, S_OP1S, S_OP1W,     // describe, read registers, start, wait
     S_OP2, S_OP2R, S_OP2S, S_OP2W,
     S_EXEC, S_MD, S_WB, S_WBW, S_RETIRE, S_STOP,
+    // TRAPFL: one state, to let the privileged register id it asked for in
+    // S_FETCH reach v60_regfile's read port and come back.
+    S_TRAPFL,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -617,6 +636,33 @@ wire  [7:0] trap_vec_no = 8'd48 + {4'd0, trap_vector};
 // which is wrong; there is no group in the table indexed in the low byte.
 wire [15:0] trap_code   = {4'h3, trap_vector, 8'h00};
 
+// TRAPFL, which is one AND: "if ( TKCW[8:4] AND PSW[12:8] ) != 0 then Floating
+// Point Operation Exception".  PSW[12:8] is {FIV, FZD, FOV, FUD, FPR} read
+// MSB-down, and TKCW[8:4] is the matching enable field -- the shift of four is
+// what pairs them, so the correspondence is forced by the Operation block
+// itself and is not a choice made here.
+//
+//   PSW 12 FIV  invalid operation   TKCW 8        PSW  9 FUD  underflow  TKCW 5 FUT
+//   PSW 11 FZD  zero divide         TKCW 7 FZT    PSW  8 FPR  precision  TKCW 4 FPT
+//   PSW 10 FOV  overflow            TKCW 6 FOT
+wire  [4:0] trapfl_live = rf_pr_rdata[8:4] & psw[PSW_FIV:PSW_FPR];
+wire        trapfl_take = (trapfl_live != 5'd0);
+// And the exception code is that same five-bit result, placed.  Databook
+// p.3.272's Arithmetic Exceptions block prints 1601 precision, 1602 underflow,
+// 1604 overflow, 1608 zero divide, 1610 invalid operation, with a brace across
+// them reading "these exception codes can combine in the case of simultaneous
+// exceptions" -- so the low byte is ONE-HOT per condition precisely so that
+// several can be reported at once, and 0x1606 means underflow and overflow
+// together.  TRAPFL is the instruction that makes that matter: it ANDs a
+// five-bit mask against a five-bit flag field, so more than one can be live.
+//
+// The five bits of `trapfl_live` are already in the plate's order, lowest
+// first, so the code is the AND itself with 0x16 above it and nothing
+// rearranged.  Whether the hardware really ORs all of them or reports one is
+// not printed; OR is the only reading under which a one-hot low byte means
+// anything.  Recorded in docs/v60/BREAK-AND-TRAP.md.
+wire [15:0] trapfl_code = {8'h16, 3'd0, trapfl_live};
+
 // Privileged instructions: "programs executing at other execution levels
 // (levels 1, 2 and 3) are said to be non-privileged and attempts to execute a
 // privileged instruction will cause an exception" (PgmRef §6).  p.3.299 groups
@@ -763,11 +809,15 @@ always_ff @(posedge clk) begin
         md_writes_r   <= 1'b0;
         md_zd_r       <= 1'b0;
         md_used       <= 1'b0;
+        rf_pr_id      <= 5'd0;
+        rf_pr_wr      <= 1'b0;
+        rf_pr_wdata   <= 32'd0;
     end else begin
         idu_start <= 1'b0;
         ea_start  <= 1'b0;
         ea_rmw_go <= 1'b0;
         rf_wr_en  <= 1'b0;
+        rf_pr_wr  <= 1'b0;
         retired   <= 1'b0;
         redirect  <= 1'b0;
         exc_req         <= 1'b0;
@@ -934,6 +984,13 @@ always_ff @(posedge clk) begin
                     // One byte, and nothing happens.
                     state <= S_RETIRE;
                 end
+            end else if (op_alu(idu_op) == ALU_TRAPFL) begin
+                // Its two inputs are both registers -- the PSW here and TKCW
+                // in the register file -- so the only thing this state does is
+                // ask for TKCW.  Privileged register id 8; see the ID table on
+                // LDPR's and STPR's pages.
+                rf_pr_id <= 5'd8;
+                state    <= S_TRAPFL;
             end else if (op_alu(idu_op) == ALU_GETPSW) begin
                 // Its one operand is write-only and the value it writes is the
                 // PSW, which lives here rather than in the address unit.
@@ -1658,6 +1715,31 @@ always_ff @(posedge clk) begin
             redirect_pc <= target;
             retired     <= 1'b1;
             state       <= S_IDLE;
+        end
+
+        // TRAPFL, with TKCW now on the register file's read port.
+        //
+        // It is NOT a no-op, and implementing it as one would be a defect.
+        // Nothing in this tree's hardware sets PSW[12:8] yet, because no
+        // floating point instruction is implemented -- so the AND is zero and
+        // this falls through.  That is a default and not a property: PSW[12:8]
+        // are in the LOW halfword, so the non-privileged UPDPSW.H can set them,
+        // and LDPR can load TKCW.  Software can arm this on a machine with no
+        // floating point datapath at all, and then it must trap.
+        S_TRAPFL: begin
+            if (trapfl_take) begin
+                exc_vec_r  <= VEC_FP_ARITH;
+                exc_code_r <= trapfl_code;
+                // Figure 8-5 groups #21 Integer, #22 Floating Point and #23
+                // Decimal on one frame, which is the one EK_ARITH already
+                // builds for BRKV and the zero divide: the Current PC as a
+                // parameter above the code word, count 8, and the NEXT PC on
+                // top -- so a handler returns past the trapfl.
+                exc_kind   <= EK_ARITH;
+                state      <= S_EXC_SW;
+            end else begin
+                state <= S_RETIRE;
+            end
         end
 
         // ---- an exception --------------------------------------------------

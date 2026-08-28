@@ -116,14 +116,28 @@ wire [31:0] rf_sbr;
 wire [31:0] rf_ra, rf_rb, rf_wr_data;
 wire        rf_wr_en;
 
+// The privileged register port has two drivers: this bench, which places SBR
+// and the interrupt stack pointer during reset_and_arm because there is no
+// LDPR to do it, and the sequencer, which reads TKCW for TRAPFL.  The bench
+// wins while its own `pr_wr` is high, which is only during that placement.
+wire  [4:0] seq_pr_id;
+wire        seq_pr_wr;
+wire [31:0] seq_pr_wdata;
+wire [31:0] rf_pr_rdata;
+wire        rf_pr_rd_ok, rf_pr_wr_ok;
+wire  [4:0] mux_pr_id    = pr_wr ? pr_id    : seq_pr_id;
+wire        mux_pr_wr    = pr_wr | seq_pr_wr;
+wire [31:0] mux_pr_wdata = pr_wr ? pr_wdata : seq_pr_wdata;
+
 v60_regfile rf (
     .clk(clk), .rst(rst),
     .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb), .ra_pair(),
     .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data),
     .psw_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
     .stack_switch(rf_stack_switch), .new_el(rf_new_el), .new_is(rf_new_is),
-    .pr_id(pr_id), .pr_wr(pr_wr), .pr_wdata(pr_wdata),
-    .pr_rdata(), .pr_rd_ok(), .pr_wr_ok(), .sbr(rf_sbr)
+    .pr_id(mux_pr_id), .pr_wr(mux_pr_wr), .pr_wdata(mux_pr_wdata),
+    .pr_rdata(rf_pr_rdata), .pr_rd_ok(rf_pr_rd_ok), .pr_wr_ok(rf_pr_wr_ok),
+    .sbr(rf_sbr)
 );
 
 // ---- address unit and data unit ------------------------------------------------
@@ -253,6 +267,9 @@ v60_seq seq (
     .ea_rmw_pending(ea_rmw_pending), .ea_ea(ea_ea), .ea_rdata(ea_rdata),
     .ea_rn_wb(ea_rn_wb), .ea_rn_wb_val(ea_rn_wb_val), .ea_done(ea_done),
     .ea_bus_cycles(ea_cycles),
+    .rf_pr_id(seq_pr_id), .rf_pr_wr(seq_pr_wr), .rf_pr_wdata(seq_pr_wdata),
+    .rf_pr_rdata(rf_pr_rdata), .rf_pr_rd_ok(rf_pr_rd_ok),
+    .rf_pr_wr_ok(rf_pr_wr_ok),
     .sbr(rf_sbr),
     .exc_req(exc_req), .exc_vector(exc_vector), .exc_ret_pc(exc_ret_pc),
     .exc_psw_in(exc_psw_in), .exc_sp_in(exc_sp_in), .exc_sbr(exc_sbr),
@@ -995,6 +1012,20 @@ initial begin
     // MOV.B #0x5C, [R8]   -- reached only when the TRAP above falls through
     mem[11'h2A2] = 8'h09; mem[11'h2A3] = 8'h80; mem[11'h2A4] = 8'hF4;
     mem[11'h2A5] = 8'h5C; mem[11'h2A6] = 8'h68;
+
+    // TRAPFL.  SBT entry 22 -- Floating Point Arithmetic Exception, at
+    // 4 x 22 = +88 = 0x58 -- gets its own handler rather than sharing vector
+    // 21's, so a TRAPFL that reached the integer arithmetic vector instead is
+    // visible in the byte the handler writes as well as in the PC.
+    mem[11'h058] = 8'hC0; mem[11'h059] = 8'h02;
+    // handler for vector 22: MOV.B #0xD3, [R8]
+    mem[11'h2C0] = 8'h09; mem[11'h2C1] = 8'h80; mem[11'h2C2] = 8'hF4;
+    mem[11'h2C3] = 8'hD3; mem[11'h2C4] = 8'h68;
+    // TRAPFL at 0x2B0 -- CB, Format V, one byte
+    mem[11'h2B0] = 8'hCB;
+    // MOV.B #0x6E, [R8]   -- reached only when the TRAPFL above falls through
+    mem[11'h2B1] = 8'h09; mem[11'h2B2] = 8'h80; mem[11'h2B3] = 8'hF4;
+    mem[11'h2B4] = 8'h6E; mem[11'h2B5] = 8'h68;
 
     // BRKV at 0x270, twice: once with OV clear and once with it set.
     // BRKV is C9, Format V, one byte.
@@ -2017,6 +2048,98 @@ initial begin
         "and an exception leaves PSW.IE alone -- only an interrupt clears it");
     step;
     chk(mem[11'h700] === 8'hC7, "and the trap handler runs");
+
+    // =======================================================================
+    // TRAPFL: "if ( TKCW[8:4] AND PSW[12:8] ) != 0 then Floating Point
+    // Operation Exception".  No floating point datapath is touched -- it never
+    // reads an FP operand, never rounds and never writes a result -- so it is
+    // implementable in full here, and it is NOT a no-op: software arms it by
+    // hand, which is exactly what this does.
+    //
+    // The three cases are chosen so that the AND has to be an AND of the RIGHT
+    // two five-bit fields.  In every one of them BOTH sides are non-zero, so
+    // an implementation that tested either side alone, or that ORed them, or
+    // that lined the fields up without the shift of four, gets a different
+    // answer than the page does.
+    // =======================================================================
+
+    // Case one: the flag that is set is not the flag that is enabled.
+    //   TKCW = 0x40 enables FOT (bit 6, overflow) and nothing else; the PSW
+    //   has FZD set (bit 11, zero divide) and nothing else.  Both fields are
+    //   non-zero and their AND is zero, so nothing happens.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    pr_id = 5'd8; pr_wdata = 32'h0000_0040; pr_wr = 1'b1;   // PR_TKCW
+    @(negedge clk);
+    pr_wr = 1'b0;
+    seq.psw[PSW_FZD] = 1'b1;
+    repeat (2) @(negedge clk);
+    jump(32'h000002B0);
+    step;
+    chk(seq_pc === 32'h000002B1,
+        "an enabled trap for a flag that is clear leaves TRAPFL a one-byte no-op");
+    chk(rf.gpr[31] === 32'h00000600, "pushing nothing");
+    step;
+    chk(mem[11'h700] === 8'h6E, "and the instruction after it runs");
+
+    // Case two: one pair lines up, and only that one is reported.
+    //   TKCW = 0xA0 enables FZT (bit 7, zero divide) and FUT (bit 5,
+    //   underflow); the PSW has FZD (bit 11) and FOV (bit 10) set.  Only the
+    //   zero divide is both set and enabled, so the code is 1608 alone --
+    //   the overflow is set but not enabled and must not appear.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd8; pr_wdata = 32'h0000_00A0; pr_wr = 1'b1;
+    @(negedge clk);
+    pr_wr = 1'b0;
+    seq.psw[PSW_FZD] = 1'b1;
+    seq.psw[PSW_FOV] = 1'b1;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h000002B0);
+    step;
+    chk(seq_pc === 32'h000002C0,
+        "TRAPFL reaches vector 22 -- the floating point one, not vector 21");
+    chk(mem_word(13'h5FC) === 32'h000002B0,
+        "its frame carries the CURRENT PC as a parameter");
+    chk(mem_word(13'h5F8) === 32'h16080008,
+        "and reports only the condition that is BOTH set and enabled");
+    chk(mem_word(13'h5F4) === psw_before, "then the PSW");
+    chk(mem_word(13'h5F0) === 32'h000002B1,
+        "and the NEXT PC on top, so a handler returns past the trapfl");
+    chk(rf.gpr[31] === 32'h000005F0, "four words of frame, count 8");
+    chk(seq_psw[PSW_FZD] === 1'b1 && seq_psw[PSW_FOV] === 1'b1,
+        "and the floating point flags stay sticky -- all nine are Unchanged");
+    step;
+    chk(mem[11'h700] === 8'hD3, "and the floating point handler runs");
+
+    // Case three: two conditions at once, which is why the codes are one-hot.
+    //   TKCW = 0xE0 now enables FOT as well, so both the zero divide and the
+    //   overflow are live.  p.3.272 braces 1601/1602/1604/1608/1610 with
+    //   "these exception codes can combine in the case of simultaneous
+    //   exceptions", and 1608 | 1604 is 160C.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd8; pr_wdata = 32'h0000_00E0; pr_wr = 1'b1;
+    @(negedge clk);
+    pr_wr = 1'b0;
+    seq.psw[PSW_FZD] = 1'b1;
+    seq.psw[PSW_FOV] = 1'b1;
+    repeat (2) @(negedge clk);
+    jump(32'h000002B0);
+    step;
+    chk(seq_pc === 32'h000002C0, "with two conditions live TRAPFL still reaches vector 22");
+    chk(mem_word(13'h5F8) === 32'h160C0008,
+        "and ORs both codes into one word, which is what the one-hot low byte is for");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

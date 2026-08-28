@@ -75,6 +75,12 @@ typedef enum logic [5:0] {
     // arithmetic value, so nothing here computes with it.  The sequencer takes
     // the two nibbles apart.  See docs/v60/BREAK-AND-TRAP.md.
     ALU_TRAP    = 6'd38,
+    // "The bit-wise AND of floating point trap mask field in the TKCW register
+    // and the floating point condition codes in the PSW is computed and if the
+    // result is non-zero, a floating point operation trap will occur."  Format
+    // V, one byte, no operand -- both of its inputs are registers the
+    // sequencer reaches, so nothing arrives here either.
+    ALU_TRAPFL  = 6'd39,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

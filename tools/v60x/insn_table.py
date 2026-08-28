@@ -493,6 +493,12 @@ EXEC_OP = {
     # UPPER nibble and the vector offset its lower one, which is the opposite
     # of SETF.  See docs/v60/BREAK-AND-TRAP.md.
     'TRAP': 'TRAP',
+    # Reads TKCW and the PSW's floating point condition codes and ANDs them.
+    # No FP datapath is touched -- it never reads an FP operand, never rounds
+    # and never writes a result -- so it is implementable in full here.  It is
+    # NOT a no-op: software can arm it by hand with LDPR and UPDPSW.H on a
+    # machine with no FPU at all.  See docs/v60/BREAK-AND-TRAP.md.
+    'TRAPFL': 'TRAPFL',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
