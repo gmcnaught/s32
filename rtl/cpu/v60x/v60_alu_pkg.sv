@@ -54,6 +54,13 @@ typedef enum logic [5:0] {
     // MOVEA: the source operand's ADDRESS, passed through.  The sequencer is
     // what makes the source an address; here it is a move.
     ALU_MOVEA = 6'd32,
+    // The PSW three.  GETPSW's operand is write-only and its value comes from
+    // the sequencer, which is what holds the PSW; the UPDPSW pair writes NO
+    // operand -- both of theirs are ".r" -- and the sequencer merges into the
+    // PSW itself at retirement.
+    ALU_GETPSW  = 6'd33,
+    ALU_UPDPSWH = 6'd34,
+    ALU_UPDPSWW = 6'd35,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

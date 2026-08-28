@@ -522,7 +522,8 @@ wire        dst_am_is_op2 = fmt_ii;
 // number tb_v60_seq does not currently assert.  Recorded as an open item in
 // docs/v60/TRANCHE-ONE.md rather than changed in passing.
 wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
-                             (aop == ALU_RVBYT) || (aop == ALU_SETF);
+                             (aop == ALU_RVBYT) || (aop == ALU_SETF) ||
+                             (aop == ALU_GETPSW);
 
 // And which ones READ their operand and never write it.  The pages do not call
 // these a destination at all: CMP's syntax line is "cmp.b src1.b.r, src2.b.r"
@@ -536,7 +537,8 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
 // write cycle on the pins, and on a read-sensitive location it is a write that
 // should never have happened.  Neither instruction had a memory-operand cycle
 // count asserted anywhere, which is how it survived.
-wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST);
+wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
+                            (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW);
 
 // And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
 // line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
@@ -544,6 +546,34 @@ wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST);
 // and remains unchanged".  Its size field still matters, because it is what
 // [Rn+] steps by and what (Rx) scales by.
 wire        src_addr_only = (aop == ALU_MOVEA);
+
+// The PSW merge, which is the whole of UPDPSW: "PSW <- ( PSW & ~mask ) |
+// ( newPSW & mask )".  val1 is the first operand and val2 the second, which
+// the syntax line names newPSW and mask in that order.
+//
+// UPDPSW.H "is restricted to modifying only the condition code fields", and §3
+// names those as the integer and floating point condition codes -- CY OV S Z
+// at 3:0 and FIV FZD FOV FUD FPR at 12:8.  DECISION, because the page does not
+// say: a mask bit outside that set is silently ignored rather than raising.
+// The Exceptions block names only Privileged Instruction and only for the .W
+// form, so there is no exception on offer to raise.
+localparam logic [31:0] UPDPSW_H_FIELDS = 32'h0000_10FF;
+wire [31:0] updpsw_mask = (aop == ALU_UPDPSWH)
+                          ? (val2[31:0] & UPDPSW_H_FIELDS) : val2[31:0];
+// "Reserved for future use (Must be 0)" at 4-7, 13-15 and 19-23 (p.3.248), so
+// the merge cannot write them whatever the mask says.
+wire [31:0] updpsw_next = (((psw & ~updpsw_mask) |
+                            (val1[31:0] & updpsw_mask)) & ~PSW_RFU);
+wire        is_updpsw   = (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW);
+
+// Privileged instructions: "programs executing at other execution levels
+// (levels 1, 2 and 3) are said to be non-privileged and attempts to execute a
+// privileged instruction will cause an exception" (PgmRef §6).  p.3.299 groups
+// them and marks every one with exception 12.
+//
+// UPDPSW.W is in that block and UPDPSW.H is not, which the Reference says the
+// same way: one Exceptions block reading "Privileged Instruction (updpsw.w)".
+wire        privileged_op = (aop == ALU_UPDPSWW);
 
 // The destination operand's addressing mode.  Spelled out rather than
 // selected with a ternary: a ternary between two enum values is not an enum to
@@ -798,6 +828,19 @@ always_ff @(posedge clk) begin
                 stopped     <= 1'b1;
                 stop_reason <= STOP_NO_ALU;
                 state       <= S_STOP;
+            end else if ((op_alu(idu_op) == ALU_UPDPSWW) &&
+                         (psw[PSW_EL_HI:PSW_EL_LO] != 2'b00)) begin
+                // Checked before any operand is fetched: the exception is for
+                // attempting the instruction, not for what it would have read.
+                exc_vec_r  <= VEC_PRIVILEGED;
+                exc_code_r <= CODE_PRIVILEGED;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (op_alu(idu_op) == ALU_GETPSW) begin
+                // Its one operand is write-only and the value it writes is the
+                // PSW, which lives here rather than in the address unit.
+                val1  <= {32'd0, psw};
+                state <= S_OP2;
             end else if (op_alu(idu_op) == ALU_NOP) begin
                 // Format V, no operands, "no action is taken".  Its Operation
                 // line is "PC <- PC + 1", which S_RETIRE does from idu_len.
@@ -899,7 +942,19 @@ always_ff @(posedge clk) begin
             // than from v60_ea's own `illegal`: the read of a read-modify-write
             // destination is not a write, so the address unit does not see one
             // coming, and an access that must not happen is better not started.
-            if (!dst_is_reg && am_is_immediate(dst_mode)) begin
+            // ... and only when the second operand really IS a destination.
+            // §8 defines the exception as "an attempt to use an immediate
+            // addressing mode as the DESTINATION operand", and CMP, TEST and
+            // the UPDPSW pair have no destination operand at all -- every one
+            // of their syntax lines is ".r".  UPDPSW's page says so outright:
+            // "if the immediate quick addressing mode is specified, the
+            // immediate data is zero extended to 32-bit length and used as the
+            // new PSW or MASK operand", and the mask is the second operand.
+            //
+            // DEFECT this fixes: the check was unconditional, so `cmp src, #imm`
+            // and every UPDPSW with an immediate mask raised Illegal Addressing
+            // Mode instead of executing.
+            if (!dst_is_reg && !dst_read_only && am_is_immediate(dst_mode)) begin
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;
                 exc_kind   <= EK_INSN;
@@ -941,9 +996,13 @@ always_ff @(posedge clk) begin
             ea_rx_val <= rf_rb;
             if (dst_is_reg) begin
                 val2  <= {32'd0, rf_ra};
-                // Format III's one operand is both, and nothing else reads
-                // val1 on this path.
-                if (fmt_iii) val1 <= {32'd0, rf_ra};
+                // Format III's one operand is usually both the thing read and
+                // the thing written, so it is mirrored into val1 -- but not
+                // when the operand is write-only.  GETPSW is Format III with a
+                // "dst.w.w" operand and the value it writes is the PSW, which
+                // S_FETCH has already put in val1; mirroring would overwrite
+                // it with the destination register's old contents.
+                if (fmt_iii && !dst_write_only) val1 <= {32'd0, rf_ra};
                 state <= S_EXEC;
             end else if (dst_write_only) begin
                 // Written and not read -- see dst_write_only above -- so the
@@ -966,7 +1025,7 @@ always_ff @(posedge clk) begin
                 // still open and closing it is the only way out, so a fault
                 // here is taken one bus cycle later, at S_WBW.
                 val2  <= ea_rdata;
-                if (fmt_iii) val1 <= ea_rdata;
+                if (fmt_iii && !dst_write_only) val1 <= ea_rdata;
                 state <= S_EXEC;
             end else if (ea_done) begin
                 insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
@@ -978,7 +1037,7 @@ always_ff @(posedge clk) begin
                 state     <= S_EXC_SW;
                 end else begin
                     val2  <= ea_rdata;
-                    if (fmt_iii) val1 <= ea_rdata;
+                    if (fmt_iii && !dst_write_only) val1 <= ea_rdata;
                     state <= S_EXEC;
                 end
             end
@@ -1053,7 +1112,11 @@ always_ff @(posedge clk) begin
         // ---- retire ----------------------------------------------------------
         S_RETIRE: begin
             // The flags the operation left, and an addressing mode's writeback.
-            psw <= psw_set_flags(psw, eff_flags);
+            // UPDPSW is the exception: it writes the whole PSW under a mask
+            // rather than leaving four flags behind, and its Condition Codes
+            // block is one line -- "Updated according to mask operand".
+            if (is_updpsw) psw <= updpsw_next;
+            else           psw <= psw_set_flags(psw, eff_flags);
             if (wb_rn_en) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= wb_rn_sel;

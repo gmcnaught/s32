@@ -934,6 +934,42 @@ initial begin
     mem[11'h1F4] = 8'h40; mem[11'h1F5] = 8'hE0; mem[11'h1F6] = 8'h88;
     mem[11'h1F7] = 8'h69;
 
+    // ---- an eleventh program, at 0x200 is taken; use 0x230 -----------------
+    // GETPSW and the UPDPSW pair.  The .h form's operands are WORDS, like the
+    // .w form's -- the `.h` names which half of the PSW it may touch.
+    // UPDPSW.H #0x0000000F, #0x0000000F   4A 80 F4 0F 00 00 00 F4 0F 00 00 00
+    //   newPSW = 0x0F, mask = 0x0F: set all four integer condition codes.
+    mem[11'h230] = 8'h4A; mem[11'h231] = 8'h80; mem[11'h232] = 8'hF4;
+    mem[11'h233] = 8'h0F; mem[11'h234] = 8'h00; mem[11'h235] = 8'h00;
+    mem[11'h236] = 8'h00; mem[11'h237] = 8'hF4; mem[11'h238] = 8'h0F;
+    mem[11'h239] = 8'h00; mem[11'h23A] = 8'h00; mem[11'h23B] = 8'h00;
+    // GETPSW R9    F7 69   -- Format III, one write-only operand
+    mem[11'h23C] = 8'hF7; mem[11'h23D] = 8'h69;
+    // UPDPSW.H #0x00010005, #0x0001000F
+    //   One instruction carrying three distinct questions:
+    //     * mask bit 16 is PSW.TE, OUTSIDE the condition codes, and newPSW has
+    //       it SET -- so an unrestricted .h form would turn TE on;
+    //     * newPSW's low nibble is 0101 and the mask's is 1111, which differ,
+    //       so an implementation that swapped the two operands would leave the
+    //       codes at 1111 instead of 0101;
+    //     * the codes start at 1111 from the instruction above, so the merge
+    //       has to CLEAR two of them rather than only set bits.
+    mem[11'h23E] = 8'h4A; mem[11'h23F] = 8'h80; mem[11'h240] = 8'hF4;
+    mem[11'h241] = 8'h05; mem[11'h242] = 8'h00; mem[11'h243] = 8'h01;
+    mem[11'h244] = 8'h00; mem[11'h245] = 8'hF4; mem[11'h246] = 8'h0F;
+    mem[11'h247] = 8'h00; mem[11'h248] = 8'h01; mem[11'h249] = 8'h00;
+    // UPDPSW.W #0x00010000, #0x00010000   13 80 ...  -- the privileged form
+    //   CAN set PSW.TE.
+    mem[11'h24A] = 8'h13; mem[11'h24B] = 8'h80; mem[11'h24C] = 8'hF4;
+    mem[11'h24D] = 8'h00; mem[11'h24E] = 8'h00; mem[11'h24F] = 8'h01;
+    mem[11'h250] = 8'h00; mem[11'h251] = 8'hF4; mem[11'h252] = 8'h00;
+    mem[11'h253] = 8'h00; mem[11'h254] = 8'h01; mem[11'h255] = 8'h00;
+    // UPDPSW.W again, at 0x260, for the privilege test
+    mem[11'h260] = 8'h13; mem[11'h261] = 8'h80; mem[11'h262] = 8'hF4;
+    mem[11'h263] = 8'h00; mem[11'h264] = 8'h00; mem[11'h265] = 8'h01;
+    mem[11'h266] = 8'h00; mem[11'h267] = 8'hF4; mem[11'h268] = 8'h00;
+    mem[11'h269] = 8'h00; mem[11'h26A] = 8'h01; mem[11'h26B] = 8'h00;
+
     // ---- a ninth program, at 0x4D0: Format III -----------------------------
     // INC, DEC and TEST: one mod field, no `reg` field, and the m bit riding
     // in bit 0 of the opcode.  Their pages define INC and DEC as "add #1, dst"
@@ -1751,6 +1787,44 @@ initial begin
     chk(rf.gpr[8] === 32'h0000_0701,
         "and stepped the pointer by ONE, which is what its .b size field is for");
     chk(insn_cycles === 5'd0, "still without a bus cycle");
+
+    // =======================================================================
+    // GETPSW and the UPDPSW pair.
+    // =======================================================================
+    reset_and_arm;
+    pr_id = 5'd1; pr_wdata = 32'h0000_0660; pr_wr = 1'b1;  // PR_L0SP
+    @(negedge clk); pr_wr = 1'b0; @(negedge clk);
+    jump(32'h00000230);
+
+    step;
+    chk(seq_psw[3:0] === 4'b1111,
+        "UPDPSW.H set all four integer condition codes through its mask");
+    chk(seq_pc === 32'h0000023C,
+        "and BOTH its operands were words: the .h names the PSW half, not the size");
+
+    step;
+    chk(rf.gpr[9] === seq_psw,
+        "GETPSW copied the whole PSW to its write-only operand");
+
+    step;
+    chk(seq_psw[PSW_TE] === 1'b0,
+        "UPDPSW.H may not touch PSW.TE: it is restricted to the condition codes");
+    chk(seq_psw[3:0] === 4'b0101,
+        "and merged the codes it may touch: newPSW under mask, not the reverse");
+
+    step;
+    chk(seq_psw[PSW_TE] === 1'b1,
+        "UPDPSW.W, which is privileged, can set it");
+
+    // And at a non-zero execution level it raises instead.
+    @(negedge clk);
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h00000260);
+    step;
+    chk(seq_pc === 32'h00000780,
+        "UPDPSW.W at execution level 3 is the Privileged Instruction exception");
+    chk(mem_word(13'h65C) === 32'h11000004, "with vector 17's code");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

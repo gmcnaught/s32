@@ -480,8 +480,8 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h091: r = 4'd0 ;  // BSR (operand 2)
             9'h092: r = 4'd4 ;  // CALL
             9'h093: r = 4'd4 ;  // CALL (operand 2)
-            9'h094: r = 4'd2 ;  // UPDPSW.H
-            9'h095: r = 4'd2 ;  // UPDPSW.H (operand 2)
+            9'h094: r = 4'd4 ;  // UPDPSW.H
+            9'h095: r = 4'd4 ;  // UPDPSW.H (operand 2)
             9'h096: r = 4'd1 ;  // CHLVL
             9'h097: r = 4'd4 ;  // CHLVL (operand 2)
             9'h098: r = 4'd4 ;  // CAXI
@@ -1004,6 +1004,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h0B: r = ALU_MOVZ; // MOVZ.BH
             8'h0C: r = ALU_MOVS; // MOVS.BW
             8'h0D: r = ALU_MOVZ; // MOVZ.BW
+            8'h13: r = ALU_UPDPSWW; // UPDPSW.W
             8'h19: r = ALU_MOVT; // MOVT.HB
             8'h1B: r = ALU_MOV;  // MOV.H
             8'h1C: r = ALU_MOVS; // MOVS.HW
@@ -1023,6 +1024,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h42: r = ALU_MOVEA; // MOVEA
             8'h44: r = ALU_MOVEA; // MOVEA
             8'h47: r = ALU_SETF; // SETF
+            8'h4A: r = ALU_UPDPSWH; // UPDPSW.H
             8'h50: r = ALU_REM;  // REM
             8'h51: r = ALU_REMU; // REMU
             8'h52: r = ALU_REM;  // REM
@@ -1096,6 +1098,8 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hF3: r = ALU_TEST; // TEST
             8'hF4: r = ALU_TEST; // TEST
             8'hF5: r = ALU_TEST; // TEST
+            8'hF6: r = ALU_GETPSW; // GETPSW
+            8'hF7: r = ALU_GETPSW; // GETPSW
             default: r = ALU_NONE;
         endcase
         op_alu = r;

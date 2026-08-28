@@ -414,7 +414,11 @@ DATA_TYPE = {
 
     # Miscellaneous and privileged.
     'NOP': (None, None), 'GETPSW': (4, None),
-    'UPDPSW.H': (2, 2), 'UPDPSW.W': (4, 4),
+    # DEFECT, corrected: UPDPSW.H had (2, 2).  The Reference prints ONE page
+    # for the pair and both syntax lines read "newPSW.w.r, mask.w.r" -- both
+    # operands are full words in BOTH forms.  The `.h` names which HALF OF THE
+    # PSW the instruction may modify, not the size of anything it reads.
+    'UPDPSW.H': (4, 4), 'UPDPSW.W': (4, 4),
     'CHLVL': (1, 4), 'CHKAR': (4, 1), 'CHKAW': (4, 1), 'CHKAE': (4, 1),
     'TASI': (1, None), 'CAXI': (4, 4), 'SETF': (1, 1),
     'LDPR': (4, 4), 'STPR': (4, 4),
@@ -451,6 +455,10 @@ EXEC_OP = {
     # NOP is Format V and does nothing; MOVEA's source is an ADDRESS, which is
     # what its `.n` access type means -- no bus cycle is issued for it.
     'NOP': 'NOP', 'MOVEA': 'MOVEA',
+    # The PSW three.  GETPSW copies it out; the UPDPSW pair merges into it
+    # under a mask and writes no operand at all.
+    'GETPSW': 'GETPSW',
+    'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
     # register first" (S3), and nothing in this tree addresses one yet.
