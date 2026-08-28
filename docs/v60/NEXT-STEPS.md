@@ -86,6 +86,25 @@ before any access. The zero divide, `BRKV` and `TRAP` carry the Next PC, do not
 restart, and their addressing-mode writebacks must stand. Same tree, opposite
 rules, and the frame is the only thing that says which.
 
+**Tranche two is done too** — all ten, 2026-08-28: `PUSH` `POP` `PUSHM` `POPM`
+`PREPARE` `DISPOSE` `XCH` `TASI` `CAXI` `CHLVL`. Research in
+`docs/v60/TRANCHE-TWO.md`. What it added that later tranches inherit:
+
+- **A bus lock that reaches from `v60_seq` to the pins**, and an arbiter that
+  honours it. `BLOCK*` exists now, and so does the thing that actually makes an
+  interlock work — `v60_bus_arb` will not grant the prefetch unit a cycle
+  between the halves of a read-modify-write. The pin only *announces*; the
+  databook says so outright, and on this board `/BLOCK` is an unterminated pin.
+- **A register-mask loop** (`PUSHM`/`POPM`), the first work here driven by data
+  rather than by an encoding.
+- **An exception that targets a non-zero execution level** — `CHLVL`, and with
+  it `v60_exc` taking `new_el` rather than hardcoding level 0.
+
+Two defects it found in code that was already green: `CHLVL`'s target level
+leaked into the *next* exception (a `BRK` after a `CHLVL #2` landed at level 2
+on the wrong stack), and `insn_table.py` had `CHLVL`'s second operand as a word
+where the syntax line says byte.
+
 What is left, in rough order of how much machinery each needs:
 
 - **The `X` forms of the multiplies and divides** — `MULX`, `MULUX`, `DIVX`,

@@ -13,6 +13,26 @@ set and the PSW, §8 for the exception frames. Summary exception numbers are
 decoded with `docs/v60/INSTRUCTION-SUMMARY-LEGEND.md`, **including its caveat
 on entry 2**, which bites once here.
 
+**Status: all ten implemented, 2026-08-28.** This file is the research that
+preceded them and is left as written. Three things implementation settled or
+corrected, recorded at the point of decision in the RTL rather than edited in
+above:
+
+* **`CHLVL`'s operand widths were `(1, 4)` in `insn_table.py`; both are bytes.**
+  The zero-extension to word length is a property of the push, not of the
+  operand fetch.
+* **The `XCH` format disagreement is now recorded** in `DISAGREEMENTS` rather
+  than left silent — the databook prints `I, II` and the Reference `Format I`.
+* **Whether a failing `CAXI` issues its write cycle is not settled by any page**
+  and is now an explicit decision: it does, so the bus pattern stays
+  read-modify-write either way.
+
+The interlock discussion in §"Is anything short of adding the pin faithful?"
+was acted on in full: the pin exists *and* `v60_bus_arb` holds the prefetch
+unit off across the gap, which is the half that actually makes it indivisible.
+
+---
+
 ## A format-letter problem across the whole stack block
 
 The encodings are confirmed and agree with `tools/v60x/insn_table.py`. The
