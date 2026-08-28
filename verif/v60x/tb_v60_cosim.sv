@@ -423,6 +423,25 @@ initial begin
     ab(8'h7B); ab(8'h03); ab(8'h00);
     insn_end;
 
+    // The stack block, whose format letter the databook prints as II and the
+    // Programmer's Reference as III.  Format II takes a second base byte and
+    // Format III does not, so the two readings differ by ONE BYTE -- which is
+    // exactly what this bench measures, and it measures it against a core
+    // built from the other source.  A stack pointer first, so the push lands
+    // somewhere harmless.
+    insn_begin("MOV.W #0x0F00, R31");
+    ab(8'h2D); ab(8'hA0); ab(8'hF4);
+    ab(8'h00); ab(8'h0F); ab(8'h00); ab(8'h00); ab(8'h7F);
+    insn_end;
+
+    insn_begin("PUSH R9");
+    ab(8'hEF); ab(8'h69);
+    insn_end;
+
+    insn_begin("POP R10");
+    ab(8'hE7); ab(8'h6A);
+    insn_end;
+
     // A branch to itself, so the shipping core stops advancing.  Not compared.
     ab(8'h6A); ab(8'h00);
 

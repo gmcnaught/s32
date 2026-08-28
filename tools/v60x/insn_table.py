@@ -70,6 +70,14 @@ TABLE = [
     ('MOVT.HB',  '00011001',      None, 'I,II',  '3.296'),
     ('MOVT.WB',  '00101001',      None, 'I,II',  '3.296'),
     ('MOVT.WH',  '00101011',      None, 'I,II',  '3.296'),
+    # DISCREPANCY, recorded and NOT resolved: p.3.296 prints "I, II" and the
+    # Reference prints a clean "Format I".  Unlike the five stack rows below,
+    # nothing in the encoding decides it -- XCH has no trailing `-`, so both
+    # readings are coherent.  CAXI's page says of its near-identical shape
+    # "this instruction is not allowed to use Format II and furthermore, the
+    # Format I direction field must be zero", and XCH has the same reason to
+    # forbid it (its first operand must be a register), but XCH's own page does
+    # not say so.  Left permissive until something decides it.
     ('XCH',      '01000{siz}1',   None, 'I,II',  '3.296'),
     ('MOVEA',    '01000{siz}0',   None, 'I,II',  '3.296'),
     ('RVBYT',    '00101100',      None, 'I,II',  '3.296'),
@@ -180,11 +188,26 @@ TABLE = [
     ('SKPC',     '010110{c}0',    '0001101{d}', 'VIIb', '3.298'),
 
     # ---- p.3.298  Stack Manipulation ---------------------------------------
-    ('PUSH',     '1110111{-}',    None, 'II',    '3.298'),
-    ('POP',      '1110011{-}',    None, 'II',    '3.298'),
-    ('PUSHM',    '1110110{-}',    None, 'II',    '3.298'),
-    ('POPM',     '1110010{-}',    None, 'II',    '3.298'),
-    ('PREPARE',  '1101111{-}',    None, 'II',    '3.298'),
+    # DEFECT, corrected: all five carried 'II'.  The databook's p.3.298 format
+    # column says II and its own OPCODE column, on the same row, says
+    # otherwise -- a trailing `-` is a seven-bit opcode plus a don't-care,
+    # which is Format III's shape (p.3.293 draws III as [mod] [op | m] with op
+    # in 7:1 and the addressing-mode bit in bit 0) and cannot be Format II's,
+    # whose op is a full eight bits.  This file's own header states that rule.
+    #
+    # The Programmer's Reference prints "Format III" on all five pages, and
+    # TASI on p.3.299 prints the same 1110000- shape correctly labelled III one
+    # page later -- so the notation is not being used loosely and the stack
+    # block's format column is simply wrong.
+    #
+    # It is a LENGTH error, not a cosmetic one: Format II takes a second base
+    # byte and Format III does not, so every one of these decoded one byte too
+    # long.  Nothing had noticed because none of the five executes yet.
+    ('PUSH',     '1110111{-}',    None, 'III',   'PgmRef §7 PUSH'),
+    ('POP',      '1110011{-}',    None, 'III',   'PgmRef §7 POP'),
+    ('PUSHM',    '1110110{-}',    None, 'III',   'PgmRef §7 PUSHM'),
+    ('POPM',     '1110010{-}',    None, 'III',   'PgmRef §7 POPM'),
+    ('PREPARE',  '1101111{-}',    None, 'III',   'PgmRef §7 PREPARE'),
     ('DISPOSE',  '11001100',      None, 'V',     '3.298'),
 
     # ---- p.3.298  Control Transfer -----------------------------------------
