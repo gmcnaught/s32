@@ -526,6 +526,9 @@ EXEC_OP = {
     # The I/O pair.  The only instructions that issue an I/O bus cycle -- and
     # so the only way v60_bus_pkg's three-TI recovery rule is reachable.
     'IN': 'IN', 'OUT': 'OUT',
+    # "a shorter encoding of mov.w src, [ -sp ]" and of "mov.w [ sp+ ], dst".
+    # Format III -- one encoded operand each, the stack being implicit.
+    'PUSH': 'PUSH', 'POP': 'POP',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

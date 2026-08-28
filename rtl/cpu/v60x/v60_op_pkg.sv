@@ -1108,6 +1108,10 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hDB: r = ALU_INC;  // INC
             8'hDC: r = ALU_INC;  // INC
             8'hDD: r = ALU_INC;  // INC
+            8'hE6: r = ALU_POP;  // POP
+            8'hE7: r = ALU_POP;  // POP
+            8'hEE: r = ALU_PUSH; // PUSH
+            8'hEF: r = ALU_PUSH; // PUSH
             8'hF0: r = ALU_TEST; // TEST
             8'hF1: r = ALU_TEST; // TEST
             8'hF2: r = ALU_TEST; // TEST

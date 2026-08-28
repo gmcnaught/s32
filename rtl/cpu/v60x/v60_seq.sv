@@ -472,6 +472,13 @@ typedef enum logic [5:0] {
     // `pr_rdata` is combinational off a REGISTERED `pr_id`, so the id has to
     // be presented a cycle before it can be read.
     S_PR_SEL, S_PR_RD,
+    // PUSH and POP's one stack access: read R31, make the access, then write
+    // R31 back.  The pointer is computed HERE and the access uses AM_RN_IND,
+    // exactly as the stack engine below does -- so v60_ea raises no
+    // addressing-mode writeback of its own for it, and the single writeback
+    // slot stays free for the operand's own mode.  Without that, `push [R5+]`
+    // would be two writebacks and stop the sequencer.
+    S_PSH_R, S_PSH_SP, S_PSH_S, S_PSH_W, S_PSH_FIN,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -577,7 +584,10 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              // "in.b port.b.r, dst.b.w" and
                              // "out.b src.b.r, port.b.w" -- in both, the
                              // SECOND operand is written and not read.
-                             (aop == ALU_IN) || (aop == ALU_OUT);
+                             (aop == ALU_IN) || (aop == ALU_OUT) ||
+                             // "dst <- [SP+]": POP's one encoded operand is
+                             // written and never read.
+                             (aop == ALU_POP);
 
 // And which ones READ their operand and never write it.  The pages do not call
 // these a destination at all: CMP's syntax line is "cmp.b src1.b.r, src2.b.r"
@@ -787,6 +797,14 @@ wire        io_src_bad = io_src && (src_is_reg || (op1_mode == AM_RN));
 // `movea.w #5, R9` quietly wrote 0.  Caught here, from the mode, for the same
 // reason S_OP2's immediate-destination check is: an access that must not
 // happen is better not started.
+// PUSH and POP.  Each has ONE encoded operand and an implicit stack access,
+// and they sit on opposite sides of it: PUSH's operand is the SOURCE of the
+// word that goes on the stack, POP's is the DESTINATION of the word that comes
+// off.  So PUSH reads its operand first and POP reads the stack first.
+wire        is_push = (aop == ALU_PUSH);
+wire        is_pop  = (aop == ALU_POP);
+wire        is_stk1 = is_push || is_pop;
+
 wire        movea_src_bad = src_addr_only &&
                             (src_is_reg || (op1_mode == AM_RN) ||
                              am_is_immediate(op1_mode));
@@ -1146,6 +1164,14 @@ always_ff @(posedge clk) begin
                 // Format V, no operands, "no action is taken".  Its Operation
                 // line is "PC <- PC + 1", which S_RETIRE does from idu_len.
                 state <= S_RETIRE;
+            end else if (op_alu(idu_op) == ALU_POP) begin
+                // Nothing to read before the stack: POP's one operand is where
+                // the word GOES.
+                state <= S_PSH_R;
+            end else if (op_alu(idu_op) == ALU_PUSH) begin
+                // PUSH's one operand is a SOURCE, so it goes down the source
+                // path even though Format III normally means "destination".
+                state <= S_OP1;
             end else if (fmt_iii) begin
                 // One operand, and it is the destination.  There is no source
                 // to read, so the source path is skipped outright -- and the
@@ -1218,8 +1244,9 @@ always_ff @(posedge clk) begin
             if (src_is_reg) begin
                 val1  <= {32'd0, rf_ra};
                 // STPR's source is not a value but the NAME of one.
-                if (aop == ALU_STPR) state <= S_PR_SEL;
-                else                 state <= S_OP2;
+                if      (aop == ALU_STPR) state <= S_PR_SEL;
+                else if (is_push)         state <= S_PSH_R;
+                else                      state <= S_OP2;
             end else begin
                 state <= S_OP1S;
             end
@@ -1242,8 +1269,9 @@ always_ff @(posedge clk) begin
                 end else begin
                     // MOVEA wants the address, not what is at it.
                     val1  <= src_addr_only ? {32'd0, ea_ea} : ea_rdata;
-                    if (aop == ALU_STPR) state <= S_PR_SEL;
-                    else                 state <= S_OP2;
+                    if      (aop == ALU_STPR) state <= S_PR_SEL;
+                    else if (is_push)         state <= S_PSH_R;
+                    else                      state <= S_OP2;
                 end
             end
         end
@@ -1974,6 +2002,73 @@ always_ff @(posedge clk) begin
         S_PR_RD: begin
             val1  <= {32'd0, rf_pr_rdata};
             state <= S_OP2;
+        end
+
+        // ---- PUSH and POP's stack access -------------------------------------
+        S_PSH_R: begin
+            rf_ra_sel <= 5'd31;
+            state     <= S_PSH_SP;
+        end
+
+        S_PSH_SP: begin
+            sp_r          <= rf_ra;
+            ea_mode       <= AM_RN_IND;
+            ea_index      <= 1'b0;
+            ea_disp       <= 32'd0;
+            ea_disp_outer <= 32'd0;
+            ea_opbytes    <= 4'd4;      // "Push Word" / "Pop Word"
+            ea_rmw        <= 1'b0;
+            ea_addr_only  <= 1'b0;
+            ea_io         <= 1'b0;
+            // AM_RN_IND moves no pointer, so this access raises no
+            // addressing-mode writeback and R31 is this module's to write.
+            ea_rn_sel     <= 5'd0;
+            ea_pc_val     <= idu_pc;
+            if (is_push) begin
+                // "The stack pointer (R31) is decremented by four and the
+                // contents of the source operand are copied onto the stack" --
+                // decrement FIRST, which is what [-SP] means.
+                ea_rn_val <= rf_ra - 32'd4;
+                ea_we     <= 1'b1;
+                ea_wdata  <= val1;
+            end else begin
+                // "The word data located on the top of the stack is copied to
+                // the destination operand.  The stack pointer (R31) is THEN
+                // incremented by four."
+                ea_rn_val <= rf_ra;
+                ea_we     <= 1'b0;
+            end
+            state <= S_PSH_S;
+        end
+
+        S_PSH_S: begin
+            ea_start <= 1'b1;
+            state    <= S_PSH_W;
+        end
+
+        S_PSH_W: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (berr_r) begin
+                // The stack access faulted, so the instruction does not retire
+                // and R31 is left where it was.
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                if (is_pop) val1 <= ea_rdata;
+                state <= S_PSH_FIN;
+            end
+        end
+
+        S_PSH_FIN: begin
+            rf_wr_en   <= 1'b1;
+            rf_wr_sel  <= 5'd31;
+            rf_wr_data <= is_push ? (sp_r - 32'd4) : (sp_r + 32'd4);
+            // PUSH is finished -- its operand was read on the way in.  POP
+            // still has to put the word somewhere, and its operand is
+            // write-only, so it joins the ordinary destination path.
+            if (is_push) state <= S_RETIRE;
+            else         state <= S_OP2;
         end
 
         // ---- an exception --------------------------------------------------

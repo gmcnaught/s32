@@ -1118,6 +1118,17 @@ initial begin
     mem[11'h497] = 8'h05; mem[11'h498] = 8'h00; mem[11'h499] = 8'h00;
     mem[11'h49A] = 8'h00; mem[11'h49B] = 8'h69;
 
+    // PUSH and POP, Format III -- one encoded operand and an implicit stack.
+    // PUSH R9    EF 69   (m = 1, so the mod field is the register column)
+    mem[11'h620] = 8'hEF; mem[11'h621] = 8'h69;
+    // POP R10    E7 6A
+    mem[11'h622] = 8'hE7; mem[11'h623] = 8'h6A;
+    // PUSH [R8+] EF 88   -- an AUTOINCREMENT operand, so the instruction has
+    //   TWO register writebacks: R8 from the addressing mode and R31 from the
+    //   stack.  The stack access uses AM_RN_IND with a pointer this sequencer
+    //   computes, so v60_ea raises only one of them and the pair coexists.
+    mem[11'h624] = 8'hEF; mem[11'h625] = 8'h88;
+
     // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
     //   at [R10] is read from MEMORY and only the operand it names is an I/O
     //   access: an addressing mode's own accesses are not the instruction's.
@@ -2638,6 +2649,49 @@ initial begin
     chk(seq_pc === 32'h000007C0,
         "and from an IMMEDIATE source it is the same exception");
     chk(rf.gpr[9] === 32'h1234_5678, "with the destination again untouched");
+
+    // =======================================================================
+    // PUSH and POP.  "The PUSH instruction is a shorter encoding of the more
+    // general instruction mov.w src, [ -sp ]", and POP of "mov.w [ sp+ ], dst"
+    // -- so whatever [-Rn] and [Rn+] do on R31 with a word operand, these do.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[9]  = 32'hDEAD_BEEF;
+    rf.gpr[10] = 32'h0000_0000;
+    put_word(13'h5FC, 32'h0000_0000);
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h00000620);
+    step;
+    chk(rf.gpr[31] === 32'h000005FC,
+        "PUSH decremented the stack pointer by four");
+    chk(mem_word(13'h5FC) === 32'hDEAD_BEEF, "and wrote its source there");
+    chk(seq_psw === psw_before, "leaving every flag alone");
+
+    // POP takes it straight back, which is the property the pair exists for.
+    step;
+    chk(rf.gpr[10] === 32'hDEAD_BEEF, "POP read the word back into its destination");
+    chk(rf.gpr[31] === 32'h00000600,
+        "and incremented the stack pointer, so the pair round-trips");
+
+    // An autoincrement operand: TWO register writebacks in one instruction,
+    // R8 from the addressing mode and R31 from the stack.  This sequencer
+    // stops on two addressing-mode writebacks, so the stack access must not
+    // look like one.
+    @(negedge clk);
+    put_word(13'h700, 32'h1234_5678);
+    repeat (2) @(negedge clk);
+    step;
+    chk(!stopped, "PUSH through an autoincrement operand does not stop the sequencer");
+    chk(mem_word(13'h5FC) === 32'h1234_5678,
+        "it pushed the word its operand pointed at");
+    chk(rf.gpr[8] === 32'h00000704,
+        "the addressing mode stepped R8");
+    chk(rf.gpr[31] === 32'h000005FC,
+        "and the stack pointer moved too -- both writebacks landed");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

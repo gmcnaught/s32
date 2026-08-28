@@ -118,6 +118,14 @@ typedef enum logic [5:0] {
     // register having no address to send.
     ALU_IN      = 6'd47,
     ALU_OUT     = 6'd48,
+    // "[-SP] <- src" and "dst <- [SP+]", and each page says outright what it
+    // is: "The PUSH instruction is a shorter encoding of the more general
+    // instruction mov.w src, [ -sp ]", and POP of "mov.w [ sp+ ], dst".  So
+    // whatever [-Rn] and [Rn+] do on R31 with a word operand, these do -- and
+    // nothing arithmetic happens.  PUSH's value goes to the stack from the
+    // sequencer; POP's comes back the same way and is passed through here.
+    ALU_PUSH    = 6'd49,
+    ALU_POP     = 6'd50,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,
