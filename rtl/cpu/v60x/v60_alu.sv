@@ -302,6 +302,12 @@ always_comb begin
         end
         // "The source operand is unaffected by this instruction", and the
         // destination is written and not read: dst.b.w / dst.w.w.
+        // "No action is taken."  Nothing is written and no flag moves.
+        ALU_NOP: writes = 1'b0;
+        // "dst <- effective_address( src )".  The sequencer computes the
+        // address and presents it as x; this passes it through, and the
+        // destination is a word whatever the source's size field said.
+        ALU_MOVEA: raw = x;
         ALU_RVBIT: raw = {24'd0, rvbit_res};
         ALU_RVBYT: raw = rvbyt_res;
         // "If the specified condition is satisfied by the integer PSW
@@ -368,8 +374,9 @@ end
 // would be unlike anything else in this instruction set.
 // "CY Unchanged / OV Unchanged / S Unchanged / Z Unchanged" on all three of
 // the new pages as well, so a reversal that produces zero does not set Z.
-wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS) || (op == ALU_MOVZ) ||
-                (op == ALU_RVBIT) || (op == ALU_RVBYT) || (op == ALU_SETF);
+wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
+                (op == ALU_RVBIT) || (op == ALU_RVBYT) || (op == ALU_SETF) ||
+                (op == ALU_NOP)   || (op == ALU_MOVEA);
 wire keep_but_ov = (op == ALU_MOVT);
 
 assign result    = raw & mask;

@@ -898,6 +898,42 @@ initial begin
     mem[11'h48A] = 8'hB8; mem[11'h48B] = 8'h80; mem[11'h48C] = 8'hF4;
     mem[11'h48D] = 8'h80; mem[11'h48E] = 8'h68;
 
+    // ---- a tenth program, at 0x1D0: NOP, MOVEA, and the addr_only leak -----
+    // MOV.W #0x700, R8
+    mem[11'h1D0] = 8'h2D; mem[11'h1D1] = 8'hA0; mem[11'h1D2] = 8'hF4;
+    mem[11'h1D3] = 8'h00; mem[11'h1D4] = 8'h07; mem[11'h1D5] = 8'h00;
+    mem[11'h1D6] = 8'h00; mem[11'h1D7] = 8'h68;
+    // MOV.B #0x5A, [R8]     -- the byte the load after the JMP must see
+    mem[11'h1D8] = 8'h09; mem[11'h1D9] = 8'h80; mem[11'h1DA] = 8'hF4;
+    mem[11'h1DB] = 8'h5A; mem[11'h1DC] = 8'h68;
+    // NOP                   -- one byte, Format V
+    mem[11'h1DD] = 8'hCD;
+    // MOVEA.b [R8], R9      40 A0 68 69
+    //   The source is "src.b.n": its ADDRESS is taken and no bus cycle is
+    //   issued for it, so R9 gets 0x700 and not 0x5A.
+    mem[11'h1DE] = 8'h40; mem[11'h1DF] = 8'hA0; mem[11'h1E0] = 8'h68;
+    mem[11'h1E1] = 8'h69;
+    // MOV.W #0x1F0, R10     -- where the JMP goes
+    mem[11'h1E2] = 8'h2D; mem[11'h1E3] = 8'hA0; mem[11'h1E4] = 8'hF4;
+    mem[11'h1E5] = 8'hF0; mem[11'h1E6] = 8'h01; mem[11'h1E7] = 8'h00;
+    mem[11'h1E8] = 8'h00; mem[11'h1E9] = 8'h6A;
+    // JMP [R10]             D6 6A   -- sets ea_addr_only on its way out
+    mem[11'h1EA] = 8'hD6; mem[11'h1EB] = 8'h6A;
+    // 0x1F0: MOV.B [R8], R11   09 A0 68 6B
+    //   A MEMORY source in the instruction immediately after a control
+    //   transfer.  This is the case the addr_only leak broke: R11 must get the
+    //   BYTE at 0x700, not the address 0x700 and not stale data.
+    mem[11'h1F0] = 8'h09; mem[11'h1F1] = 8'hA0; mem[11'h1F2] = 8'h68;
+    mem[11'h1F3] = 8'h6B;
+    // MOVEA.b [R8+], R9   40 E0 88 69
+    //   An AUTOINCREMENT source, which is the only way MOVEA's size field is
+    //   observable: nothing is read, but "separate instructions are provided
+    //   for byte, halfword and word operands to permit correct computation of
+    //   effective addresses using the autoincrement, autodecrement and scaled
+    //   index addressing modes".  The .b form steps R8 by ONE.
+    mem[11'h1F4] = 8'h40; mem[11'h1F5] = 8'hE0; mem[11'h1F6] = 8'h88;
+    mem[11'h1F7] = 8'h69;
+
     // ---- a ninth program, at 0x4D0: Format III -----------------------------
     // INC, DEC and TEST: one mod field, no `reg` field, and the m bit riding
     // in bit 0 of the opcode.  Their pages define INC and DEC as "add #1, dst"
@@ -1676,6 +1712,45 @@ initial begin
         "and costs ONE bus cycle: src2 is read, not read-modify-written");
     chk(n_writes == 0,
         "and puts no write on the bus at all against a read-only operand");
+
+    // =======================================================================
+    // NOP, MOVEA, and the instruction after a control transfer.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h000001D0);
+    step; step;
+    chk(mem[11'h700] === 8'h5A, "the byte is in place");
+    psw_before = seq_psw;
+
+    step;
+    chk(!stopped,                "NOP executes");
+    chk(seq_pc === 32'h000001DE, "and is ONE byte long");
+    chk(insn_cycles === 5'd0,    "and makes no bus cycle");
+    chk(seq_psw === psw_before,  "and moves no flag");
+
+    step;
+    chk(rf.gpr[9] === 32'h0000_0700,
+        "MOVEA took the source's ADDRESS, not the byte at it");
+    chk(insn_cycles === 5'd0,
+        "and issued no bus cycle for it: the access type is .n");
+    chk(seq_psw === psw_before,  "and moved no flag either");
+
+    step; step;
+    chk(seq_pc === 32'h000001F0, "the JMP transferred");
+
+    // The instruction after a control transfer, with a MEMORY source.  Before
+    // ea_addr_only was cleared in S_OP1 this read nothing and val1 was stale.
+    step;
+    chk(rf.gpr[11] === 32'h0000_005A,
+        "a memory source is READ in the instruction after a JMP");
+    chk(insn_cycles === 5'd1,
+        "which costs the one bus cycle a byte read costs");
+
+    step;
+    chk(rf.gpr[9] === 32'h0000_0700, "MOVEA.b through [R8+] took the address");
+    chk(rf.gpr[8] === 32'h0000_0701,
+        "and stepped the pointer by ONE, which is what its .b size field is for");
+    chk(insn_cycles === 5'd0, "still without a bus cycle");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

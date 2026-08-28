@@ -538,6 +538,13 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
 // count asserted anywhere, which is how it survived.
 wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST);
 
+// And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
+// line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
+// is issued for the source at all, and "the source operand is not referenced
+// and remains unchanged".  Its size field still matters, because it is what
+// [Rn+] steps by and what (Rx) scales by.
+wire        src_addr_only = (aop == ALU_MOVEA);
+
 // The destination operand's addressing mode.  Spelled out rather than
 // selected with a ternary: a ternary between two enum values is not an enum to
 // every tool.
@@ -791,6 +798,10 @@ always_ff @(posedge clk) begin
                 stopped     <= 1'b1;
                 stop_reason <= STOP_NO_ALU;
                 state       <= S_STOP;
+            end else if (op_alu(idu_op) == ALU_NOP) begin
+                // Format V, no operands, "no action is taken".  Its Operation
+                // line is "PC <- PC + 1", which S_RETIRE does from idu_len.
+                state <= S_RETIRE;
             end else if (fmt_iii) begin
                 // One operand, and it is the destination.  There is no source
                 // to read, so the source path is skipped outright -- and the
@@ -828,6 +839,15 @@ always_ff @(posedge clk) begin
                 ea_opbytes    <= w_src;
                 ea_we         <= 1'b0;
                 ea_rmw        <= 1'b0;
+                // DEFECT this fixes, as well as implementing MOVEA.  Every
+                // other field of the descriptor was set here and this one was
+                // not, so a JMP or JSR -- which sets it -- left it set into the
+                // NEXT instruction, whose source operand was then computed as
+                // an address and never read.  The same defect was found and
+                // fixed on the destination side in S_OP2 and the source side
+                // was missed; it survived because no test had a memory source
+                // in the instruction immediately after a control transfer.
+                ea_addr_only  <= src_addr_only;
                 ea_pc_val     <= idu_pc;
                 state         <= S_OP1R;
             end
@@ -862,7 +882,8 @@ always_ff @(posedge clk) begin
                 exc_vec_r <= VEC_BUS_FAULT;
                 state     <= S_EXC_SW;
                 end else begin
-                    val1  <= ea_rdata;
+                    // MOVEA wants the address, not what is at it.
+                    val1  <= src_addr_only ? {32'd0, ea_ea} : ea_rdata;
                     state <= S_OP2;
                 end
             end

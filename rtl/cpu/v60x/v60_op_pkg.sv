@@ -462,11 +462,11 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h07B: r = 4'd4 ;  // NEG (operand 2)
             9'h07E: r = 4'd8 ;  // MOV.D
             9'h07F: r = 4'd8 ;  // MOV.D (operand 2)
-            9'h080: r = 4'd4 ;  // MOVEA
+            9'h080: r = 4'd1 ;  // MOVEA
             9'h081: r = 4'd4 ;  // MOVEA (operand 2)
             9'h082: r = 4'd1 ;  // XCH
             9'h083: r = 4'd1 ;  // XCH (operand 2)
-            9'h084: r = 4'd4 ;  // MOVEA
+            9'h084: r = 4'd2 ;  // MOVEA
             9'h085: r = 4'd4 ;  // MOVEA (operand 2)
             9'h086: r = 4'd2 ;  // XCH
             9'h087: r = 4'd2 ;  // XCH (operand 2)
@@ -1019,6 +1019,9 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h3C: r = ALU_NOT;  // NOT
             8'h3D: r = ALU_NEG;  // NEG
             8'h3F: r = ALU_MOV;  // MOV.D
+            8'h40: r = ALU_MOVEA; // MOVEA
+            8'h42: r = ALU_MOVEA; // MOVEA
+            8'h44: r = ALU_MOVEA; // MOVEA
             8'h47: r = ALU_SETF; // SETF
             8'h50: r = ALU_REM;  // REM
             8'h51: r = ALU_REMU; // REMU
@@ -1074,6 +1077,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'hBB: r = ALU_SHA;  // SHA
             8'hBC: r = ALU_CMP;  // CMP
             8'hBD: r = ALU_SHA;  // SHA
+            8'hCD: r = ALU_NOP;  // NOP
             8'hD0: r = ALU_DEC;  // DEC
             8'hD1: r = ALU_DEC;  // DEC
             8'hD2: r = ALU_DEC;  // DEC

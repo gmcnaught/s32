@@ -318,7 +318,15 @@ DATA_TYPE = {
     'MOVZ.BH': (1, 2), 'MOVZ.BW': (1, 4), 'MOVZ.HW': (2, 4),
     'MOVT.HB': (2, 1), 'MOVT.WB': (4, 1), 'MOVT.WH': (4, 2),
     'XCH': ('siz', 'siz'),
-    'MOVEA': (4, 4),          # an effective address, and a place to put it
+    # DEFECT, corrected: MOVEA had (4, 4).  Its syntax lines are
+    # "movea.b src.b.n, dst.w.w" / ".h" / ".w" -- the DESTINATION is always a
+    # word, because an address is 32 bits, but the SOURCE is sized by siz.  The
+    # size matters even though nothing is read: "separate instructions are
+    # provided for byte, halfword and word operands to permit correct
+    # computation of effective addresses using the autoincrement, autodecrement
+    # and scaled index addressing modes".  With (4, 4), movea.b [R1+], R2 would
+    # step R1 by four instead of one.
+    'MOVEA': ('siz', 4),
     # DEFECT, corrected: RVBIT had (4, 4).  Its page prints
     # "rvbit src.b.r, dst.b.w" -- it reverses EIGHT bits, not thirty-two, and
     # both operands are bytes.  With the word width the decoder consumed a
@@ -440,6 +448,9 @@ EXEC_OP = {
     # Format III, one operand, and their own pages define them as ADD and SUB
     # with an addend of one.
     'INC': 'INC', 'DEC': 'DEC',
+    # NOP is Format V and does nothing; MOVEA's source is an ADDRESS, which is
+    # what its `.n` access type means -- no bus cycle is issued for it.
+    'NOP': 'NOP', 'MOVEA': 'MOVEA',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
     # register first" (S3), and nothing in this tree addresses one yet.
