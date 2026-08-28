@@ -1021,6 +1021,36 @@ initial begin
     // handler for vector 22: MOV.B #0xD3, [R8]
     mem[11'h2C0] = 8'h09; mem[11'h2C1] = 8'h80; mem[11'h2C2] = 8'hF4;
     mem[11'h2C3] = 8'hD3; mem[11'h2C4] = 8'h68;
+    // The privileged register pair, Format II throughout: an immediate source
+    // and a register second operand, the same shape as MOV.B #0x77, R9 above.
+    //
+    // STPR #8, R9      02 A0 F4 08 00 00 00 69   -- TKCW into R9
+    mem[11'h2D0] = 8'h02; mem[11'h2D1] = 8'hA0; mem[11'h2D2] = 8'hF4;
+    mem[11'h2D3] = 8'h08; mem[11'h2D4] = 8'h00; mem[11'h2D5] = 8'h00;
+    mem[11'h2D6] = 8'h00; mem[11'h2D7] = 8'h69;
+    // STPR #40, R9     02 A0 F4 28 00 00 00 69   -- an id above 31
+    mem[11'h2E0] = 8'h02; mem[11'h2E1] = 8'hA0; mem[11'h2E2] = 8'hF4;
+    mem[11'h2E3] = 8'h28; mem[11'h2E4] = 8'h00; mem[11'h2E5] = 8'h00;
+    mem[11'h2E6] = 8'h00; mem[11'h2E7] = 8'h69;
+    // STPR #7, R10     02 A0 F4 07 00 00 00 6A   -- a DIFFERENT id, so that an
+    //   implementation reading a fixed privileged register cannot pass
+    mem[11'h2D8] = 8'h02; mem[11'h2D9] = 8'hA0; mem[11'h2DA] = 8'hF4;
+    mem[11'h2DB] = 8'h07; mem[11'h2DC] = 8'h00; mem[11'h2DD] = 8'h00;
+    mem[11'h2DE] = 8'h00; mem[11'h2DF] = 8'h6A;
+    // LDPR #0x5EED1234, [R8]   12 80 F4 34 12 ED 5E 68
+    //   The id in MEMORY, which is the only way to see that LDPR READS its
+    //   second operand and never writes it: a read-modify-write would put a
+    //   bus WRITE on a location the instruction only ever consults.
+    mem[11'h3A0] = 8'h12; mem[11'h3A1] = 8'h80; mem[11'h3A2] = 8'hF4;
+    mem[11'h3A3] = 8'h34; mem[11'h3A4] = 8'h12; mem[11'h3A5] = 8'hED;
+    mem[11'h3A6] = 8'h5E; mem[11'h3A7] = 8'h68;
+    // LDPR #0xCAFEF00D, R9   12 A0 F4 0D F0 FE CA 69
+    //   R9 carries the ID and is READ, not written -- which is the whole
+    //   question its ".w.w" syntax line raises.
+    mem[11'h2F0] = 8'h12; mem[11'h2F1] = 8'hA0; mem[11'h2F2] = 8'hF4;
+    mem[11'h2F3] = 8'h0D; mem[11'h2F4] = 8'hF0; mem[11'h2F5] = 8'hFE;
+    mem[11'h2F6] = 8'hCA; mem[11'h2F7] = 8'h69;
+
     // TRAPFL at 0x2B0 -- CB, Format V, one byte
     mem[11'h2B0] = 8'hCB;
     // MOV.B #0x6E, [R8]   -- reached only when the TRAPFL above falls through
@@ -2140,6 +2170,125 @@ initial begin
     chk(seq_pc === 32'h000002C0, "with two conditions live TRAPFL still reaches vector 22");
     chk(mem_word(13'h5F8) === 32'h160C0008,
         "and ORs both codes into one word, which is what the one-hot low byte is for");
+
+    // =======================================================================
+    // LDPR and STPR.  Both privileged, both Format II, and between them they
+    // are the only instructions whose operand names a register rather than
+    // being one.
+    // =======================================================================
+
+    // STPR reads the privileged register its FIRST operand names.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    pr_id = 5'd8; pr_wdata = 32'hDEAD_BEEF; pr_wr = 1'b1;   // PR_TKCW
+    @(negedge clk);
+    pr_id = 5'd7; pr_wdata = 32'h0BAD_F00D;                 // PR_SYCW
+    @(negedge clk);
+    pr_wr = 1'b0;
+    rf.gpr[9]  = 32'h0000_0000;
+    rf.gpr[10] = 32'h0000_0000;
+    repeat (2) @(negedge clk);
+    jump(32'h000002D0);
+    step;
+    chk(rf.gpr[9] === 32'hDEAD_BEEF,
+        "STPR copied privileged register 8 -- TKCW -- into its destination");
+    chk(seq_pc === 32'h000002D8, "and advanced past its eight bytes");
+    step;
+    chk(rf.gpr[10] === 32'h0BAD_F00D,
+        "and a second STPR reads the DIFFERENT register its own operand names");
+
+    // LDPR writes the privileged register its SECOND operand names, which
+    // means that operand is READ.  Its syntax line is "ldpr src.w.r,
+    // regID.w.w", so the ".w" names the privileged register that is written
+    // and not the operand -- an operand that were genuinely write-only could
+    // not tell the instruction which register to load.  R9 holds 7, SYCW.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h0000_0007;
+    repeat (2) @(negedge clk);
+    jump(32'h000002F0);
+    step;
+    chk(rf.pr[7] === 32'hCAFE_F00D,
+        "LDPR loaded the privileged register its second operand NAMED");
+    chk(rf.gpr[9] === 32'h0000_0007,
+        "leaving that operand alone -- it was read for its value, not written");
+    chk(seq_pc === 32'h000002F8, "and advanced past its eight bytes");
+
+    // The same, with the id in MEMORY: LDPR reads that operand, so nothing may
+    // go out on the bus as a write.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0007);        // the id, SYCW, at [R8]
+    repeat (2) @(negedge clk);
+    n_writes = 0;
+    jump(32'h000003A0);
+    step;
+    chk(rf.pr[7] === 32'h5EED_1234,
+        "LDPR through a memory operand loaded the register that operand named");
+    chk(n_writes == 0,
+        "and put no write on the bus: its second operand is read for an id, never written");
+    chk(insn_cycles === 5'd2,
+        "in TWO bus cycles -- one word read on a 16-bit bus, not a read AND a write back");
+    chk(mem_word(13'h700) === 32'h0000_0007, "and the id in memory is unchanged");
+
+    // An id above 31 is the one bad-id case the pages make a rule.  STPR's
+    // page: "An Illegal Data Field exception will occur if the register ID
+    // field is not in the range of [0] to 31."
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h1234_5678;
+    repeat (2) @(negedge clk);
+    jump(32'h000002E0);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "STPR with an id of 40 raises the Illegal Data Field exception");
+    chk(mem_word(13'h5FC) === 32'h14000004, "with vector 20's code");
+    chk(mem_word(13'h5F4) === 32'h000002E0,
+        "and the CURRENT PC, so the handler restarts the instruction");
+    chk(rf.gpr[9] === 32'h1234_5678,
+        "having written nothing -- an instruction that will be restarted must not have");
+
+    // The same rule on LDPR, whose page states only the unpredictable half but
+    // still lists Illegal Data Field in its Exceptions block.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h0000_0020;               // 32, one past the top
+    repeat (2) @(negedge clk);
+    jump(32'h000002F0);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "LDPR with an id of 32 raises it too -- one past the top of the range");
+    chk(rf.pr[0] === 32'h0000_0680,
+        "and the id's low five bits did NOT reach a register: ISP is untouched");
+
+    // And both are privileged.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd1; pr_wdata = 32'h0000_0680; pr_wr = 1'b1;   // PR_L0SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h000002D0);
+    step;
+    chk(seq_pc === 32'h00000780,
+        "STPR at execution level 3 is the Privileged Instruction exception");
+    chk(mem_word(13'h67C) === 32'h11000004, "with vector 17's code");
+    chk(mem_word(13'h674) === 32'h000002D0,
+        "and the CURRENT PC -- the exception is for ATTEMPTING it");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

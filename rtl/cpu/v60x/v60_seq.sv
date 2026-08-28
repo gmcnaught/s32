@@ -466,6 +466,11 @@ typedef enum logic [5:0] {
     // TRAPFL: one state, to let the privileged register id it asked for in
     // S_FETCH reach v60_regfile's read port and come back.
     S_TRAPFL,
+    // STPR: present the id its FIRST operand carried to the register file's
+    // privileged port, then take the value back.  Two states because
+    // `pr_rdata` is combinational off a REGISTERED `pr_id`, so the id has to
+    // be presented a cycle before it can be read.
+    S_PR_SEL, S_PR_RD,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -557,7 +562,9 @@ wire        dst_am_is_op2 = fmt_ii;
 // docs/v60/TRANCHE-ONE.md rather than changed in passing.
 wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              (aop == ALU_RVBYT) || (aop == ALU_SETF) ||
-                             (aop == ALU_GETPSW) || (aop == ALU_MOVEA);
+                             (aop == ALU_GETPSW) || (aop == ALU_MOVEA) ||
+                             // "stpr regID.w.r, dst.w.w"
+                             (aop == ALU_STPR);
 
 // And which ones READ their operand and never write it.  The pages do not call
 // these a destination at all: CMP's syntax line is "cmp.b src1.b.r, src2.b.r"
@@ -576,7 +583,18 @@ wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
 // be a bus write to a location the page never calls a destination.
 wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
                             (aop == ALU_UPDPSWH) || (aop == ALU_UPDPSWW) ||
-                            (aop == ALU_TRAP);
+                            (aop == ALU_TRAP) ||
+                            // LDPR's second operand is marked ".w.w" on the
+                            // page, which is the one place the notation names
+                            // the thing the operand DESIGNATES rather than the
+                            // operand itself: "PrivilegedRegister( regID ) <-
+                            // src" cannot know which register to load without
+                            // READING regID.  So it is fetched like any source
+                            // and nothing is ever written back to it.  MAME's
+                            // s32_v60.sv reads it the same way ("op2 = priv
+                            // reg #"), which is a second implementation
+                            // agreeing against the syntax line.
+                            (aop == ALU_LDPR);
 
 // And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
 // line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
@@ -663,6 +681,38 @@ wire        trapfl_take = (trapfl_live != 5'd0);
 // anything.  Recorded in docs/v60/BREAK-AND-TRAP.md.
 wire [15:0] trapfl_code = {8'h16, 3'd0, trapfl_live};
 
+// The privileged register pair.  Which operand carries the id differs between
+// them -- "ldpr src.w.r, regID.w.w" names it second, "stpr regID.w.r, dst.w.w"
+// first -- so it is selected here once rather than at each use.
+wire        is_pr_op  = (aop == ALU_LDPR) || (aop == ALU_STPR);
+wire [31:0] pr_id_val = (aop == ALU_STPR) ? val1[31:0] : val2[31:0];
+// The one rule the pages state as a rule.  STPR's is precise -- "An Illegal
+// Data Field exception will occur if the register ID field is not in the range
+// of [0] to 31.  Instruction execution results will also be unpredicatable if
+// an undefined register ID is specified" -- which is two distinct cases, and
+// only the first is an exception.  LDPR's page gives only the second half but
+// still lists Illegal Data Field in its Exceptions block.
+//
+// So an id ABOVE 31 raises, and an id inside 0..31 that names no register --
+// the gaps at 10-14 and 29-31, and 6 and 9 on LDPR -- is explicitly
+// unpredictable and does NOT raise.  v60_regfile's per-id permission table
+// drops those writes and warns, which is a policy the pages permit rather than
+// one they require; a sequencer that raised on them would be going beyond the
+// page.  Recorded as a choice in docs/v60/TRANCHE-ONE.md.
+//
+// s32_v60.sv raises on anything above 28, which catches 29-31 the pages call
+// unpredictable, and raises it as vector 8 rather than the Illegal Data Field
+// vector 20.
+wire        pr_id_bad = is_pr_op && (pr_id_val[31:5] != 27'd0);
+// Checked at different points, because the id arrives at different points:
+// STPR's is its FIRST operand, so S_PR_SEL sees it before the destination is
+// addressed at all, and LDPR's is its second, so S_EXEC is the first state
+// that has it.  The two must not share a check -- by S_EXEC, STPR's val1 no
+// longer holds an id but the privileged register's CONTENTS, which would be
+// range-checked as though it were one.
+wire        ldpr_id_bad = (aop == ALU_LDPR) && pr_id_bad;
+wire        stpr_id_bad = (aop == ALU_STPR) && pr_id_bad;
+
 // Privileged instructions: "programs executing at other execution levels
 // (levels 1, 2 and 3) are said to be non-privileged and attempts to execute a
 // privileged instruction will cause an exception" (PgmRef §6).  p.3.299 groups
@@ -676,7 +726,7 @@ wire [15:0] trapfl_code = {8'h16, 3'd0, trapfl_live};
 // attempting the instruction and not for what it would have read -- and `aop`
 // is only assigned at the end of that state.
 function automatic logic op_privileged(input alu_op_e o);
-    op_privileged = (o == ALU_UPDPSWW);
+    op_privileged = (o == ALU_UPDPSWW) || (o == ALU_LDPR) || (o == ALU_STPR);
 endfunction
 
 // The destination operand's addressing mode.  Spelled out rather than
@@ -1059,7 +1109,9 @@ always_ff @(posedge clk) begin
             ea_rx_val <= rf_rb;
             if (src_is_reg) begin
                 val1  <= {32'd0, rf_ra};
-                state <= S_OP2;
+                // STPR's source is not a value but the NAME of one.
+                if (aop == ALU_STPR) state <= S_PR_SEL;
+                else                 state <= S_OP2;
             end else begin
                 state <= S_OP1S;
             end
@@ -1082,7 +1134,8 @@ always_ff @(posedge clk) begin
                 end else begin
                     // MOVEA wants the address, not what is at it.
                     val1  <= src_addr_only ? {32'd0, ea_ea} : ea_rdata;
-                    state <= S_OP2;
+                    if (aop == ALU_STPR) state <= S_PR_SEL;
+                    else                 state <= S_OP2;
                 end
             end
         end
@@ -1200,9 +1253,21 @@ always_ff @(posedge clk) begin
 
         // ---- execute ---------------------------------------------------------
         S_EXEC: begin
+            // LDPR's id arrived with its SECOND operand, so this is the first
+            // point it can be checked -- and, as at S_PR_SEL above, the first
+            // point is the only correct one: the exception restarts the
+            // instruction, so nothing may have been committed.  LDPR writes no
+            // operand, so what is being protected here is the privileged
+            // register itself.
+            if (ldpr_id_bad) begin
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end
             // The ALU is combinational and its inputs are already presented.
             // v60_muldiv is not, so those six are started here and waited on.
-            if (md_is) begin
+            else if (md_is) begin
                 md_start <= 1'b1;
                 md_used  <= 1'b1;
                 state    <= S_MD;
@@ -1276,6 +1341,16 @@ always_ff @(posedge clk) begin
                 rf_wr_en   <= 1'b1;
                 rf_wr_sel  <= wb_rn_sel;
                 rf_wr_data <= wb_rn_val;
+            end
+            // LDPR's destination is not an operand, so it is written here
+            // rather than at S_WB.  The id has already been range-checked at
+            // S_EXEC; what v60_regfile does with an id inside 0..31 that names
+            // no register is its own per-id table's business, and the pages
+            // call that case unpredictable rather than an exception.
+            if (aop == ALU_LDPR) begin
+                rf_pr_id    <= val2[4:0];
+                rf_pr_wr    <= 1'b1;
+                rf_pr_wdata <= val1[31:0];
             end
             // A divide by zero is raised HERE and not in S_MD, because a
             // read-modify-write destination still has an access open at that
@@ -1740,6 +1815,36 @@ always_ff @(posedge clk) begin
             end else begin
                 state <= S_RETIRE;
             end
+        end
+
+        // STPR, between its two operands: the id is known and the value it
+        // names is not.
+        S_PR_SEL: begin
+            if (stpr_id_bad) begin
+                // Raised HERE, before the destination is addressed at all.
+                // The Illegal Data Field exception is an Instruction
+                // Exception, and Figure 8-5 gives that group the CURRENT PC --
+                // so the handler restarts the instruction, and an instruction
+                // that is going to be restarted must not have written its
+                // destination or stepped an autoincrement first.  That is the
+                // opposite of the zero divide and TRAP below, whose frames
+                // carry the NEXT PC and whose writebacks therefore stand.
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else begin
+                rf_pr_id <= val1[4:0];
+                state    <= S_PR_RD;
+            end
+        end
+
+        // The privileged register, now on the port, becomes what the ALU will
+        // pass through to the destination -- the same shape as GETPSW, whose
+        // value also comes from outside the operand path.
+        S_PR_RD: begin
+            val1  <= {32'd0, rf_pr_rdata};
+            state <= S_OP2;
         end
 
         // ---- an exception --------------------------------------------------

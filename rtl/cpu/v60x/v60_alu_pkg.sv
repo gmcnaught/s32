@@ -81,6 +81,16 @@ typedef enum logic [5:0] {
     // V, one byte, no operand -- both of its inputs are registers the
     // sequencer reaches, so nothing arrives here either.
     ALU_TRAPFL  = 6'd39,
+    // "PrivilegedRegister( regID ) <- src" and "dst <- PrivilegedRegister(
+    // regID )".  Both are Format I/II with two operands, and in both the
+    // privileged register is named by the VALUE of one of them rather than by
+    // a field of the instruction -- so both operands are fetched normally and
+    // the register file's privileged port does the rest.  Nothing arithmetic
+    // happens, so LDPR produces nothing here; STPR passes the value the
+    // sequencer read out of that port straight through, the way GETPSW passes
+    // the PSW.
+    ALU_LDPR    = 6'd40,
+    ALU_STPR    = 6'd41,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

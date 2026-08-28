@@ -499,6 +499,10 @@ EXEC_OP = {
     # NOT a no-op: software can arm it by hand with LDPR and UPDPSW.H on a
     # machine with no FPU at all.  See docs/v60/BREAK-AND-TRAP.md.
     'TRAPFL': 'TRAPFL',
+    # The privileged register pair.  Both are privileged and both raise
+    # Illegal Data Field on an id outside 0..31 -- which is STPR's page's
+    # boundary; LDPR's page states only the "unpredictable" half.
+    'LDPR': 'LDPR', 'STPR': 'STPR',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

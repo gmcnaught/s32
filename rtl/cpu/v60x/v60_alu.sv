@@ -323,6 +323,13 @@ always_comb begin
         // its page prints a NINE-line Condition Codes block, the four
         // integer flags and the five floating point ones, all Unchanged.
         ALU_TRAPFL: writes = 1'b0;
+        // Its destination is the privileged register the second operand
+        // names, which is not an operand at all -- so nothing is written
+        // here.
+        ALU_LDPR: writes = 1'b0;
+        // "dst <- PrivilegedRegister( regID )".  The sequencer has already
+        // read the privileged register and presents it as x.
+        ALU_STPR: raw = x;
         ALU_RVBIT: raw = {24'd0, rvbit_res};
         ALU_RVBYT: raw = rvbyt_res;
         // "If the specified condition is satisfied by the integer PSW
@@ -393,7 +400,7 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_RVBIT) || (op == ALU_RVBYT) || (op == ALU_SETF) ||
                 (op == ALU_NOP)   || (op == ALU_MOVEA) || (op == ALU_GETPSW) ||
                 (op == ALU_BRKV)  || (op == ALU_BRK)    || (op == ALU_TRAP) ||
-                (op == ALU_TRAPFL);
+                (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR);
 wire keep_but_ov = (op == ALU_MOVT);
 
 assign result    = raw & mask;

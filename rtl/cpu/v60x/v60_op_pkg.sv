@@ -998,12 +998,14 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     alu_op_e r;
     begin
         case (op)
+            8'h02: r = ALU_STPR; // STPR
             8'h08: r = ALU_RVBIT; // RVBIT
             8'h09: r = ALU_MOV;  // MOV.B
             8'h0A: r = ALU_MOVS; // MOVS.BH
             8'h0B: r = ALU_MOVZ; // MOVZ.BH
             8'h0C: r = ALU_MOVS; // MOVS.BW
             8'h0D: r = ALU_MOVZ; // MOVZ.BW
+            8'h12: r = ALU_LDPR; // LDPR
             8'h13: r = ALU_UPDPSWW; // UPDPSW.W
             8'h19: r = ALU_MOVT; // MOVT.HB
             8'h1B: r = ALU_MOV;  // MOV.H
