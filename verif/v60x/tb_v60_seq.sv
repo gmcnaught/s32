@@ -1151,6 +1151,15 @@ initial begin
     mem[11'h63F] = 8'h05; mem[11'h640] = 8'h00; mem[11'h641] = 8'h00;
     mem[11'h642] = 8'h00; mem[11'h643] = 8'h69;
 
+    // PUSHM / POPM #0x80000E00 -- R9, R10, R11 and the PSW (bit 31).
+    //   The three registers are consecutive so the ORDER they land in is
+    //   visible, and the PSW is at the far end of the mask from them so the
+    //   scan direction is visible too.
+    mem[11'h644] = 8'hEC; mem[11'h645] = 8'hF4; mem[11'h646] = 8'h00;
+    mem[11'h647] = 8'h0E; mem[11'h648] = 8'h00; mem[11'h649] = 8'h80;
+    mem[11'h64A] = 8'hE4; mem[11'h64B] = 8'hF4; mem[11'h64C] = 8'h00;
+    mem[11'h64D] = 8'h0E; mem[11'h64E] = 8'h00; mem[11'h64F] = 8'h80;
+
     // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
     //   at [R10] is read from MEMORY and only the operand it names is an I/O
     //   access: an addressing mode's own accesses are not the instruction's.
@@ -2808,6 +2817,61 @@ initial begin
         "but with dst1 IMMEDIATE it is the ILLEGAL Addressing Mode exception");
     chk(mem_word(13'h5FC) === 32'h13000004,
         "vector 19 -- the same operand column, two different complaints");
+
+    // =======================================================================
+    // PUSHM and POPM.  Bit n is Rn for n = 0..30, bit 31 is the PSW, and R31
+    // has no bit -- "The SP (R31) is not saved".  The two scan in OPPOSITE
+    // directions, which is the property that makes them round-trip.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[9]  = 32'h1111_1111;
+    rf.gpr[10] = 32'h2222_2222;
+    rf.gpr[11] = 32'h3333_3333;
+    seq.psw[PSW_Z] = 1'b1;
+    seq.psw[PSW_S] = 1'b1;
+    repeat (2) @(negedge clk);
+    psw_before = seq_psw;
+    jump(32'h00000644);
+    step;
+
+    // "searched sequentially from the MSB (PSW) to the LSB (R0)", each push
+    // pre-decrementing -- so the PSW lands HIGHEST and R9 lowest.  Scanned the
+    // other way the four words would come out in the opposite order.
+    chk(mem_word(13'h5FC) === psw_before,
+        "PUSHM pushed the PSW first, so it is at the highest address");
+    chk(mem_word(13'h5F8) === 32'h3333_3333, "then R11");
+    chk(mem_word(13'h5F4) === 32'h2222_2222, "then R10");
+    chk(mem_word(13'h5F0) === 32'h1111_1111, "then R9, at the lowest");
+    chk(rf.gpr[31] === 32'h000005F0,
+        "and SP points at the last register pushed");
+
+    // Clobber everything, and set a HIGH-halfword PSW bit that the stacked
+    // copy does not have.
+    @(negedge clk);
+    rf.gpr[9]  = 32'hDEAD_0009;
+    rf.gpr[10] = 32'hDEAD_0010;
+    rf.gpr[11] = 32'hDEAD_0011;
+    seq.psw[PSW_Z]  = 1'b0;
+    seq.psw[PSW_S]  = 1'b0;
+    seq.psw[PSW_TE] = 1'b1;
+    repeat (2) @(negedge clk);
+    step;
+
+    chk(rf.gpr[9]  === 32'h1111_1111 &&
+        rf.gpr[10] === 32'h2222_2222 &&
+        rf.gpr[11] === 32'h3333_3333,
+        "POPM restored all three from the slots PUSHM wrote -- the pair round-trips");
+    chk(rf.gpr[31] === 32'h00000600,
+        "and SP came back to where the PUSHM began");
+    chk(seq_psw[PSW_Z] === 1'b1 && seq_psw[PSW_S] === 1'b1,
+        "the PSW's condition codes were restored from the stack");
+    chk(seq_psw[PSW_TE] === 1'b1,
+        "but PSW.TE was NOT -- only the lower halfword is modified");
+    chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b00 && seq_psw[PSW_IS] === 1'b0,
+        "so EL and IS are out of reach, and POPM is not a privilege escalation");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

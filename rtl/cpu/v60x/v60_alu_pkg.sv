@@ -144,6 +144,17 @@ typedef enum logic [5:0] {
     // the sequencer writes the other half back to dst1, which the page
     // guarantees is a register.
     ALU_XCH     = 6'd53,
+    // "[-SP] <- registers" and "registers <- [SP+]", under a 32-bit mask whose
+    // bit n selects Rn for n = 0..30 and whose bit 31 selects the PSW.  R31
+    // has NO bit -- its column is taken by the PSW, and PUSHM's Description
+    // says so in words: "The SP (R31) is not saved".
+    //
+    // The two scan in opposite directions, which is what makes them
+    // round-trip: PUSHM "from the MSB (PSW) to the LSB (R0)" and POPM "from
+    // the LSB (R0) to the MSB (PSW)".  Nothing reaches the ALU; the sequencer
+    // walks the mask.
+    ALU_PUSHM   = 6'd54,
+    ALU_POPM    = 6'd55,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

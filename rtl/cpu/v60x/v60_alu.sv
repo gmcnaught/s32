@@ -357,6 +357,8 @@ always_comb begin
         // The other half is the sequencer's, because it needs a second write
         // port's worth of work and the page constrains it to a register.
         ALU_XCH: raw = x;
+        // The mask walk is entirely the sequencer's.
+        ALU_PUSHM, ALU_POPM: writes = 1'b0;
         // "test1 offset.w.r, base.w.r" -- both operands read, nothing written.
         ALU_TEST1: begin writes = 1'b0; f_cy = bit_old; end
         ALU_SET1:  begin raw = y |  bit_one; f_cy = bit_old; end
@@ -439,7 +441,7 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_HALT)   || (op == ALU_IN)    || (op == ALU_OUT) ||
                 (op == ALU_PUSH)   || (op == ALU_POP)   ||
                 (op == ALU_PREPARE) || (op == ALU_DISPOSE) ||
-                (op == ALU_XCH);
+                (op == ALU_XCH)    || (op == ALU_PUSHM) || (op == ALU_POPM);
 wire keep_but_ov = (op == ALU_MOVT);
 // "CY Set if the designated bit is 1, otherwise cleared / OV Unchanged /
 // S Unchanged / Z Set if the designated bit is 0, otherwise cleared" -- the

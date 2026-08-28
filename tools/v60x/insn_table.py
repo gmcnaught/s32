@@ -538,6 +538,10 @@ EXEC_OP = {
     # X (Illegal Addressing Mode) for both immediates -- which is exactly the
     # "1, 3" p.3.296 prints on this row.
     'XCH': 'XCH',
+    # The mask pair.  Bit n selects Rn for n = 0..30, bit 31 selects the PSW,
+    # and R31 has no bit at all.  POPM restores only PSW[15:0] -- a whole-PSW
+    # restore would be a privilege escalation.
+    'PUSHM': 'PUSHM', 'POPM': 'POPM',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

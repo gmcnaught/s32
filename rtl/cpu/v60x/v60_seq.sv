@@ -482,6 +482,11 @@ typedef enum logic [5:0] {
     // XCH's second write: dst2 goes out through the ordinary destination
     // path and dst1, which the page guarantees is a register, is written here.
     S_XCH,
+    // PUSHM and POPM: read the stack pointer, then walk the mask one register
+    // at a time -- select, access, write back, repeat -- and write the stack
+    // pointer once at the end.  The loop is here rather than unrolled because
+    // the mask is data, not an encoding.
+    S_PSM_R, S_PSM_SP, S_PSM_SEL, S_PSM_SET, S_PSM_S, S_PSM_W, S_PSM_WB,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -518,6 +523,8 @@ logic  [2:0] exc_kind;    // which of the shapes of frame it wants
 logic        exc_ack_r;   // and whether its vector comes off the bus
 logic [31:0] sp_r;        // the stack pointer the stack engine is walking
 logic [31:0] fp_r;        // and the frame pointer, for PREPARE and DISPOSE
+logic [31:0] msk_r;       // PUSHM and POPM's remaining register list
+logic  [4:0] idx_r;       // and the register it is working on
 logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
                           // or -- for CALL, before either -- the argument list
 logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
@@ -828,6 +835,9 @@ wire        stk_is_write = is_push || is_prep;
 // different exceptions depending on what was wrong with it, which is exactly
 // the "1, 3" p.3.296 prints on this row -- the 1 from the immediates and the
 // 3 from the memory modes.
+wire        is_pushm = (aop == ALU_PUSHM);
+wire        is_popm  = (aop == ALU_POPM);
+
 wire        is_xch = (aop == ALU_XCH);
 // Format I with d = 0 puts dst1 in the register field, where it cannot be
 // anything else.  Every other encoding puts it in op1's addressing mode.
@@ -857,6 +867,42 @@ wire        io_dst_bad = io_dst && dst_is_reg;
 function automatic logic op_privileged(input alu_op_e o);
     op_privileged = (o == ALU_UPDPSWW) || (o == ALU_LDPR) || (o == ALU_STPR) ||
                     (o == ALU_HALT)   || (o == ALU_IN)   || (o == ALU_OUT);
+endfunction
+
+// PUSHM and POPM's mask, and the two ends it is scanned from.  Both pages
+// print the same diagram, read as three stacked character rows with the MSB on
+// the left:
+//
+//     P R R R R R R R R R R R R R R R R R R R R R R R R R R R R R R R
+//     S 3 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 9 8 7 6 5 4 3 2 1 0
+//     W 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
+//
+// So bit n is Rn for n = 0..30, bit 31 is the PSW, and R31 has no bit at all --
+// its column is the PSW's.  PUSHM's Description confirms it in words: "The SP
+// (R31) is not saved".
+//
+// "The register list is searched sequentially from the MSB (PSW) to the LSB
+// (R0)" for PUSHM, and "from the LSB (R0) to the MSB (PSW)" for POPM.  Written
+// as a last-hit-wins sweep rather than a priority tree, which is the shape
+// that stays readable and which s32_v60.sv's pushm_index() also uses.
+function automatic logic [4:0] msk_highest(input logic [31:0] m);
+    logic [4:0] r;
+    integer i;
+    begin
+        r = 5'd0;
+        for (i = 0; i < 32; i = i + 1) if (m[i]) r = i[4:0];
+        msk_highest = r;
+    end
+endfunction
+
+function automatic logic [4:0] msk_lowest(input logic [31:0] m);
+    logic [4:0] r;
+    integer i;
+    begin
+        r = 5'd0;
+        for (i = 31; i >= 0; i = i - 1) if (m[i]) r = i[4:0];
+        msk_lowest = r;
+    end
 endfunction
 
 // The destination operand's addressing mode.  Spelled out rather than
@@ -970,6 +1016,8 @@ always_ff @(posedge clk) begin
         berr_code_r     <= 16'd0;
         sp_r            <= 32'd0;
         fp_r            <= 32'd0;
+        msk_r           <= 32'd0;
+        idx_r           <= 5'd0;
         stk_val         <= 32'd0;
         stk_cnt         <= 32'd0;
         stk_phase       <= 1'b0;
@@ -1206,6 +1254,10 @@ always_ff @(posedge clk) begin
             end else if (op_alu(idu_op) == ALU_DISPOSE) begin
                 // Format V, no operand: everything it needs is in R30.
                 state <= S_PSH_R;
+            end else if ((op_alu(idu_op) == ALU_PUSHM) ||
+                         (op_alu(idu_op) == ALU_POPM)) begin
+                // Their one operand is the register LIST, a source.
+                state <= S_OP1;
             end else if (op_alu(idu_op) == ALU_PREPARE) begin
                 // Its one operand is `num`, a source, like PUSH's.
                 state <= S_OP1;
@@ -1305,7 +1357,8 @@ always_ff @(posedge clk) begin
                 val1  <= {32'd0, rf_ra};
                 // STPR's source is not a value but the NAME of one.
                 if      (aop == ALU_STPR) state <= S_PR_SEL;
-                else if (is_push || is_prep) state <= S_PSH_R;
+                else if (is_push || is_prep)   state <= S_PSH_R;
+                else if (is_pushm || is_popm)  state <= S_PSM_R;
                 else                      state <= S_OP2;
             end else begin
                 state <= S_OP1S;
@@ -1330,7 +1383,8 @@ always_ff @(posedge clk) begin
                     // MOVEA wants the address, not what is at it.
                     val1  <= src_addr_only ? {32'd0, ea_ea} : ea_rdata;
                     if      (aop == ALU_STPR) state <= S_PR_SEL;
-                    else if (is_push || is_prep) state <= S_PSH_R;
+                    else if (is_push || is_prep)   state <= S_PSH_R;
+                    else if (is_pushm || is_popm)  state <= S_PSM_R;
                     else                      state <= S_OP2;
                 end
             end
@@ -2194,6 +2248,109 @@ always_ff @(posedge clk) begin
                 // pointer it started from, whatever the frame contained.
                 rf_wr_data <= fp_r + 32'd4;
             state <= S_RETIRE;
+        end
+
+        // ---- PUSHM and POPM's mask walk --------------------------------------
+        S_PSM_R: begin
+            rf_ra_sel <= 5'd31;
+            msk_r     <= val1[31:0];
+            state     <= S_PSM_SP;
+        end
+
+        S_PSM_SP: begin
+            sp_r  <= rf_ra;
+            state <= S_PSM_SEL;
+        end
+
+        // Pick the next register, from whichever end this instruction scans.
+        S_PSM_SEL: begin
+            if (msk_r == 32'd0) begin
+                // Done, and the stack pointer is written ONCE.  For PUSHM it
+                // is now the lowest address written, which is the page's
+                // "following the execution of the instruction points to the
+                // last register pushed on the stack".  An empty list is a
+                // no-op that still writes the pointer back unchanged.
+                rf_wr_en   <= 1'b1;
+                rf_wr_sel  <= 5'd31;
+                rf_wr_data <= sp_r;
+                state      <= S_RETIRE;
+            end else begin
+                if (is_pushm) begin
+                    idx_r     <= msk_highest(msk_r);
+                    rf_ra_sel <= msk_highest(msk_r);
+                end else begin
+                    idx_r     <= msk_lowest(msk_r);
+                    rf_ra_sel <= msk_lowest(msk_r);
+                end
+                state <= S_PSM_SET;
+            end
+        end
+
+        S_PSM_SET: begin
+            ea_mode       <= AM_RN_IND;
+            ea_index      <= 1'b0;
+            ea_disp       <= 32'd0;
+            ea_disp_outer <= 32'd0;
+            ea_opbytes    <= 4'd4;
+            ea_rmw        <= 1'b0;
+            ea_addr_only  <= 1'b0;
+            ea_io         <= 1'b0;
+            ea_rn_sel     <= 5'd0;
+            ea_pc_val     <= idu_pc;
+            if (is_pushm) begin
+                // Mask bit 31 is the PSW, not R31 -- and the whole 32-bit PSW
+                // is what goes on the stack.
+                ea_rn_val <= sp_r - 32'd4;
+                ea_we     <= 1'b1;
+                ea_wdata  <= (idx_r == 5'd31) ? {32'd0, psw} : {32'd0, rf_ra};
+                sp_r      <= sp_r - 32'd4;
+            end else begin
+                ea_rn_val <= sp_r;
+                ea_we     <= 1'b0;
+                sp_r      <= sp_r + 32'd4;
+            end
+            state <= S_PSM_S;
+        end
+
+        S_PSM_S: begin
+            ea_start <= 1'b1;
+            state    <= S_PSM_W;
+        end
+
+        S_PSM_W: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                msk_r <= msk_r & ~(32'd1 << idx_r);
+                val2  <= ea_rdata;
+                if (is_popm) state <= S_PSM_WB;
+                else         state <= S_PSM_SEL;
+            end
+        end
+
+        S_PSM_WB: begin
+            if (idx_r == 5'd31) begin
+                // "If the PSW register is specified, only the LOWER HALFWORD
+                // is modified."  That is p.3.248's protection rule -- the low
+                // halfword is accessible to all programs and the high one only
+                // at execution level 0 -- so a POPM that restored the whole
+                // PSW would be a privilege escalation.  It also means PSW.EL
+                // and PSW.IS, at 25:24 and 28, are untouched, so POPM cannot
+                // switch the stack out from under itself mid-instruction.
+                //
+                // This is what p.3.298's "R R R R" with Note 1 means on the
+                // POPM row: R is "restored", not "changed by the operation" --
+                // the four condition codes take whatever was on the stack.
+                psw <= {psw[31:16], val2[15:0]};
+            end else begin
+                rf_wr_en   <= 1'b1;
+                rf_wr_sel  <= idx_r;
+                rf_wr_data <= val2[31:0];
+            end
+            state <= S_PSM_SEL;
         end
 
         // ---- an exception --------------------------------------------------
