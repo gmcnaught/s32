@@ -634,6 +634,75 @@ initial begin
     #1 chk(writes === 1'b0, "and BRKV writes nothing at all");
     flags_in = 4'd0;
 
+    // =======================================================================
+    // The four bit instructions.  All four share two Operation lines --
+    // "CY <- bit( base, offset )" and "Z <- ~bit( base, offset )" -- and every
+    // page states the rule a second time in prose: "The CY and Z flags reflect
+    // the state of the bit PRIOR to the execution of the instruction."
+    // =======================================================================
+    op = ALU_TEST1; opbytes = 4'd4; xbytes = 4'd4;
+    flags_in = 4'b0000;
+
+    // The bit is 1: CY set, Z clear, and nothing written.
+    y = 32'h0000_0100; x = 32'h0000_0008;
+    #1 chk(flags_out[PSW_CY] === 1'b1 && flags_out[PSW_Z] === 1'b0,
+           "TEST1 of a bit that is 1 sets CY and clears Z");
+    #1 chk(writes === 1'b0, "and writes nothing -- both its operands are .r");
+
+    // The bit is 0.
+    x = 32'h0000_0009;
+    #1 chk(flags_out[PSW_CY] === 1'b0 && flags_out[PSW_Z] === 1'b1,
+           "and of a bit that is 0 clears CY and sets Z -- they are always complements");
+
+    // OV and S are Unchanged on all four pages, which is not what the ordinary
+    // flag path would produce.
+    flags_in = 4'b1111;
+    y = 32'h0000_0100; x = 32'h0000_0008;
+    #1 chk(flags_out[PSW_OV] === 1'b1 && flags_out[PSW_S] === 1'b1,
+           "TEST1 leaves OV and S alone");
+    flags_in = 4'b0000;
+
+    // The top bit, which is the range's edge.
+    y = 32'h8000_0000; x = 32'h0000_001F;
+    #1 chk(flags_out[PSW_CY] === 1'b1, "bit 31 is reachable");
+    y = 32'h0000_0001; x = 32'h0000_0000;
+    #1 chk(flags_out[PSW_CY] === 1'b1, "and so is bit 0");
+
+    // SET1 on a bit that was ALREADY set: the flags describe the bit BEFORE,
+    // so CY is set and Z clear even though nothing changed.
+    op = ALU_SET1;
+    y = 32'h0000_0100; x = 32'h0000_0008;
+    #1 chk(result === 32'h0000_0100, "SET1 on a bit already 1 changes nothing");
+    #1 chk(flags_out[PSW_CY] === 1'b1 && flags_out[PSW_Z] === 1'b0,
+           "and reports the bit as it was: CY set, Z clear");
+
+    // SET1 on a clear bit.  Z is set even though the RESULT is non-zero --
+    // Z describes the bit that was read, not the word that was written.
+    y = 32'h0000_0000; x = 32'h0000_0008;
+    #1 chk(result === 32'h0000_0100, "SET1 on a clear bit sets it");
+    #1 chk(flags_out[PSW_CY] === 1'b0 && flags_out[PSW_Z] === 1'b1,
+           "and still sets Z: Z is the bit that was READ, not whether the result is zero");
+    #1 chk(writes === 1'b1, "SET1 writes its base back");
+
+    // CLR1, both ways round.
+    op = ALU_CLR1;
+    y = 32'hFFFF_FFFF; x = 32'h0000_0010;
+    #1 chk(result === 32'hFFFE_FFFF, "CLR1 clears the designated bit and no other");
+    #1 chk(flags_out[PSW_CY] === 1'b1 && flags_out[PSW_Z] === 1'b0,
+           "reporting the bit as it was");
+    y = 32'h0000_0000; x = 32'h0000_0010;
+    #1 chk(result === 32'h0000_0000, "CLR1 of a bit already 0 changes nothing");
+    #1 chk(flags_out[PSW_CY] === 1'b0 && flags_out[PSW_Z] === 1'b1, "and says so");
+
+    // NOT1, which is the one whose result depends on the bit both ways.
+    op = ALU_NOT1;
+    y = 32'h0000_0100; x = 32'h0000_0008;
+    #1 chk(result === 32'h0000_0000, "NOT1 of a set bit clears it");
+    #1 chk(flags_out[PSW_CY] === 1'b1 && flags_out[PSW_Z] === 1'b0, "reporting it set");
+    y = 32'h0000_0000; x = 32'h0000_0008;
+    #1 chk(result === 32'h0000_0100, "NOT1 of a clear bit sets it");
+    #1 chk(flags_out[PSW_CY] === 1'b0 && flags_out[PSW_Z] === 1'b1, "reporting it clear");
+
     if (errors == 0) $display("V60 ALU PASS");
     else             $display("V60 ALU FAIL (%0d errors)", errors);
     $finish;

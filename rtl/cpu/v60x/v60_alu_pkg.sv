@@ -97,6 +97,20 @@ typedef enum logic [5:0] {
     // privileged -- and the sequencer's only stateful instruction: it retires
     // normally and then declines to fetch again.
     ALU_HALT    = 6'd42,
+    // The four bit instructions -- "test1 offset.w.r, base.w.r" and its three
+    // read-modify-write siblings.  All four have the SAME two flag lines and
+    // differ only in what they leave behind:
+    //
+    //     CY <- bit( base, offset )        (all four)
+    //     Z  <- ~bit( base, offset )       (all four)
+    //     bit(...) <- 1 / 0 / ~bit(...)    (SET1 / CLR1 / NOT1)
+    //
+    // The offset is the source and the base is the destination, which is the
+    // pairing the shift group already reads as x and y.
+    ALU_TEST1   = 6'd43,
+    ALU_SET1    = 6'd44,
+    ALU_CLR1    = 6'd45,
+    ALU_NOT1    = 6'd46,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

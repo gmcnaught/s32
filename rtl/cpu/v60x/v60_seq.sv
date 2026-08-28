@@ -602,7 +602,11 @@ wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
                             // s32_v60.sv reads it the same way ("op2 = priv
                             // reg #"), which is a second implementation
                             // agreeing against the syntax line.
-                            (aop == ALU_LDPR);
+                            (aop == ALU_LDPR) ||
+                            // "test1 offset.w.r, base.w.r" -- the only one of
+                            // the four bit instructions that writes nothing.
+                            // Its three siblings print "base.w.rw".
+                            (aop == ALU_TEST1);
 
 // And the one whose SOURCE is an address rather than a value.  MOVEA's syntax
 // line is "movea.b src.b.n, dst.w.w": the `.n` access type means no bus cycle
@@ -720,6 +724,26 @@ wire        pr_id_bad = is_pr_op && (pr_id_val[31:5] != 27'd0);
 // range-checked as though it were one.
 wire        ldpr_id_bad = (aop == ALU_LDPR) && pr_id_bad;
 wire        stpr_id_bad = (aop == ALU_STPR) && pr_id_bad;
+
+// The four bit instructions, and the one thing any of them can raise: "An
+// Illegal Data Field exception occurs if the bit offset is outside the range 0
+// to 31."  A range check on the SOURCE operand's value -- not on an addressing
+// mode -- which is why it is here and not in v60_am_decode.
+//
+// The consequence is worth stating, because the pages' "sum of the byte base
+// address and bit offset" phrasing suggests otherwise: the reachable bits are
+// base+0 through base+31 and no further, so a memory base designates a bit
+// within ONE word.  That is what makes the register base and the memory base
+// the same datapath here -- bit N of the word at the base address is bit N of
+// the word, whichever way the base was named.  EXTBF and INSBF are what reach
+// further.
+//
+// A quick immediate offset supplies four bits, zero extended, so it covers
+// bits 0..15 and can never be out of range; reaching bits 16..31 needs a full
+// immediate or a register.
+wire        is_bit_op   = (aop == ALU_TEST1) || (aop == ALU_SET1) ||
+                          (aop == ALU_CLR1)  || (aop == ALU_NOT1);
+wire        bit_off_bad = is_bit_op && (val1[31:5] != 27'd0);
 
 // Privileged instructions: "programs executing at other execution levels
 // (levels 1, 2 and 3) are said to be non-privileged and attempts to execute a
@@ -1186,7 +1210,17 @@ always_ff @(posedge clk) begin
             // DEFECT this fixes: the check was unconditional, so `cmp src, #imm`
             // and every UPDPSW with an immediate mask raised Illegal Addressing
             // Mode instead of executing.
-            if (!dst_is_reg && !dst_read_only && am_is_immediate(dst_mode)) begin
+            if (bit_off_bad) begin
+                // Before the base is addressed at all.  Illegal Data Field is
+                // an Instruction Exception, so its frame carries the CURRENT
+                // PC and the handler restarts the instruction -- which a
+                // read-modify-write that had already read its base would make
+                // a lie.  Same rule as LDPR's and STPR's id checks above.
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (!dst_is_reg && !dst_read_only && am_is_immediate(dst_mode)) begin
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;
                 exc_kind   <= EK_INSN;

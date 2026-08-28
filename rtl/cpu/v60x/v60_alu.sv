@@ -136,6 +136,19 @@ wire [31:0] rvbyt_res = {x[7:0], x[15:8], x[23:16], x[31:24]};
 
 wire [31:0] xm = x & mask;
 wire [31:0] ym = y & mask;
+
+// The four bit instructions.  "An Illegal Data Field exception occurs if the
+// bit offset is outside the range 0 to 31" -- the sequencer raises that, so by
+// the time the offset reaches here it is known to fit in five bits.
+wire  [4:0] bit_sel  = x[4:0];
+wire [31:0] bit_one  = 32'd1 << bit_sel;
+// "The CY and Z flags reflect the state of the bit PRIOR to the execution of
+// the instruction", which every one of the four pages says twice -- once as
+// the two Operation lines and once in prose.  So SET1 on a bit that was
+// already 1 leaves CY = 1 and Z = 0, having changed nothing, and SET1 on a
+// clear bit leaves CY = 0 and Z = 1 having set it.  CY and Z are always
+// complements here; there is no input for which they agree.
+wire        bit_old  = |(y & bit_one);
 wire        cy_in = flags_in[PSW_CY];
 
 // The addend.  "The INC instruction is a shorter encoding for the more general
@@ -329,6 +342,11 @@ always_comb begin
         ALU_LDPR: writes = 1'b0;
         // No operand, and all four flags Unchanged.
         ALU_HALT: writes = 1'b0;
+        // "test1 offset.w.r, base.w.r" -- both operands read, nothing written.
+        ALU_TEST1: begin writes = 1'b0; f_cy = bit_old; end
+        ALU_SET1:  begin raw = y |  bit_one; f_cy = bit_old; end
+        ALU_CLR1:  begin raw = y & ~bit_one; f_cy = bit_old; end
+        ALU_NOT1:  begin raw = y ^  bit_one; f_cy = bit_old; end
         // "dst <- PrivilegedRegister( regID )".  The sequencer has already
         // read the privileged register and presents it as x.
         ALU_STPR: raw = x;
@@ -405,6 +423,13 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR) ||
                 (op == ALU_HALT);
 wire keep_but_ov = (op == ALU_MOVT);
+// "CY Set if the designated bit is 1, otherwise cleared / OV Unchanged /
+// S Unchanged / Z Set if the designated bit is 0, otherwise cleared" -- the
+// same four lines on all four pages.  Z is NOT the usual "is the result zero":
+// SET1 on a clear bit produces a non-zero result and still leaves Z set,
+// because Z describes the bit that was read and not the word that was written.
+wire bit_op = (op == ALU_TEST1) || (op == ALU_SET1) ||
+              (op == ALU_CLR1)  || (op == ALU_NOT1);
 
 assign result    = raw & mask;
 assign f_s       = sign_of(raw, msb);
@@ -414,6 +439,10 @@ always_comb begin
     else if (keep_but_ov)  begin
         flags_out           = flags_in;
         flags_out[PSW_OV]   = f_ov;
+    end else if (bit_op)   begin
+        flags_out           = flags_in;
+        flags_out[PSW_CY]   = bit_old;
+        flags_out[PSW_Z]    = ~bit_old;
     end else               flags_out = {f_cy, f_ov, f_s, f_z};
 end
 

@@ -1057,6 +1057,31 @@ initial begin
     mem[11'h3B1] = 8'h09; mem[11'h3B2] = 8'h80; mem[11'h3B3] = 8'hF4;
     mem[11'h3B4] = 8'h4D; mem[11'h3B5] = 8'h68;
 
+    // The four bit instructions, Format II throughout.
+    // SET1 #5, R9      97 A0 F4 05 00 00 00 69   -- a REGISTER base
+    mem[11'h3C0] = 8'h97; mem[11'h3C1] = 8'hA0; mem[11'h3C2] = 8'hF4;
+    mem[11'h3C3] = 8'h05; mem[11'h3C4] = 8'h00; mem[11'h3C5] = 8'h00;
+    mem[11'h3C6] = 8'h00; mem[11'h3C7] = 8'h69;
+    // SET1 #32, R9     97 A0 F4 20 00 00 00 69   -- one past the top of the range
+    mem[11'h3C8] = 8'h97; mem[11'h3C9] = 8'hA0; mem[11'h3CA] = 8'hF4;
+    mem[11'h3CB] = 8'h20; mem[11'h3CC] = 8'h00; mem[11'h3CD] = 8'h00;
+    mem[11'h3CE] = 8'h00; mem[11'h3CF] = 8'h69;
+    // TEST1 #9, [R8]   87 80 F4 09 00 00 00 68   -- a MEMORY base, read only
+    mem[11'h3D0] = 8'h87; mem[11'h3D1] = 8'h80; mem[11'h3D2] = 8'hF4;
+    mem[11'h3D3] = 8'h09; mem[11'h3D4] = 8'h00; mem[11'h3D5] = 8'h00;
+    mem[11'h3D6] = 8'h00; mem[11'h3D7] = 8'h68;
+    // CLR1 #9, [R8]    A7 80 F4 09 00 00 00 68
+    mem[11'h3D8] = 8'hA7; mem[11'h3D9] = 8'h80; mem[11'h3DA] = 8'hF4;
+    mem[11'h3DB] = 8'h09; mem[11'h3DC] = 8'h00; mem[11'h3DD] = 8'h00;
+    mem[11'h3DE] = 8'h00; mem[11'h3DF] = 8'h68;
+    // NOT1 #3, [R8+]   B7 A0 F4 03 00 00 00 88   -- the base is WORD data, so
+    //   the autoincrement steps R8 by FOUR and not by one.  The A0 prefix puts
+    //   m = 1 on the SECOND operand, which is what makes 88 autoincrement
+    //   rather than 8-bit displacement indirect.
+    mem[11'h3E0] = 8'hB7; mem[11'h3E1] = 8'hA0; mem[11'h3E2] = 8'hF4;
+    mem[11'h3E3] = 8'h03; mem[11'h3E4] = 8'h00; mem[11'h3E5] = 8'h00;
+    mem[11'h3E6] = 8'h00; mem[11'h3E7] = 8'h88;
+
     // TRAPFL at 0x2B0 -- CB, Format V, one byte
     mem[11'h2B0] = 8'hCB;
     // MOV.B #0x6E, [R8]   -- reached only when the TRAPFL above falls through
@@ -2355,6 +2380,90 @@ initial begin
     chk(seq_pc === 32'h00000780,
         "HALT at execution level 3 is the Privileged Instruction exception");
     chk(seq.halted_r === 1'b0, "and it did not halt on the way");
+
+    // =======================================================================
+    // The four bit instructions, end to end: the base's two natures, the
+    // offset's one exception, and the autoincrement that steps by four.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+
+    // A REGISTER base: "If the register addressing mode is used for the base
+    // operand, the designated bit is located within a general purpose register
+    // at the specified bit offset."
+    @(negedge clk);
+    rf.gpr[9] = 32'h0000_0000;
+    repeat (2) @(negedge clk);
+    jump(32'h000003C0);
+    step;
+    chk(rf.gpr[9] === 32'h0000_0020, "SET1 #5 set bit 5 inside the register base");
+    chk(seq_psw[PSW_CY] === 1'b0 && seq_psw[PSW_Z] === 1'b1,
+        "reporting the bit as it was BEFORE: clear");
+    jump(32'h000003C0);
+    step;
+    chk(rf.gpr[9] === 32'h0000_0020, "a second SET1 of the same bit changes nothing");
+    chk(seq_psw[PSW_CY] === 1'b1 && seq_psw[PSW_Z] === 1'b0,
+        "and now reports it set -- CY and Z are the bit, not the result");
+
+    // A MEMORY base, read only.  "For any other addressing mode, the
+    // designated bit is at the specified bit offset from the base address" --
+    // and with the offset capped at 31 that is one word, which is why the two
+    // bases are the same datapath.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0200);        // bit 9 set
+    repeat (2) @(negedge clk);
+    n_writes = 0;
+    jump(32'h000003D0);
+    step;
+    chk(seq_psw[PSW_CY] === 1'b1 && seq_psw[PSW_Z] === 1'b0,
+        "TEST1 #9 through a memory base found bit 9 set");
+    chk(n_writes == 0,
+        "and put no write on the bus: test1's base is .r, not .rw");
+    chk(mem_word(13'h700) === 32'h0000_0200, "the word is untouched");
+
+    // CLR1 on the same bit, which DOES write back.
+    step;
+    chk(mem_word(13'h700) === 32'h0000_0000, "CLR1 #9 cleared it in memory");
+    chk(seq_psw[PSW_CY] === 1'b1 && seq_psw[PSW_Z] === 1'b0,
+        "still reporting the bit as it was before");
+
+    // The autoincrement, which steps by FOUR: "If the autoincrement or
+    // autodecrement addressing mode is specified for the base operand, the
+    // base operand is treated as word data and is incremented or decremented
+    // by four."
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0000);
+    repeat (2) @(negedge clk);
+    jump(32'h000003E0);
+    step;
+    chk(mem_word(13'h700) === 32'h0000_0008, "NOT1 #3 complemented bit 3 in memory");
+    chk(rf.gpr[8] === 32'h00000704,
+        "and the autoincrement stepped the base by FOUR -- it is word data");
+
+    // The offset's one exception: "An Illegal Data Field exception occurs if
+    // the bit offset is outside the range 0 to 31."
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h1234_5678;
+    repeat (2) @(negedge clk);
+    jump(32'h000003C8);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "an offset of 32 raises the Illegal Data Field exception");
+    chk(mem_word(13'h5FC) === 32'h14000004, "with vector 20's code");
+    chk(mem_word(13'h5F4) === 32'h000003C8,
+        "and the CURRENT PC, so the handler restarts it");
+    chk(rf.gpr[9] === 32'h1234_5678,
+        "having touched nothing: the base was never even addressed");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

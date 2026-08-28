@@ -507,6 +507,10 @@ EXEC_OP = {
     # continue with the instruction following the HALT instruction", so it
     # retires before it waits and does not re-halt on return.
     'HALT': 'HALT',
+    # One shape, four instructions: the offset is read, the base is read (and
+    # for three of them written back), and CY and Z always describe the bit as
+    # it was BEFORE.
+    'TEST1': 'TEST1', 'SET1': 'SET1', 'CLR1': 'CLR1', 'NOT1': 'NOT1',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
