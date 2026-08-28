@@ -437,6 +437,9 @@ EXEC_OP = {
     # Three that write their destination without reading it and leave every
     # flag alone -- see docs/v60/TRANCHE-ONE.md.
     'RVBIT': 'RVBIT', 'RVBYT': 'RVBYT', 'SETF': 'SETF',
+    # Format III, one operand, and their own pages define them as ADD and SUB
+    # with an addend of one.
+    'INC': 'INC', 'DEC': 'DEC',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low
     # register first" (S3), and nothing in this tree addresses one yet.

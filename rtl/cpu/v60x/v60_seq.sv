@@ -481,13 +481,29 @@ logic [15:0] berr_code_r;
 // Format II has two mod fields and the syntax order settles it: operand 1 is
 // the source, operand 2 the destination.  Format I has one mod field and one
 // register, and `d` says which way round they go -- see the header.
-wire fmt_i  = (idu_fmt == FMT_I);
-wire fmt_ii = (idu_fmt == FMT_II);
+wire fmt_i   = (idu_fmt == FMT_I);
+wire fmt_ii  = (idu_fmt == FMT_II);
+// Format III has ONE mod field and no `reg` field, so its single operand is
+// both the thing read and the thing written: "inc.b dst.b.rw", "test.b
+// dst.b.r".  There is no source to fetch, which is why S_FETCH sends it
+// straight to the destination path below.
+wire fmt_iii = (idu_fmt == FMT_III);
 
 wire        src_is_reg  = fmt_i && !idu_d;   // d = 0: the register is the source
 wire        dst_is_reg  = (fmt_i &&  idu_d) ||          // d = 1: it is the dest
-                          (fmt_ii && (op2_mode == AM_RN));
-wire  [4:0] reg_operand = fmt_i ? idu_reg : op2_rn;
+                          (fmt_ii  && (op2_mode == AM_RN)) ||
+                          (fmt_iii && (op1_mode == AM_RN));
+wire  [4:0] reg_operand = fmt_iii ? op1_rn : (fmt_i ? idu_reg : op2_rn);
+
+// NOT a correctness requirement for Format III, and marked so nobody proves it
+// with a test that cannot fail.  v60_ea writes a register-direct destination
+// through its own Rn writeback slot (`am_is_reg_direct` -> `rn_wb`), so a
+// Format III instruction whose operand is a register reaches the same
+// architectural result down either path, with the same zero bus cycles.  The
+// fast path is kept because it leaves the writeback slot free and states the
+// intent, not because anything can tell the difference: with one operand there
+// is no second writeback to collide with.  For Formats I and II it IS load
+// bearing, which is why the guard exists at all.
 
 // The mod field that is NOT the register operand.  Format I has only one, and
 // it is whichever side `d` did not take.
@@ -508,6 +524,20 @@ wire        dst_am_is_op2 = fmt_ii;
 wire        dst_write_only = (aop == ALU_MOV)   || (aop == ALU_RVBIT) ||
                              (aop == ALU_RVBYT) || (aop == ALU_SETF);
 
+// And which ones READ their operand and never write it.  The pages do not call
+// these a destination at all: CMP's syntax line is "cmp.b src1.b.r, src2.b.r"
+// and TEST's is "test.b src.b.r" -- two reads and one read, no `rw` anywhere.
+//
+// DEFECT this fixes.  Both were treated as read-modify-writes, which opened an
+// access v60_ea then had to close: S_WB's `!writes` branch fed the value
+// straight back with `ea_rmw_go`, so a CMP or TEST against a memory operand
+// cost TWO bus cycles and, worse, performed a bus WRITE to an operand the page
+// marks read-only.  Writing the same bytes back is not harmless -- it is a
+// write cycle on the pins, and on a read-sensitive location it is a write that
+// should never have happened.  Neither instruction had a memory-operand cycle
+// count asserted anywhere, which is how it survived.
+wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST);
+
 // The destination operand's addressing mode.  Spelled out rather than
 // selected with a ternary: a ternary between two enum values is not an enum to
 // every tool.
@@ -521,7 +551,11 @@ end
 // The operand widths are the instruction's, not the addressing mode's, so they
 // come straight from the table rather than from whichever mod field decoded.
 wire [3:0] w_src = op_data_bytes(idu_op, idu_subop, 1'b0);
-wire [3:0] w_dst = op_data_bytes(idu_op, idu_subop, 1'b1);
+wire [3:0] w_dst_raw = op_data_bytes(idu_op, idu_subop, 1'b1);
+// A Format III instruction has one operand and the table describes it as the
+// FIRST one -- 'INC': ('siz', None) -- so the destination's width is w_src,
+// and asking for the second operand's width returns "none" rather than a size.
+wire [3:0] w_dst = fmt_iii ? w_src : w_dst_raw;
 
 // The ALU is combinational; its inputs are the two operand values.
 wire  [3:0] alu_flags;
@@ -757,8 +791,16 @@ always_ff @(posedge clk) begin
                 stopped     <= 1'b1;
                 stop_reason <= STOP_NO_ALU;
                 state       <= S_STOP;
+            end else if (fmt_iii) begin
+                // One operand, and it is the destination.  There is no source
+                // to read, so the source path is skipped outright -- and the
+                // operand's value is given to BOTH val1 and val2 below, so
+                // that TEST, whose operand is what v60_alu reads as `x`, and
+                // INC and DEC, whose operand is `y`, are both served without
+                // the sequencer having to know which.
+                state <= S_OP2;
             end else if ((idu_fmt != FMT_II) && (idu_fmt != FMT_I)) begin
-                // Formats III to VII: not sequenced here.
+                // Formats IV to VII: not sequenced here.
                 stopped     <= 1'b1;
                 stop_reason <= STOP_FORMAT;
                 state       <= S_STOP;
@@ -860,8 +902,9 @@ always_ff @(posedge clk) begin
                 ea_we         <= 1'b0;
                 // An operation that reads its destination and writes the same
                 // place computes the address once; one that only writes does
-                // not read at all.
-                ea_rmw        <= !dst_write_only;
+                // not read at all; and one that only reads must not leave a
+                // write pending behind it.
+                ea_rmw        <= !dst_write_only && !dst_read_only;
                 // Every field of the descriptor is set before an access
                 // starts: JMP leaves this one set, and the next instruction
                 // would otherwise compute its destination address and never
@@ -877,6 +920,9 @@ always_ff @(posedge clk) begin
             ea_rx_val <= rf_rb;
             if (dst_is_reg) begin
                 val2  <= {32'd0, rf_ra};
+                // Format III's one operand is both, and nothing else reads
+                // val1 on this path.
+                if (fmt_iii) val1 <= {32'd0, rf_ra};
                 state <= S_EXEC;
             end else if (dst_write_only) begin
                 // Written and not read -- see dst_write_only above -- so the
@@ -899,6 +945,7 @@ always_ff @(posedge clk) begin
                 // still open and closing it is the only way out, so a fault
                 // here is taken one bus cycle later, at S_WBW.
                 val2  <= ea_rdata;
+                if (fmt_iii) val1 <= ea_rdata;
                 state <= S_EXEC;
             end else if (ea_done) begin
                 insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
@@ -910,6 +957,7 @@ always_ff @(posedge clk) begin
                 state     <= S_EXC_SW;
                 end else begin
                     val2  <= ea_rdata;
+                    if (fmt_iii) val1 <= ea_rdata;
                     state <= S_EXEC;
                 end
             end

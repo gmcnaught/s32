@@ -138,11 +138,20 @@ wire [31:0] xm = x & mask;
 wire [31:0] ym = y & mask;
 wire        cy_in = flags_in[PSW_CY];
 
+// The addend.  "The INC instruction is a shorter encoding for the more general
+// instruction `add #1, dst`" and the DEC page says the same of `sub #1, dst`
+// (S7), so INC and DEC ARE the adder with the addend fixed at one, and they
+// share every line below -- including the overflow terms, which is what makes
+// their Condition Codes blocks identical to ADD's and SUB's without a second
+// derivation to keep in step.
+wire        addend_one = (op == ALU_INC) || (op == ALU_DEC);
+wire [31:0] xa = addend_one ? (32'd1 & mask) : xm;
+
 // Sum and difference one bit wider than the operand, so the carry out and the
 // borrow are bits of the result rather than a separate derivation.
-wire [32:0] sum  = {1'b0, ym} + {1'b0, xm} +
+wire [32:0] sum  = {1'b0, ym} + {1'b0, xa} +
                    {32'd0, ((op == ALU_ADDC) ? cy_in : 1'b0)};
-wire [32:0] diff = {1'b0, ym} - {1'b0, xm} -
+wire [32:0] diff = {1'b0, ym} - {1'b0, xa} -
                    {32'd0, ((op == ALU_SUBC) ? cy_in : 1'b0)};
 wire [32:0] negd = {1'b0, 32'd0} - {1'b0, xm};
 
@@ -272,16 +281,16 @@ always_comb begin
     writes = 1'b1;
 
     case (op)
-        ALU_ADD, ALU_ADDC: begin
+        ALU_ADD, ALU_ADDC, ALU_INC: begin
             raw  = sum[31:0];
             f_cy = carry_of(sum, opbytes);
-            f_ov = (sign_of(xm, msb) == sign_of(ym, msb)) &&
+            f_ov = (sign_of(xa, msb) == sign_of(ym, msb)) &&
                    (sign_of(raw, msb) != sign_of(ym, msb));
         end
-        ALU_SUB, ALU_SUBC, ALU_CMP: begin
+        ALU_SUB, ALU_SUBC, ALU_CMP, ALU_DEC: begin
             raw  = diff[31:0];
             f_cy = carry_of(diff, opbytes);          // a borrow
-            f_ov = (sign_of(xm, msb) != sign_of(ym, msb)) &&
+            f_ov = (sign_of(xa, msb) != sign_of(ym, msb)) &&
                    (sign_of(raw, msb) != sign_of(ym, msb));
             if (op == ALU_CMP) writes = 1'b0;
         end

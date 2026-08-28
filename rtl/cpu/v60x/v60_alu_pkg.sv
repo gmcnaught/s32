@@ -43,6 +43,12 @@ typedef enum logic [4:0] {
     ALU_RVBIT = 5'd25,  // the source BYTE's bits, reversed
     ALU_RVBYT = 5'd26,  // the source WORD's bytes, reversed
     ALU_SETF  = 5'd27,  // a condition, materialised as 01H or 00H
+    // "The INC instruction is a shorter encoding for the more general
+    // instruction `add #1, dst`" -- so they ARE the adder, with the addend
+    // fixed at one, and their Condition Codes blocks are ADD's and SUB's term
+    // for term.  One operand: Format III.
+    ALU_INC   = 5'd28,
+    ALU_DEC   = 5'd29,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 5'd19,

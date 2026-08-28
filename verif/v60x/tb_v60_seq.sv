@@ -349,6 +349,9 @@ always @(posedge clk) if (!rst && biu_ack && is_iack) iack_n = iack_n + 1;
 always @(*) d_in = is_iack ? {8'h00, (iack_n == 0) ? iack_first : iack_second}
                            : {mem[bank_even + 11'd1], mem[bank_even]};
 
+integer n_writes = 0;
+always @(posedge clk) if (!rst && biu_ack && !rw_n) n_writes = n_writes + 1;
+
 always @(posedge clk) if (!rst && biu_ack && !rw_n) begin
     case ({ube_n, a[0]})
         2'b00: begin mem[bank_even] = d_out[7:0];
@@ -879,6 +882,52 @@ initial begin
     // RVBIT #1, [R8] 08 80 E1 68   -- the byte reversal, into memory
     mem[11'h4C0] = 8'h08; mem[11'h4C1] = 8'h80; mem[11'h4C2] = 8'hE1;
     mem[11'h4C3] = 8'h68;
+
+    // TEST.b through MEMORY, at 0x480.  The register form below exercises the
+    // sequencer's own register path; this one exercises v60_ea's, and it is
+    // the only place Format III's operand has to reach val1 through ea_rdata.
+    // MOV.W #0x700, R8
+    mem[11'h480] = 8'h2D; mem[11'h481] = 8'hA0; mem[11'h482] = 8'hF4;
+    mem[11'h483] = 8'h00; mem[11'h484] = 8'h07; mem[11'h485] = 8'h00;
+    mem[11'h486] = 8'h00; mem[11'h487] = 8'h68;
+    // TEST.b [R8]   F0 68   -- m = 0, register indirect
+    mem[11'h488] = 8'hF0; mem[11'h489] = 8'h68;
+    // CMP.b #0x80, [R8]   B8 80 F4 80 68
+    //   Its second operand is "src2.b.r" -- the page does not call it a
+    //   destination -- so it must be read and never written back.
+    mem[11'h48A] = 8'hB8; mem[11'h48B] = 8'h80; mem[11'h48C] = 8'hF4;
+    mem[11'h48D] = 8'h80; mem[11'h48E] = 8'h68;
+
+    // ---- a ninth program, at 0x4D0: Format III -----------------------------
+    // INC, DEC and TEST: one mod field, no `reg` field, and the m bit riding
+    // in bit 0 of the opcode.  Their pages define INC and DEC as "add #1, dst"
+    // and "sub #1, dst", so the boundaries below are ADD's and SUB's.
+    // MOV.W #0x7F, R9
+    mem[11'h4D0] = 8'h2D; mem[11'h4D1] = 8'hA0; mem[11'h4D2] = 8'hF4;
+    mem[11'h4D3] = 8'h7F; mem[11'h4D4] = 8'h00; mem[11'h4D5] = 8'h00;
+    mem[11'h4D6] = 8'h00; mem[11'h4D7] = 8'h69;
+    // INC.b R9    D9 69   -- m = 1 puts the mod field in the register column
+    mem[11'h4D8] = 8'hD9; mem[11'h4D9] = 8'h69;
+    // MOV.W #0xFF, R9
+    mem[11'h4DA] = 8'h2D; mem[11'h4DB] = 8'hA0; mem[11'h4DC] = 8'hF4;
+    mem[11'h4DD] = 8'hFF; mem[11'h4DE] = 8'h00; mem[11'h4DF] = 8'h00;
+    mem[11'h4E0] = 8'h00; mem[11'h4E1] = 8'h69;
+    // INC.b R9
+    mem[11'h4E2] = 8'hD9; mem[11'h4E3] = 8'h69;
+    // MOV.W #0, R9
+    mem[11'h4E4] = 8'h2D; mem[11'h4E5] = 8'hA0; mem[11'h4E6] = 8'hF4;
+    mem[11'h4E7] = 8'h00; mem[11'h4E8] = 8'h00; mem[11'h4E9] = 8'h00;
+    mem[11'h4EA] = 8'h00; mem[11'h4EB] = 8'h69;
+    // DEC.b R9    D1 69
+    mem[11'h4EC] = 8'hD1; mem[11'h4ED] = 8'h69;
+    // TEST.b R9   F1 69   -- reads and writes nothing
+    mem[11'h4EE] = 8'hF1; mem[11'h4EF] = 8'h69;
+    // MOV.W #0x700, R8
+    mem[11'h4F0] = 8'h2D; mem[11'h4F1] = 8'hA0; mem[11'h4F2] = 8'hF4;
+    mem[11'h4F3] = 8'h00; mem[11'h4F4] = 8'h07; mem[11'h4F5] = 8'h00;
+    mem[11'h4F6] = 8'h00; mem[11'h4F7] = 8'h68;
+    // INC.b [R8]  D8 68   -- m = 0, so the mod field is register indirect
+    mem[11'h4F8] = 8'hD8; mem[11'h4F9] = 8'h68;
 
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
@@ -1556,6 +1605,77 @@ initial begin
         "RVBIT into memory reversed 01 to 80 there too");
     chk(insn_cycles === 5'd1,
         "also in one cycle, which is what a dst.b.w syntax line means");
+
+    // =======================================================================
+    // Format III: one operand, which is both what is read and what is written.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h41;
+    jump(32'h000004D0);
+    step;
+    step;
+    chk(!stopped,                     "a Format III instruction executes");
+    chk(rf.gpr[9] === 32'h0000_0080,  "INC.b 0x7F gives 0x80");
+    chk(seq_psw[PSW_OV] === 1'b1,     "which overflows a signed byte");
+    chk(seq_psw[PSW_S]  === 1'b1,     "and is negative at byte width");
+    chk(seq_psw[PSW_CY] === 1'b0,     "with no carry out of the byte");
+    chk(seq_psw[PSW_Z]  === 1'b0,     "and is not zero");
+    chk(seq_pc === 32'h000004DA,      "and it is TWO bytes long");
+
+    step; step;
+    chk(rf.gpr[9] === 32'h0000_0000,  "INC.b 0xFF wraps to 0x00");
+    chk(seq_psw[PSW_CY] === 1'b1,     "carrying out of the byte");
+    chk(seq_psw[PSW_Z]  === 1'b1,     "with a zero result");
+    chk(seq_psw[PSW_OV] === 1'b0,     "and no signed overflow");
+
+    step; step;
+    chk(rf.gpr[9] === 32'h0000_00FF,  "DEC.b 0x00 gives 0xFF");
+    chk(seq_psw[PSW_CY] === 1'b1,     "borrowing, which is what CY means here");
+    chk(seq_psw[PSW_S]  === 1'b1,     "and the result is negative");
+    chk(seq_psw[PSW_OV] === 1'b0,     "without overflowing");
+
+    // TEST's one operand is what v60_alu reads as `x`, where INC's and DEC's
+    // is `y` -- the sequencer gives Format III's operand to both.
+    step;
+    chk(rf.gpr[9] === 32'h0000_00FF,  "TEST writes nothing");
+    chk(seq_psw[PSW_S]  === 1'b1,     "but sets S from the operand");
+    chk(seq_psw[PSW_Z]  === 1'b0,     "and Z");
+    chk(seq_psw[PSW_CY] === 1'b0,     "and clears CY");
+    chk(seq_psw[PSW_OV] === 1'b0,     "and OV");
+
+    step; step;
+    chk(mem[11'h700] === 8'h42,
+        "INC.b through a register-indirect mod field incremented memory");
+    chk(insn_cycles === 5'd2,
+        "in two bus cycles: a dst.rw operand is read and written");
+
+    // TEST with a MEMORY operand.  Its one operand is what v60_alu reads as
+    // `x`, and on this path it arrives through ea_rdata rather than through
+    // the register file -- so this is what proves Format III mirrors its
+    // operand into val1 at all.
+    reset_and_arm;
+    mem[11'h700] = 8'h80;
+    jump(32'h00000480);
+    step;
+    step;
+    chk(mem[11'h700] === 8'h80,   "TEST left memory alone");
+    chk(seq_psw[PSW_S] === 1'b1,
+        "and set S from the byte it read: 0x80 is negative at byte width");
+    chk(seq_psw[PSW_Z] === 1'b0,  "and cleared Z");
+    chk(insn_cycles === 5'd1,
+        "in ONE bus cycle: it reads its operand and writes nothing");
+
+    // CMP's second operand is read-only too -- "cmp.b src1.b.r, src2.b.r".
+    // A read-modify-write here would cost a second cycle AND put a write on
+    // the bus against a location the page marks read only.
+    n_writes = 0;
+    step;
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "CMP.b of 0x80 against the byte at [R8] compares equal");
+    chk(insn_cycles === 5'd1,
+        "and costs ONE bus cycle: src2 is read, not read-modify-written");
+    chk(n_writes == 0,
+        "and puts no write on the bus at all against a read-only operand");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
