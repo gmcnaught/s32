@@ -1387,6 +1387,12 @@ initial begin
     // NEGF.s [R10], R9    5C A9 6A 69
     mem[11'h76A] = 8'h5C; mem[11'h76B] = 8'hA9; mem[11'h76C] = 8'h6A;
     mem[11'h76D] = 8'h69;
+    // POP 0[R31]   E6 1F 00   -- Format III, m = 0, mode byte 0x1F is
+    //   AM_DISP8 on R31 with a displacement of 0.  The destination's ADDRESS
+    //   depends on the stack pointer, which is the case that makes POP's
+    //   "the stack pointer is THEN incremented" observable.
+    mem[11'h772] = 8'hE6; mem[11'h773] = 8'h1F; mem[11'h774] = 8'h00;
+
     // MOVF.s [R10], R9    5C A8 6A 69   -- a NaN through this raises
     mem[11'h76E] = 8'h5C; mem[11'h76F] = 8'hA8; mem[11'h770] = 8'h6A;
     mem[11'h771] = 8'h69;
@@ -3819,6 +3825,27 @@ initial begin
     step;
     chk(seq_psw[PSW_FUD] === 1'b1,
         "a denormal result sets PSW.FUD -- the first FP condition code this tree writes");
+
+    // POP's ordering, which its page states with the word "then": "The word
+    // data located on the top of the stack is copied to the destination
+    // operand.  The stack pointer (R31) is THEN incremented by four."
+    //
+    // A destination whose ADDRESS depends on R31 is what makes it visible --
+    // `pop sp` is the famous case but this is the general one.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600
+    @(negedge clk);
+    put_word(13'h600, 32'hC0DE_C0DE);        // the word on the stack
+    put_word(13'h604, 32'h0000_0000);
+    repeat (2) @(negedge clk);
+    jump(32'h00000772);
+    step;
+    chk(mem_word(13'h600) === 32'hC0DE_C0DE,
+        "POP wrote its destination at the OLD stack pointer: the copy comes first");
+    chk(mem_word(13'h604) === 32'h0000_0000,
+        "and not four bytes up, which incrementing first would have done");
+    chk(rf.gpr[31] === 32'h00000604, "with the stack pointer incremented after");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

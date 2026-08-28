@@ -525,6 +525,8 @@ typedef enum logic [5:0] {
     // slot stays free for the operand's own mode.  Without that, `push [R5+]`
     // would be two writebacks and stop the sequencer.
     S_PSH_R, S_PSH_SP, S_PSH_S, S_PSH_W, S_PSH_FIN, S_PSH_FIN2,
+    // POP's stack pointer, written AFTER its destination -- see S_PSH_FIN.
+    S_POP_SP,
     // XCH's second write: dst2 goes out through the ordinary destination
     // path and dst1, which the page guarantees is a register, is written here.
     S_XCH,
@@ -1999,6 +2001,7 @@ always_ff @(posedge clk) begin
                 rf_wr_data <= eff_result;
                 if      (dst_is_dbl) state <= S_WB_HI;
                 else if (is_xch)     state <= S_XCH;
+                else if (is_pop)     state <= S_POP_SP;
                 else                 state <= S_RETIRE;
             end else if (ea_rmw_pending) begin
                 // Eight bytes when the destination is a doubleword, and for
@@ -2058,6 +2061,8 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_ILLEGAL_DATA;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
+            end else if (is_pop) begin
+                state <= S_POP_SP;
             end else if (is_caxi && !caxi_match) begin
                 state <= S_CAXI_W;
             end else begin
@@ -2754,6 +2759,24 @@ always_ff @(posedge clk) begin
         // register file has one write port -- the same reason the stack engine
         // below needs three.
         S_PSH_FIN: begin
+            // POP does NOT write the stack pointer here.
+            //
+            // DEFECT this fixes (docs/v60/TRANCHE-TWO-AUDIT.md's D3, and the
+            // page settles it more directly than that audit's
+            // self-consistency argument does).  POP's Description is an
+            // ORDERING: "The word data located on the top of the stack is
+            // copied to the destination operand.  The stack pointer (R31) is
+            // THEN incremented by four."  This wrote R31 first and then went
+            // to the destination.
+            //
+            // It is observable for far more than `pop sp`: any destination
+            // whose ADDRESS depends on R31 -- `pop 0[sp]`, `pop 4[sp]` -- is
+            // computed from the wrong pointer.  The word "then" is what makes
+            // that a page fact rather than a preference.
+            //
+            // The deferred write goes in a state of its own rather than
+            // through wb_rn, because wb_rn belongs to the operand's own
+            // addressing mode and `pop [R5+]` would need both.
             rf_wr_en  <= 1'b1;
             if (is_prep) begin
                 // "FP <- SP", and the word "updated" in the Description
@@ -2769,15 +2792,24 @@ always_ff @(posedge clk) begin
                 rf_wr_sel  <= 5'd30;
                 rf_wr_data <= val1[31:0];
                 state      <= S_PSH_FIN2;
+            end else if (is_pop) begin
+                // Nothing written here: the destination comes first.
+                rf_wr_en <= 1'b0;
+                state    <= S_OP2;
             end else begin
                 rf_wr_sel  <= 5'd31;
-                rf_wr_data <= is_push ? (sp_r - 32'd4) : (sp_r + 32'd4);
-                // PUSH is finished -- its operand was read on the way in.  POP
-                // still has to put the word somewhere, and its operand is
-                // write-only, so it joins the ordinary destination path.
-                if (is_push) state <= S_RETIRE;
-                else         state <= S_OP2;
+                rf_wr_data <= sp_r - 32'd4;
+                // PUSH is finished -- its operand was read on the way in.
+                state <= S_RETIRE;
             end
+        end
+
+        S_POP_SP: begin
+            // "The stack pointer (R31) is THEN incremented by four."
+            rf_wr_en   <= 1'b1;
+            rf_wr_sel  <= 5'd31;
+            rf_wr_data <= sp_r + 32'd4;
+            state      <= S_RETIRE;
         end
 
         S_PSH_FIN2: begin
