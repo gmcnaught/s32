@@ -529,6 +529,10 @@ EXEC_OP = {
     # "a shorter encoding of mov.w src, [ -sp ]" and of "mov.w [ sp+ ], dst".
     # Format III -- one encoded operand each, the stack being implicit.
     'PUSH': 'PUSH', 'POP': 'POP',
+    # The frame pair.  PREPARE's `num` is a BYTE count -- "the stack pointer is
+    # adjusted by the specified number of bytes" -- and DISPOSE is Format V
+    # because SP <- FP discards the frame whatever size it was.
+    'PREPARE': 'PREPARE', 'DISPOSE': 'DISPOSE',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

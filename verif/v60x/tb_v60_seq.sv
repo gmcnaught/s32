@@ -1129,6 +1129,12 @@ initial begin
     //   computes, so v60_ea raises only one of them and the pair coexists.
     mem[11'h624] = 8'hEF; mem[11'h625] = 8'h88;
 
+    // PREPARE #16   DE F4 10 00 00 00   -- Format III with an immediate `num`
+    mem[11'h626] = 8'hDE; mem[11'h627] = 8'hF4; mem[11'h628] = 8'h10;
+    mem[11'h629] = 8'h00; mem[11'h62A] = 8'h00; mem[11'h62B] = 8'h00;
+    // DISPOSE       CC   -- Format V, one byte
+    mem[11'h62C] = 8'hCC;
+
     // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
     //   at [R10] is read from MEMORY and only the operand it names is an I/O
     //   access: an addressing mode's own accesses are not the instruction's.
@@ -2692,6 +2698,37 @@ initial begin
         "the addressing mode stepped R8");
     chk(rf.gpr[31] === 32'h000005FC,
         "and the stack pointer moved too -- both writebacks landed");
+
+    // =======================================================================
+    // PREPARE and DISPOSE.  Between them they touch R30 and R31 and nothing
+    // else -- NOT R29, which §3 gives to CALL and RET.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[30] = 32'h0000_05A0;              // the caller's frame pointer
+    rf.gpr[29] = 32'hA9A9_A9A9;              // the argument pointer, untouched
+    put_word(13'h5EC, 32'hBAD0_BAD0);        // where SP will end up: NOT the
+                                             //   place DISPOSE reads
+    repeat (2) @(negedge clk);
+    jump(32'h00000626);
+    step;
+    chk(mem_word(13'h5FC) === 32'h0000_05A0,
+        "PREPARE saved the old frame pointer on the stack");
+    chk(rf.gpr[30] === 32'h000005FC,
+        "and FP took the UPDATED SP -- it points at the slot holding the old FP");
+    chk(rf.gpr[31] === 32'h000005EC,
+        "then SP dropped by `num` BYTES: 0x5FC - 16, not 0x5FC - 64");
+    chk(rf.gpr[29] === 32'hA9A9_A9A9,
+        "and R29, the argument pointer, is not this instruction's business");
+
+    // DISPOSE undoes it, and does not need to know what `num` was.
+    step;
+    chk(rf.gpr[31] === 32'h00000600,
+        "DISPOSE put SP back above the frame, whatever size the frame was");
+    chk(rf.gpr[30] === 32'h0000_05A0,
+        "and restored the old frame pointer -- read at FP, not at SP");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

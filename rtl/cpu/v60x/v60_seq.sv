@@ -478,7 +478,7 @@ typedef enum logic [5:0] {
     // addressing-mode writeback of its own for it, and the single writeback
     // slot stays free for the operand's own mode.  Without that, `push [R5+]`
     // would be two writebacks and stop the sequencer.
-    S_PSH_R, S_PSH_SP, S_PSH_S, S_PSH_W, S_PSH_FIN,
+    S_PSH_R, S_PSH_SP, S_PSH_S, S_PSH_W, S_PSH_FIN, S_PSH_FIN2,
     // The control transfers: a register to test, an address to compute, a
     // stack access to make, and then the redirect.
     S_CTRL, S_CTRL_REG, S_CTRL_EAR, S_CTRL_EAS, S_CTRL_EAW, S_CTRL_FIN,
@@ -514,6 +514,7 @@ logic [15:0] exc_code_r;
 logic  [2:0] exc_kind;    // which of the shapes of frame it wants
 logic        exc_ack_r;   // and whether its vector comes off the bus
 logic [31:0] sp_r;        // the stack pointer the stack engine is walking
+logic [31:0] fp_r;        // and the frame pointer, for PREPARE and DISPOSE
 logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
                           // or -- for CALL, before either -- the argument list
 logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
@@ -803,7 +804,14 @@ wire        io_src_bad = io_src && (src_is_reg || (op1_mode == AM_RN));
 // off.  So PUSH reads its operand first and POP reads the stack first.
 wire        is_push = (aop == ALU_PUSH);
 wire        is_pop  = (aop == ALU_POP);
-wire        is_stk1 = is_push || is_pop;
+// And the frame pair, which share the same one-access shape: read the pointer
+// registers, make one word-sized access, write the pointers back.  PREPARE
+// pushes like PUSH and DISPOSE reads like POP; what differs is which registers
+// end up holding what, which is S_PSH_FIN's business.
+wire        is_prep = (aop == ALU_PREPARE);
+wire        is_disp = (aop == ALU_DISPOSE);
+// Which of the four write the stack rather than read it.
+wire        stk_is_write = is_push || is_prep;
 
 wire        movea_src_bad = src_addr_only &&
                             (src_is_reg || (op1_mode == AM_RN) ||
@@ -931,6 +939,7 @@ always_ff @(posedge clk) begin
         berr_addr_r     <= 24'd0;
         berr_code_r     <= 16'd0;
         sp_r            <= 32'd0;
+        fp_r            <= 32'd0;
         stk_val         <= 32'd0;
         stk_cnt         <= 32'd0;
         stk_phase       <= 1'b0;
@@ -1164,6 +1173,12 @@ always_ff @(posedge clk) begin
                 // Format V, no operands, "no action is taken".  Its Operation
                 // line is "PC <- PC + 1", which S_RETIRE does from idu_len.
                 state <= S_RETIRE;
+            end else if (op_alu(idu_op) == ALU_DISPOSE) begin
+                // Format V, no operand: everything it needs is in R30.
+                state <= S_PSH_R;
+            end else if (op_alu(idu_op) == ALU_PREPARE) begin
+                // Its one operand is `num`, a source, like PUSH's.
+                state <= S_OP1;
             end else if (op_alu(idu_op) == ALU_POP) begin
                 // Nothing to read before the stack: POP's one operand is where
                 // the word GOES.
@@ -1245,7 +1260,7 @@ always_ff @(posedge clk) begin
                 val1  <= {32'd0, rf_ra};
                 // STPR's source is not a value but the NAME of one.
                 if      (aop == ALU_STPR) state <= S_PR_SEL;
-                else if (is_push)         state <= S_PSH_R;
+                else if (is_push || is_prep) state <= S_PSH_R;
                 else                      state <= S_OP2;
             end else begin
                 state <= S_OP1S;
@@ -1270,7 +1285,7 @@ always_ff @(posedge clk) begin
                     // MOVEA wants the address, not what is at it.
                     val1  <= src_addr_only ? {32'd0, ea_ea} : ea_rdata;
                     if      (aop == ALU_STPR) state <= S_PR_SEL;
-                    else if (is_push)         state <= S_PSH_R;
+                    else if (is_push || is_prep) state <= S_PSH_R;
                     else                      state <= S_OP2;
                 end
             end
@@ -2006,12 +2021,14 @@ always_ff @(posedge clk) begin
 
         // ---- PUSH and POP's stack access -------------------------------------
         S_PSH_R: begin
-            rf_ra_sel <= 5'd31;
+            rf_ra_sel <= 5'd31;      // SP
+            rf_rb_sel <= 5'd30;      // FP, which only the frame pair reads
             state     <= S_PSH_SP;
         end
 
         S_PSH_SP: begin
             sp_r          <= rf_ra;
+            fp_r          <= rf_rb;
             ea_mode       <= AM_RN_IND;
             ea_index      <= 1'b0;
             ea_disp       <= 32'd0;
@@ -2031,6 +2048,18 @@ always_ff @(posedge clk) begin
                 ea_rn_val <= rf_ra - 32'd4;
                 ea_we     <= 1'b1;
                 ea_wdata  <= val1;
+            end else if (is_prep) begin
+                // "[-SP] <- FP": the same push, of the frame pointer.
+                ea_rn_val <= rf_ra - 32'd4;
+                ea_we     <= 1'b1;
+                ea_wdata  <= {32'd0, rf_rb};
+            end else if (is_disp) begin
+                // "SP <- FP ; FP <- [SP+]" -- so the word to read is at the
+                // FRAME pointer, not at the stack pointer.  That is the whole
+                // reason DISPOSE needs no operand: it does not care how far
+                // the stack pointer wandered inside the frame.
+                ea_rn_val <= rf_rb;
+                ea_we     <= 1'b0;
             end else begin
                 // "The word data located on the top of the stack is copied to
                 // the destination operand.  The stack pointer (R31) is THEN
@@ -2055,20 +2084,55 @@ always_ff @(posedge clk) begin
                 exc_vec_r <= VEC_BUS_FAULT;
                 state     <= S_EXC_SW;
             end else begin
-                if (is_pop) val1 <= ea_rdata;
+                if (is_pop || is_disp) val1 <= ea_rdata;
                 state <= S_PSH_FIN;
             end
         end
 
+        // The register writes.  Two states for the frame pair, because the
+        // register file has one write port -- the same reason the stack engine
+        // below needs three.
         S_PSH_FIN: begin
-            rf_wr_en   <= 1'b1;
-            rf_wr_sel  <= 5'd31;
-            rf_wr_data <= is_push ? (sp_r - 32'd4) : (sp_r + 32'd4);
-            // PUSH is finished -- its operand was read on the way in.  POP
-            // still has to put the word somewhere, and its operand is
-            // write-only, so it joins the ordinary destination path.
-            if (is_push) state <= S_RETIRE;
-            else         state <= S_OP2;
+            rf_wr_en  <= 1'b1;
+            if (is_prep) begin
+                // "FP <- SP", and the word "updated" in the Description
+                // carries the ordering: "the contents of the frame pointer
+                // (R30) are saved on the stack and the UPDATED SP is copied
+                // into the FP register".  So FP ends up pointing at the slot
+                // that now holds the old FP, not at where SP was before.
+                rf_wr_sel  <= 5'd30;
+                rf_wr_data <= sp_r - 32'd4;
+                state      <= S_PSH_FIN2;
+            end else if (is_disp) begin
+                // "FP <- [SP+]".
+                rf_wr_sel  <= 5'd30;
+                rf_wr_data <= val1[31:0];
+                state      <= S_PSH_FIN2;
+            end else begin
+                rf_wr_sel  <= 5'd31;
+                rf_wr_data <= is_push ? (sp_r - 32'd4) : (sp_r + 32'd4);
+                // PUSH is finished -- its operand was read on the way in.  POP
+                // still has to put the word somewhere, and its operand is
+                // write-only, so it joins the ordinary destination path.
+                if (is_push) state <= S_RETIRE;
+                else         state <= S_OP2;
+            end
+        end
+
+        S_PSH_FIN2: begin
+            rf_wr_en  <= 1'b1;
+            rf_wr_sel <= 5'd31;
+            if (is_prep)
+                // "SP <- SP - tmp", from the already-pushed-to SP, and `num`
+                // is a BYTE count: "the stack pointer is adjusted by the
+                // specified number of bytes to allocate storage for local
+                // variables".
+                rf_wr_data <= sp_r - 32'd4 - val1[31:0];
+            else
+                // "SP <- FP ; FP <- [SP+]" leaves SP one word above the frame
+                // pointer it started from, whatever the frame contained.
+                rf_wr_data <= fp_r + 32'd4;
+            state <= S_RETIRE;
         end
 
         // ---- an exception --------------------------------------------------

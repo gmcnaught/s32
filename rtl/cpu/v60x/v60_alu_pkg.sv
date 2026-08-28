@@ -126,6 +126,18 @@ typedef enum logic [5:0] {
     // sequencer; POP's comes back the same way and is passed through here.
     ALU_PUSH    = 6'd49,
     ALU_POP     = 6'd50,
+    // The frame pair, and between them they touch exactly two registers --
+    // R30 (FP) and R31 (SP).  NOT R29: S3 gives the argument pointer to CALL
+    // and RET, so the frame pointer is this pair's alone.
+    //
+    //   PREPARE:  tmp <- num ; [-SP] <- FP ; FP <- SP ; SP <- SP - tmp
+    //   DISPOSE:  SP <- FP ; FP <- [SP+]
+    //
+    // DISPOSE needs no operand because "SP <- FP" discards the local-variable
+    // area whatever size it was -- which is why PREPARE's `num` never has to
+    // be remembered anywhere.
+    ALU_PREPARE = 6'd51,
+    ALU_DISPOSE = 6'd52,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,
