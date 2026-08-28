@@ -246,6 +246,15 @@ does — and a switch to the same entry is a no-op there, which is the ordinary
 case in this tree: it runs at execution level 0 and these exceptions handle at
 execution level 0.
 
+## The frame is popped by RETIS and RETIU
+
+They are the other end of this. `v60_exc` pushes the return PC last, so it is on
+top, which is the order `PC <- [SP+] ; PSW <- [SP+]` needs; and what is left
+under them — the code word and any parameters — is discarded by the count
+operand the handler supplies. That count is not read out of the frame by the
+processor: the handler reads the frame's parameter-count field and passes it.
+`docs/v60/RETURN-PAIRS.md` has the pages.
+
 ## What is still not raised, and why
 
 - **A double bus error.** "When a bus error involves the interrupt stack or a

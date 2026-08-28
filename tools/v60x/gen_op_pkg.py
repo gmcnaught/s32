@@ -61,7 +61,11 @@ typedef enum logic [3:0] {
     CTRL_JSR  = 4'd4,   // to an effective address, pushes the return address
     CTRL_RSR  = 4'd5,   // pops it
     CTRL_DBCC = 4'd6,   // decrement, and branch while not zero
-    CTRL_TB   = 4'd7    // branch when the register is zero
+    CTRL_TB   = 4'd7,   // branch when the register is zero
+    CTRL_CALL = 4'd8,   // to an effective address, passing the argument pointer
+    CTRL_RET  = 4'd9,   // pops the PC and the argument pointer, then discards
+    CTRL_RETIU= 4'd10,  // pops the PC and the PSW
+    CTRL_RETIS= 4'd11   // the same, and privileged
 } ctrl_op_e;
 '''
 

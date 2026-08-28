@@ -9,6 +9,15 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 export PATH="/opt/homebrew/bin:$PATH"
 
+# The generated package is checked against the table below by regenerating it.
+# That check is defeated by Python's bytecode cache: an edit to
+# tools/v60x/insn_table.py that lands in the same second as the last one and
+# leaves the file the same length -- which is what reverting a one-character
+# mutation does -- keeps the cached .pyc valid, so the generator and the check
+# both read the OLD table and agree with each other about a stale file.  Found
+# exactly that way.
+export PYTHONDONTWRITEBYTECODE=1
+
 RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
      rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_dmux.sv \

@@ -364,9 +364,23 @@ DATA_TYPE = {
     # Control transfer: displacements and addresses, not data.
     'Bcc': (None, None), 'DBcc': (None, None), 'TB': (None, None),
     'JMP': (4, None), 'BSR': (None, None), 'JSR': (4, None),
-    'RSR': (None, None), 'CALL': (4, None), 'RET': (4, None),
+    'RSR': (None, None), 'RET': (4, None),
     'BRK': (None, None), 'BRKV': (None, None),
-    'TRAP': (1, None), 'RETIU': (4, None), 'RETIS': (4, None),
+    'TRAP': (1, None),
+    # CALL is Format II and has TWO operands, and both of them scale by four:
+    # "when the autoincrement, autodecrement, or scaled index addressing modes
+    # are used for either the target or argument operands, the contents of the
+    # pointer are modified by four" (S7 CALL).  Its syntax line prints
+    # "target.b.ex", so the byte is what the operand IS and the four is what
+    # its pointer moves by -- the same split JMP and JSR have, printed the
+    # other way round.
+    'CALL': (4, 4),
+    # DEFECT, corrected 2026-08-27: these two were 4 here, from the "the V60
+    # stack moves words" reasoning above.  Their operand is not a stack word.
+    # "retis count.h.r" and "retiu count.h.r" (S7) both print a HALFWORD, and
+    # MAME agrees -- s32_v60.sv drives moddim = 1 for EA/EB/FA/FB against 2 for
+    # RET's E2/E3.  Nothing could notice while nothing executed them.
+    'RETIU': (2, None), 'RETIS': (2, None),
 
     # Miscellaneous and privileged.
     'NOP': (None, None), 'GETPSW': (4, None),
@@ -426,6 +440,15 @@ EXEC_OP = {
 #                                           entered using the JSR and BSR"
 #   DBcc  Rn <- Rn - 1 ; if (condition and Rn != 0) then PC <- PC + disp16
 #   TB    if Rn = 0 then PC <- PC + sign_extended(disp16)
+#   CALL  tmp1 <- effective_address(target) ; tmp2 <- effective_address(arg) ;
+#         [-SP] <- AP ; AP <- tmp2 ; [-SP] <- NextPC ; PC <- tmp1
+#   RET   tmp1 <- num ; tmp2 <- [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ;
+#         PC <- tmp2                    -- AP is R29 (RET's own Description)
+#   RETIS PC <- [SP+] ; PSW <- [SP+] ; SP <- SP + count
+#   RETIU the same operation, and NOT the same instruction: RETIS's Exceptions
+#         list begins "Privileged Instruction" and RETIU's does not.  That is
+#         the whole documented difference between them -- System against User,
+#         which is what the two names say.
 #
 # In every one of them "the value of the PC used to compute the target address
 # is the first byte of the branch instruction", which is v60_idu's insn_pc.
@@ -433,6 +456,8 @@ CTRL_OP = {
     'Bcc': 'BCC', 'BSR': 'BSR',
     'JMP': 'JMP', 'JSR': 'JSR', 'RSR': 'RSR',
     'DBcc': 'DBCC', 'TB': 'TB',
+    'CALL': 'CALL', 'RET': 'RET',
+    'RETIU': 'RETIU', 'RETIS': 'RETIS',
 }
 
 

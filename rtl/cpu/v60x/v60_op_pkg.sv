@@ -44,7 +44,11 @@ typedef enum logic [3:0] {
     CTRL_JSR  = 4'd4,   // to an effective address, pushes the return address
     CTRL_RSR  = 4'd5,   // pops it
     CTRL_DBCC = 4'd6,   // decrement, and branch while not zero
-    CTRL_TB   = 4'd7    // branch when the register is zero
+    CTRL_TB   = 4'd7,   // branch when the register is zero
+    CTRL_CALL = 4'd8,   // to an effective address, passing the argument pointer
+    CTRL_RET  = 4'd9,   // pops the PC and the argument pointer, then discards
+    CTRL_RETIU= 4'd10,  // pops the PC and the PSW
+    CTRL_RETIS= 4'd11   // the same, and privileged
 } ctrl_op_e;
 
 // The opcode byte alone.  Anything the table does not list is a reserved
@@ -474,7 +478,7 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h090: r = 4'd0 ;  // BSR
             9'h091: r = 4'd0 ;  // BSR (operand 2)
             9'h092: r = 4'd4 ;  // CALL
-            9'h093: r = 4'd0 ;  // CALL (operand 2)
+            9'h093: r = 4'd4 ;  // CALL (operand 2)
             9'h094: r = 4'd2 ;  // UPDPSW.H
             9'h095: r = 4'd2 ;  // UPDPSW.H (operand 2)
             9'h096: r = 4'd1 ;  // CHLVL
@@ -743,9 +747,9 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h1D1: r = 4'd0 ;  // JSR (operand 2)
             9'h1D2: r = 4'd4 ;  // JSR
             9'h1D3: r = 4'd0 ;  // JSR (operand 2)
-            9'h1D4: r = 4'd4 ;  // RETIU
+            9'h1D4: r = 4'd2 ;  // RETIU
             9'h1D5: r = 4'd0 ;  // RETIU (operand 2)
-            9'h1D6: r = 4'd4 ;  // RETIU
+            9'h1D6: r = 4'd2 ;  // RETIU
             9'h1D7: r = 4'd0 ;  // RETIU (operand 2)
             9'h1D8: r = 4'd4 ;  // PUSHM
             9'h1D9: r = 4'd0 ;  // PUSHM (operand 2)
@@ -775,9 +779,9 @@ function automatic logic [3:0] op_data_bytes_first(input logic [7:0] op,
             9'h1F1: r = 4'd0 ;  // TRAP (operand 2)
             9'h1F2: r = 4'd1 ;  // TRAP
             9'h1F3: r = 4'd0 ;  // TRAP (operand 2)
-            9'h1F4: r = 4'd4 ;  // RETIS
+            9'h1F4: r = 4'd2 ;  // RETIS
             9'h1F5: r = 4'd0 ;  // RETIS (operand 2)
-            9'h1F6: r = 4'd4 ;  // RETIS
+            9'h1F6: r = 4'd2 ;  // RETIS
             9'h1F7: r = 4'd0 ;  // RETIS (operand 2)
             9'h1F8: r = 4'd4 ;  // STTASK
             9'h1F9: r = 4'd0 ;  // STTASK (operand 2)
@@ -1064,6 +1068,7 @@ function automatic ctrl_op_e op_ctrl(input logic [7:0] op);
     begin
         case (op)
             8'h48: r = CTRL_BSR;  // BSR
+            8'h49: r = CTRL_CALL; // CALL
             8'h60: r = CTRL_BCC;  // Bcc
             8'h61: r = CTRL_BCC;  // Bcc
             8'h62: r = CTRL_BCC;  // Bcc
@@ -1101,8 +1106,14 @@ function automatic ctrl_op_e op_ctrl(input logic [7:0] op);
             8'hCA: r = CTRL_RSR;  // RSR
             8'hD6: r = CTRL_JMP;  // JMP
             8'hD7: r = CTRL_JMP;  // JMP
+            8'hE2: r = CTRL_RET;  // RET
+            8'hE3: r = CTRL_RET;  // RET
             8'hE8: r = CTRL_JSR;  // JSR
             8'hE9: r = CTRL_JSR;  // JSR
+            8'hEA: r = CTRL_RETIU; // RETIU
+            8'hEB: r = CTRL_RETIU; // RETIU
+            8'hFA: r = CTRL_RETIS; // RETIS
+            8'hFB: r = CTRL_RETIS; // RETIS
             default: r = CTRL_NONE;
         endcase
         op_ctrl = r;

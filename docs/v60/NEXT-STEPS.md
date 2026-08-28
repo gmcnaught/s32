@@ -19,25 +19,13 @@ the externally raised exceptions — is **done**; see *What this replaced*.
 
 ---
 
-## 1. The two return pairs
+## 1. What is left of the return pairs
 
-`BSR` and `JSR` pair with `RSR`, which is implemented. The other two pairs are
-not, and each is a pair because neither half is useful alone:
-
-- **`CALL` and `RET`**, which pass the argument pointer: `RET`'s operation is
-  `tmp1 <- num ; tmp2 <- [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ; PC <- tmp2`
-  (§7). `AP` is R30 in the register file already; what is missing is the
-  sequencing and `CALL`'s side of the frame.
-- **`RETIU` and `RETIS`**, which restore the PSW as well as the PC and are how
-  a handler returns. They are the other end of `v60_exc`, which pushes exactly
-  the frame they pop: the return PC on top, the PSW under it, the parameters
-  under that, and the parameter count in the exception code word says how many
-  to discard — "it is used by exception handlers to determine the number of
-  bytes to discard from the stack following the processing of the exception".
-
-`RETIU` and `RETIS` differ in which stack they return to, so they also need
-the register file's stack switch, which `v60_seq` already drives on the way
-*in*.
+All three pairs are **done** — see *What this replaced*. What is left of them
+is what their own pages say they also do and this tree has nothing to do it
+with: both `RETIS` and `RETIU` "check for the occurrence of the Asynchronous
+System and Asynchronous Task Traps", and there is no AST or ATT here. That is
+part of the asynchronous-trap subsystem in item 3, not a gap in the pair.
 
 ## 2. What is left of the externally raised group
 
@@ -108,6 +96,15 @@ for this one.
 
 Three items, all closed, and each one turned up something that was not the
 work itself:
+
+**The two return pairs** — `CALL`/`RET` and `RETIU`/`RETIS`, on one stack
+engine, with `docs/v60/RETURN-PAIRS.md` for the pages. Three of the four claims
+`GOALS.md` started them with were wrong, and the pages say so: the count is an
+**operand** and not something read out of the frame; `RETIU` and `RETIS` differ
+by **privilege** and not by stack; and this file said AP was R30 where RET's own
+Description says R29. A table defect came out with them — both RETIs had a word
+operand where their pages print a halfword — which is the shift group's defect
+for the third time.
 
 **The externally raised exceptions** — `BERR*`, `RT/EP*`, `NMI*` and `INT` on
 `v60_biu`, the interrupt acknowledge pair in `v60_exc`, and the recognition

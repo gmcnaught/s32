@@ -74,11 +74,31 @@ Follow the rules in rtl/cpu/v60x/README.md. Stop only on an issue you cannot
 solve yourself.
 ```
 
-## Goal 2 — the two return pairs
+## Goal 2 — the two return pairs — **DONE**
 
-`RETIU`/`RETIS` became cheaper than `NEXT-STEPS.md` first described them: the
-frame carries the parameter count they need, in the same word as the exception
-code.
+**Three corrections to the goal text below**, all from the Programmer's
+Reference §7 pages for the four instructions, and all recorded in
+`docs/v60/RETURN-PAIRS.md`:
+
+1. *"read it off the frame rather than being told"* — no. Both pages print
+   `retis count.h.r` / `retiu count.h.r`: the count is an **operand**, and both
+   Descriptions say it "allows the interrupt or exception handler to specify
+   the number of bytes to be automatically discarded". §8's sentence is about
+   what the **handler** does with the frame's count field — it reads it and
+   passes it in.
+2. *"The two differ in which stack they return to"* — no. Their Operation,
+   Condition Codes and Addressing Modes blocks are identical. RETIS's
+   Exceptions list begins "Privileged Instruction" and RETIU's does not, and
+   that is the whole difference: System against User.
+3. The paragraph above this one, and `NEXT-STEPS.md`, disagreed about the
+   argument pointer. RET's own Description settles it: **R29**.
+
+A table defect came out with them: `RETIU` and `RETIS` had a word operand where
+both pages print a halfword. Nothing could notice while nothing executed them.
+
+What landed: one stack engine under all three pairs, `RETIS`'s privilege check,
+the Illegal Data Field check for a return to a more privileged level, 15
+mutations checked, and the suite green under both simulators.
 
 ```
 Implement the V60's two return pairs in ~/MisterFPGA-Projects/s32-v60-cleanroom

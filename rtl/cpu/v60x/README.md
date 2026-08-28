@@ -194,10 +194,29 @@ register file, the address unit and the ALU, and retires it.
 | its code naming which KIND of cycle failed, read against write | Table 8-1 | `tb_v60_seq` |
 | a faulting instruction not retiring, and the handler running instead | Fig 8-5 "Abort" | `tb_v60_seq` |
 | all three frames landing on the INTERRUPT stack, not the level stack | §8 + step (vii) | `tb_v60_seq`, `tb_v60_exc` |
+| CALL saving AP and the Next PC, in that order, and passing an ADDRESS | §7 CALL | `tb_v60_seq` |
+| RET restoring AP as well as the PC, and discarding `num` bytes | §7 RET | `tb_v60_seq` |
+| RETIS/RETIU popping the PC then the PSW, which is what `v60_exc` pushed | §7, Fig 8-3 | `tb_v60_seq` |
+| their count being an OPERAND, a halfword, costing one bus cycle | §7 `count.h.r` | `tb_v60_seq` |
+| the whole PSW restored, so the stack switches back on the way out | §7 "Restored" | `tb_v60_seq` |
+| RETIS privileged and RETIU not, which is their only difference | §7 Exceptions | `tb_v60_seq` |
+| returning to a more privileged level raising Illegal Data Field | §7 RETIU | `tb_v60_seq` |
+| AP being R29 | §7 RET, p. 3.247 | `tb_v60_seq` |
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:
 the bench fails when the RTL is broken in the corresponding way.
+
+The runner also regenerates `v60_op_pkg.sv` and fails if the checked-in copy
+differs, because a table edited without regenerating is a table that says one
+thing and an RTL that does another. That check has one way to be defeated, and
+it was defeated: Python's bytecode cache keys on the source file's mtime and
+size, so an edit to `tools/v60x/insn_table.py` that lands in the same second as
+the previous one and leaves the file the same length — which is exactly what
+reverting a one-character mutation does — leaves the cached `.pyc` valid. The
+generator and the check then both read the old table and agree with each other
+about a stale file. `run_v60x.sh` sets `PYTHONDONTWRITEBYTECODE=1`, which
+removes the cache the trap needs.
 
 ## Not verified, because the documents do not say
 
@@ -220,13 +239,13 @@ mode. What exists is a bus, the operand vocabulary above it, the machinery
 that turns one operand reference into bus cycles, an instruction stream, a
 decoder, enough architectural state and datapath to execute the integer
 two-operand instructions of Formats I and II including the shift group and the
-conversions, the control transfers that make a sequence of them a program,
-three of the instruction exceptions, and the three externally raised ones.
+conversions, the control transfers that make a sequence of them a program —
+all three return pairs among them — three of the instruction exceptions, and
+the three externally raised ones.
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
-piece would take. In short: the two return pairs (`CALL`/`RET` and
-`RETIU`/`RETIS`), the multiplies and divides and everything outside the integer
-set, and a doubleword operand's register pair.
+piece would take. In short: the multiplies and divides and everything outside
+the integer set, and a doubleword operand's register pair.
 
 Of the externally raised group, what is missing is the bus freeze interrupt
 (vector 1, and `v60_biu` has no `BFREZ` pin), the double bus error (§8 halts;
@@ -276,6 +295,14 @@ no doubleword code, so an eight-byte operand is driven as `word` and treated as
 two logical word accesses for FAS*; and the split walks upward from the
 operand's address, which nothing observable here depends on but a bus analyser
 would see.
+
+A third table defect turned up with the return pairs, and it is the shift
+group's twice over: `RETIU` and `RETIS` were given a **word** operand from the
+"the V60 stack moves words" rule that governs `PUSH` and `POP`. Their operand
+is not a stack word — both pages print `count.h.r`, and MAME drives
+`moddim = 1` for their opcodes against `2` for `RET`'s. See
+`docs/v60/RETURN-PAIRS.md`; a halfword read from an even address costs one bus
+cycle where a word costs two, which is how `tb_v60_seq` holds it.
 
 A fourth figure defect turned up with `v60_ea`: the p. 3.261 scaling table
 prints a scaled index constant of **3** for Word, against its own

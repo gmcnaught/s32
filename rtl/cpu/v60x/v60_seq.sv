@@ -42,6 +42,53 @@
 //      why the two share opcode C7.
 //
 //  ---------------------------------------------------------------------------
+//  The two return pairs, and the one engine underneath them
+//  ---------------------------------------------------------------------------
+//  CALL/RET and RETIU/RETIS are three different instructions with one shape:
+//  compute something, touch the stack twice, then write two registers and
+//  redirect.  S_STK_* is that shape once, and the operation each of them
+//  performs is the Programmer's Reference's own pseudo-code:
+//
+//    CALL   tmp1 <- effective_address( target ) ; tmp2 <- effective_address( arg )
+//           [-SP] <- AP ; AP <- tmp2 ; [-SP] <- NextPC ; PC <- tmp1
+//    RET    tmp1 <- num ; tmp2 <- [SP+] ; AP <- [SP+] ; SP <- SP + tmp1 ;
+//           PC <- tmp2
+//    RETIS  PC <- [SP+] ; PSW <- [SP+] ; SP <- SP + count
+//    RETIU  the same operation, exactly
+//
+//  Four things about them are worth stating because each one was read off a
+//  page rather than assumed:
+//
+//  * AP is R29.  RET's Description says so outright -- "the return address and
+//    argument pointer register (R29) are restored from the stack" -- and it is
+//    the databook's own p.3.247 assignment.  R30 is FP.
+//  * The frame RETIS and RETIU pop is the one v60_exc pushes.  The PC is on
+//    top and the PSW under it, which is the order the operation prints, and
+//    which is why v60_exc pushes the return PC last.
+//  * The count is an OPERAND, not something read out of the frame.  Both pages
+//    print "retis count.h.r" / "retiu count.h.r" and both say the count
+//    "allows the interrupt or exception handler to specify the number of bytes
+//    to be automatically discarded from the stack".  §8's "the parameter count
+//    ... is used by exception handlers to determine the number of bytes to
+//    discard" describes what the HANDLER does with the frame's count field:
+//    it reads it and passes it here.  The processor never reads that word.
+//  * RETIU and RETIS differ by privilege and by nothing else in these pages.
+//    RETIS's Exceptions list begins "Privileged Instruction" and RETIU's does
+//    not -- System against User, which is what the names say.  Their
+//    Operation, Condition Codes and Addressing Modes blocks are identical.
+//
+//  Both also list Illegal Data Field, and RETIU's page gives a condition for
+//  it: "an Illegal Data Field exception will occur if the execution level
+//  field in the PSW is not [0] and the ISP flag is set or if an attempt is
+//  made to return to a more privileged execution level."  The bracketed digit
+//  did not survive the scan in the copy held here and the databook does not
+//  reprint the page, so only the second clause is implemented -- returning to
+//  a numerically lower execution level -- and the first is recorded unread.
+//
+//  What the pair does NOT do here: check for asynchronous system and task
+//  traps, which both pages say they do.  There are no AST or ATT in this tree.
+//
+//  ---------------------------------------------------------------------------
 //  Format I's `d` bit: the one thing here that is not from a document
 //  ---------------------------------------------------------------------------
 //  Format I has one mod field and one `reg` field, and `d` says which of them
@@ -136,11 +183,6 @@
 //    shifts and rotates, and every instruction outside the integer set.  The
 //    generated table says which by returning ALU_NONE, and this stops on it
 //    rather than doing something arbitrary.
-//  * CALL and RET, which pass the argument pointer: "tmp2 <- [SP+] ; AP <-
-//    [SP+] ; SP <- SP + tmp1" (RET, S7).  They are each other's partner and
-//    neither is here; BSR and JSR pair with RSR, which is.
-//  * RETIU and RETIS, which restore the PSW as well as the PC, and belong with
-//    v60_exc when it is wired in.
 //  * The exceptions that need machinery this tree does not have: no MMU, so no
 //    page fault; no trace or breakpoint; no address traps; no coprocessor.
 //  * Two addressing-mode register writebacks in one instruction -- `mov.w
@@ -302,12 +344,18 @@ module v60_seq
 // All three are Instruction Exceptions, whose frame the same table gives as
 // "+8 Exception Code / +4 PSW / PC (Current PC)" with a parameter count of 4 --
 // one parameter word, and the return PC is the faulting instruction's own.
+//    +68  Privileged Instruction Exception  vector 17   code 1100
+//    +80  Illegal Data Field Exception       vector 20   code 1400
 localparam logic [7:0] VEC_RESERVED_OP   = 8'd16;
+localparam logic [7:0] VEC_PRIVILEGED    = 8'd17;
 localparam logic [7:0] VEC_RESERVED_MODE = 8'd18;
 localparam logic [7:0] VEC_ILLEGAL_MODE  = 8'd19;
+localparam logic [7:0] VEC_ILLEGAL_DATA  = 8'd20;
 localparam logic [15:0] CODE_RESERVED_OP   = 16'h1000;
+localparam logic [15:0] CODE_PRIVILEGED    = 16'h1100;
 localparam logic [15:0] CODE_RESERVED_MODE = 16'h1200;
 localparam logic [15:0] CODE_ILLEGAL_MODE  = 16'h1300;
+localparam logic [15:0] CODE_ILLEGAL_DATA  = 16'h1400;
 
 // The two externally raised vectors this module names.  A maskable interrupt's
 // is not here because it is not chosen here -- it comes off the acknowledge
@@ -370,7 +418,7 @@ localparam logic [1:0] STOP_NO_ALU   = 2'd0;   // not an operation v60_alu has
 localparam logic [1:0] STOP_FORMAT   = 2'd1;   // not a format this executes
 localparam logic [1:0] STOP_TWO_WB   = 2'd2;   // two addressing-mode writebacks
 
-typedef enum logic [4:0] {
+typedef enum logic [5:0] {
     S_IDLE, S_FETCH,
     S_OP1, S_OP1R, S_OP1S, S_OP1W,     // describe, read registers, start, wait
     S_OP2, S_OP2R, S_OP2S, S_OP2W,
@@ -381,7 +429,16 @@ typedef enum logic [4:0] {
 
     // an exception: switch the stack, let the switch land, take it, then run
     // the handler
-    S_EXC_SW, S_EXC_SETTLE, S_EXC_REQ, S_EXC_W
+    S_EXC_SW, S_EXC_SETTLE, S_EXC_REQ, S_EXC_W,
+
+    // the stack engine CALL, RET, RETIU and RETIS share: read the stack
+    // pointer, two accesses, the addressing mode's own writeback, then the two
+    // register writes and the redirect.  The two writes are two states because
+    // the register file has one write port, and the stack switch is a third
+    // because it is a registered request that lands a cycle after it is made
+    // -- the same reason S_EXC_SETTLE exists.
+    S_STK_SP, S_STK_S, S_STK_W, S_STK_WB,
+    S_STK_FIN1, S_STK_FIN2, S_STK_FIN3
 } state_e;
 
 state_e      state;
@@ -400,6 +457,11 @@ logic  [7:0] exc_vec_r;   // the exception being raised, and its code
 logic [15:0] exc_code_r;
 logic  [1:0] exc_kind;    // which of the three shapes of frame it wants
 logic        exc_ack_r;   // and whether its vector comes off the bus
+logic [31:0] sp_r;        // the stack pointer the stack engine is walking
+logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
+                          // or -- for CALL, before either -- the argument list
+logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
+logic        stk_phase;   // which of the two stack accesses is running
 logic        berr_r;      // a bus fault is outstanding
 logic [23:0] berr_addr_r; // where it happened -- the frame's parameter word
 logic [15:0] berr_code_r;
@@ -490,6 +552,10 @@ always_ff @(posedge clk) begin
         berr_r          <= 1'b0;
         berr_addr_r     <= 24'd0;
         berr_code_r     <= 16'd0;
+        sp_r            <= 32'd0;
+        stk_val         <= 32'd0;
+        stk_cnt         <= 32'd0;
+        stk_phase       <= 1'b0;
         rf_stack_switch <= 1'b0;
         rf_new_el       <= 2'd0;
         rf_new_is       <= 1'b0;
@@ -901,6 +967,79 @@ always_ff @(posedge clk) begin
                     ea_addr_only <= 1'b0;
                     state        <= S_CTRL_EAR;
                 end
+                // RETIU and RETIS: the count operand first.  RETIS is the
+                // privileged half of the pair -- its Exceptions list begins
+                // "Privileged Instruction" and RETIU's does not -- and "programs
+                // executing at other execution levels (levels 1, 2 and 3) are
+                // said to be non-privileged and attempts to execute a
+                // privileged instruction will cause an exception" (PgmRef §6).
+                CTRL_RETIU, CTRL_RETIS: begin
+                    if ((cop == CTRL_RETIS) &&
+                        (psw[PSW_EL_HI:PSW_EL_LO] != 2'b00)) begin
+                        exc_vec_r  <= VEC_PRIVILEGED;
+                        exc_code_r <= CODE_PRIVILEGED;
+                        exc_kind   <= EK_INSN;
+                        state      <= S_EXC_SW;
+                    end else begin
+                        rf_ra_sel    <= op1_rn;
+                        ea_rn_sel    <= op1_rn;
+                        rf_rb_sel    <= op1_rx;
+                        ea_mode      <= op1_mode;
+                        ea_index     <= op1_index;
+                        ea_disp      <= op1_disp;
+                        ea_disp_outer<= op1_disp_outer;
+                        ea_imm       <= op1_imm;
+                        ea_opbytes   <= w_src;      // a halfword, from the table
+                        ea_we        <= 1'b0;
+                        ea_rmw       <= 1'b0;
+                        ea_addr_only <= 1'b0;
+                        ea_pc_val    <= idu_pc;
+                        state        <= S_CTRL_EAR;
+                    end
+                end
+                // RET's `num`, the bytes of arguments to discard.  A word,
+                // where the two RETIs take a halfword.
+                CTRL_RET: begin
+                    rf_ra_sel    <= op1_rn;
+                    ea_rn_sel    <= op1_rn;
+                    rf_rb_sel    <= op1_rx;
+                    ea_mode      <= op1_mode;
+                    ea_index     <= op1_index;
+                    ea_disp      <= op1_disp;
+                    ea_disp_outer<= op1_disp_outer;
+                    ea_imm       <= op1_imm;
+                    ea_opbytes   <= w_src;
+                    ea_we        <= 1'b0;
+                    ea_rmw       <= 1'b0;
+                    ea_addr_only <= 1'b0;
+                    ea_pc_val    <= idu_pc;
+                    state        <= S_CTRL_EAR;
+                end
+                // CALL wants two effective ADDRESSES, the target's and the
+                // argument list's, and neither operand's contents.  Both scale
+                // by four: "when the autoincrement, autodecrement, or scaled
+                // index addressing modes are used for either the target or
+                // argument operands, the contents of the pointer are modified
+                // by four" (§7 CALL) -- which is why this does not do what
+                // JMP and JSR do below and pass one byte.
+                CTRL_CALL: begin
+                    taken        <= 1'b1;
+                    cpush        <= 1'b0;
+                    rf_ra_sel    <= op1_rn;
+                    ea_rn_sel    <= op1_rn;
+                    rf_rb_sel    <= op1_rx;
+                    ea_mode      <= op1_mode;
+                    ea_index     <= op1_index;
+                    ea_disp      <= op1_disp;
+                    ea_disp_outer<= op1_disp_outer;
+                    ea_imm       <= op1_imm;
+                    ea_opbytes   <= 4'd4;
+                    ea_we        <= 1'b0;
+                    ea_rmw       <= 1'b0;
+                    ea_addr_only <= 1'b1;
+                    ea_pc_val    <= idu_pc;
+                    state        <= S_CTRL_EAR;
+                end
                 // JMP and JSR take the operand's ADDRESS.  "The destination
                 // operand is treated as byte data for the purpose of computing
                 // pointer changes for the autoincrement, autodecrement, or
@@ -985,6 +1124,48 @@ always_ff @(posedge clk) begin
             end else if (cop == CTRL_JMP) begin
                 target <= ea_ea;
                 state  <= S_CTRL_FIN;
+            end else if ((cop == CTRL_RETIU) || (cop == CTRL_RETIS)) begin
+                // "the data is zero extended to 16-bit length and used as the
+                // count operand", and the operand is a halfword whatever mode
+                // supplied it.  A count of bytes to discard, so zero extended
+                // the rest of the way too.
+                stk_cnt   <= {16'd0, ea_rdata[15:0]};
+                rf_ra_sel <= 5'd31;
+                stk_phase <= 1'b0;
+                state     <= S_STK_SP;
+            end else if (cop == CTRL_RET) begin
+                stk_cnt   <= ea_rdata[31:0];
+                rf_ra_sel <= 5'd31;
+                stk_phase <= 1'b0;
+                state     <= S_STK_SP;
+            end else if (cop == CTRL_CALL) begin
+                if (!cpush) begin
+                    // "tmp1 <- effective_address( target )", then the argument
+                    // list's, and only then is anything pushed.
+                    target       <= ea_ea;
+                    cpush        <= 1'b1;
+                    rf_ra_sel    <= op2_rn;
+                    ea_rn_sel    <= op2_rn;
+                    rf_rb_sel    <= op2_rx;
+                    ea_mode      <= op2_mode;
+                    ea_index     <= op2_index;
+                    ea_disp      <= op2_disp;
+                    ea_disp_outer<= op2_disp_outer;
+                    ea_imm       <= op2_imm;
+                    ea_opbytes   <= 4'd4;
+                    ea_we        <= 1'b0;
+                    ea_rmw       <= 1'b0;
+                    ea_addr_only <= 1'b1;
+                    ea_pc_val    <= idu_pc;
+                    state        <= S_CTRL_EAR;
+                end else begin
+                    stk_val   <= ea_ea;      // tmp2, the new AP
+                    // Both at once: R29 is what gets pushed and R31 is where.
+                    rf_ra_sel <= 5'd29;
+                    rf_rb_sel <= 5'd31;
+                    stk_phase <= 1'b0;
+                    state     <= S_STK_SP;
+                end
             end else begin
                 state <= S_CTRL_FIN;
             end
@@ -1005,6 +1186,145 @@ always_ff @(posedge clk) begin
             end
             retired <= 1'b1;
             state   <= S_IDLE;
+        end
+
+        // ---- the stack engine: CALL, RET, RETIU, RETIS ----------------------
+        // The register file's outputs are valid the cycle after its selects,
+        // so the stack pointer arrives here and the first access is described
+        // from it rather than from the register that has not been read yet.
+        S_STK_SP: begin
+            ea_mode       <= AM_RN_IND;
+            ea_index      <= 1'b0;
+            ea_disp       <= 32'd0;
+            ea_disp_outer <= 32'd0;
+            ea_opbytes    <= 4'd4;
+            ea_rmw        <= 1'b0;
+            ea_addr_only  <= 1'b0;
+            // AM_RN_IND moves no pointer, so these accesses raise no
+            // addressing-mode writeback of their own and the stack pointer is
+            // this module's to compute.  That is deliberate: RET moves SP by
+            // 8 + num and RETIU/RETIS by 8 + count, neither of which any
+            // addressing mode expresses.
+            ea_rn_sel     <= 5'd0;
+            if (cop == CTRL_CALL) begin
+                // "[-SP] <- AP": the push goes BELOW the stack pointer.
+                sp_r      <= rf_rb;
+                ea_rn_val <= rf_rb - 32'd4;
+                ea_we     <= 1'b1;
+                ea_wdata  <= {32'd0, rf_ra};      // the old AP, R29
+            end else begin
+                sp_r      <= rf_ra;
+                ea_rn_val <= rf_ra;
+                ea_we     <= 1'b0;
+            end
+            state <= S_STK_S;
+        end
+
+        S_STK_S: begin
+            ea_start <= 1'b1;
+            state    <= S_STK_W;
+        end
+
+        S_STK_W: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else if (!stk_phase) begin
+                stk_phase <= 1'b1;
+                state     <= S_STK_S;
+                if (cop == CTRL_CALL) begin
+                    // "[-SP] <- NextPC", the second word down.
+                    ea_rn_val <= sp_r - 32'd8;
+                    ea_wdata  <= {32'd0, next_pc};
+                end else begin
+                    // The PC is on top of the frame -- which is where v60_exc
+                    // leaves it -- and the PSW or the AP is under it.
+                    target    <= ea_rdata[31:0];
+                    ea_rn_val <= sp_r + 32'd4;
+                end
+            end else begin
+                if (cop != CTRL_CALL) stk_val <= ea_rdata[31:0];
+                state <= S_STK_WB;
+            end
+        end
+
+        // The addressing mode the count operand used, if it moved a register.
+        // It goes down before this module's own writes, so that a count read
+        // through [R31+] does not land on top of the stack pointer the engine
+        // computed.
+        S_STK_WB: begin
+            // "an attempt is made to return to a more privileged execution
+            // level" is the Illegal Data Field exception (RETIU, §7).  Levels
+            // are "numbered from 0 to 3 with level 0 being the most
+            // privileged" (§6), so more privileged is numerically smaller.
+            if (((cop == CTRL_RETIU) || (cop == CTRL_RETIS)) &&
+                (stk_val[PSW_EL_HI:PSW_EL_LO] < psw[PSW_EL_HI:PSW_EL_LO])) begin
+                exc_vec_r  <= VEC_ILLEGAL_DATA;
+                exc_code_r <= CODE_ILLEGAL_DATA;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else begin
+                if (wb_rn_en) begin
+                    rf_wr_en   <= 1'b1;
+                    rf_wr_sel  <= wb_rn_sel;
+                    rf_wr_data <= wb_rn_val;
+                end
+                state <= S_STK_FIN1;
+            end
+        end
+
+        // The first of the two registers each of these writes.
+        S_STK_FIN1: begin
+            rf_wr_en <= 1'b1;
+            if (cop == CTRL_CALL) begin
+                rf_wr_sel  <= 5'd29;              // "AP <- tmp2"
+                rf_wr_data <= stk_val;
+            end else if (cop == CTRL_RET) begin
+                rf_wr_sel  <= 5'd29;              // "AP <- [SP+]"
+                rf_wr_data <= stk_val;
+            end else begin
+                // RETIU / RETIS: "SP <- SP + count", and the two pops moved it
+                // by four each.  It is written BEFORE the stack switch, because
+                // the switch saves R31 into the entry the old PSW names and the
+                // value it saves has to be the finished one.
+                rf_wr_sel  <= 5'd31;
+                rf_wr_data <= sp_r + 32'd8 + stk_cnt;
+            end
+            state <= S_STK_FIN2;
+        end
+
+        S_STK_FIN2: begin
+            if ((cop == CTRL_RETIU) || (cop == CTRL_RETIS)) begin
+                // The restored PSW's {IS, EL} names the stack the interrupted
+                // program was on.  Requested here and landing in S_STK_FIN3,
+                // where `psw` is still the old one -- which is what makes the
+                // save go to the right entry.
+                rf_stack_switch <= 1'b1;
+                rf_new_el       <= stk_val[PSW_EL_HI:PSW_EL_LO];
+                rf_new_is       <= stk_val[PSW_IS];
+            end else begin
+                rf_wr_en  <= 1'b1;
+                rf_wr_sel <= 5'd31;
+                if (cop == CTRL_CALL) rf_wr_data <= sp_r - 32'd8;
+                else                  rf_wr_data <= sp_r + 32'd8 + stk_cnt;
+            end
+            state <= S_STK_FIN3;
+        end
+
+        S_STK_FIN3: begin
+            if ((cop == CTRL_RETIU) || (cop == CTRL_RETIS)) begin
+                // "Condition Codes: CY / OV / S / Z Restored" -- the whole PSW
+                // comes back, flags included, so this is an assignment and not
+                // a merge.
+                psw <= stk_val;
+            end
+            pc          <= target;
+            redirect    <= 1'b1;
+            redirect_pc <= target;
+            retired     <= 1'b1;
+            state       <= S_IDLE;
         end
 
         // ---- an exception --------------------------------------------------

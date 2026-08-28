@@ -425,6 +425,15 @@ begin
 end
 endtask
 
+task put_word(input [12:0] addr, input [31:0] val);
+begin
+    mem[addr]         = val[7:0];
+    mem[addr + 13'd1] = val[15:8];
+    mem[addr + 13'd2] = val[23:16];
+    mem[addr + 13'd3] = val[31:24];
+end
+endtask
+
 function [31:0] mem_word(input [12:0] addr);
     mem_word = {mem[addr + 13'd3], mem[addr + 13'd2],
                 mem[addr + 13'd1], mem[addr]};
@@ -677,15 +686,112 @@ initial begin
     // MOV.B #3, [R8]
     mem[11'h51A] = 8'h09; mem[11'h51B] = 8'h80; mem[11'h51C] = 8'hF4;
     mem[11'h51D] = 8'h03; mem[11'h51E] = 8'h68;
-    // handler 2:  MOV.B #0xA1, [R8]
+    // handler 2:  MOV.B #0xA1, [R8] ; RETIS #0
+    //   RETIS is Format III, so its m rides in bit 0 of the opcode (FA/FB) and
+    //   one mod field follows.  E0 is immediate quick with the value in its
+    //   low nibble: "when the immediate quick addressing mode is specified,
+    //   the data is zero extended to 16-bit length and used as the count".
+    //   An interrupt's frame is the PSW and the PC and nothing else, so there
+    //   is nothing above them to discard and the count is zero.
     mem[11'h7D0] = 8'h09; mem[11'h7D1] = 8'h80; mem[11'h7D2] = 8'hF4;
     mem[11'h7D3] = 8'hA1; mem[11'h7D4] = 8'h68;
-    // handler 3:  MOV.B #0xA2, [R8]
-    mem[11'h7E0] = 8'h09; mem[11'h7E1] = 8'h80; mem[11'h7E2] = 8'hF4;
-    mem[11'h7E3] = 8'hA2; mem[11'h7E4] = 8'h68;
-    // handler 96: MOV.B #0xA3, [R8]
+    mem[11'h7D5] = 8'hFA; mem[11'h7D6] = 8'hE0;
+    // handler 3:  MOV.W #0x6B0, R9 ; MOV.B #0xA2, [R8] ; RETIS [R9]
+    //   The count is read from MEMORY rather than from an immediate, and the
+    //   word there is FFFF0008: a halfword count of 8, with the upper half set
+    //   to something an implementation that read four bytes could not survive.
+    //   "retis count.h.r" -- the operand is a halfword.
+    //   8 is what this frame has above the PC and PSW: Figure 8-5's Bus Fault
+    //   prints a parameter count of 8, and that is what §8 means by "the
+    //   number of bytes to discard from the stack following the processing of
+    //   the exception".  The handler reads it and passes it here.
+    mem[11'h7E0] = 8'h2D; mem[11'h7E1] = 8'hA0; mem[11'h7E2] = 8'hF4;
+    mem[11'h7E3] = 8'hB0; mem[11'h7E4] = 8'h06; mem[11'h7E5] = 8'h00;
+    mem[11'h7E6] = 8'h00; mem[11'h7E7] = 8'h69;
+    mem[11'h7E8] = 8'h09; mem[11'h7E9] = 8'h80; mem[11'h7EA] = 8'hF4;
+    mem[11'h7EB] = 8'hA2; mem[11'h7EC] = 8'h68;
+    mem[11'h7ED] = 8'hFA; mem[11'h7EE] = 8'h69;
+    // handler 96: MOV.B #0xA3, [R8] ; RETIS #0
     mem[11'h7F0] = 8'h09; mem[11'h7F1] = 8'h80; mem[11'h7F2] = 8'hF4;
     mem[11'h7F3] = 8'hA3; mem[11'h7F4] = 8'h68;
+    mem[11'h7F5] = 8'hFA; mem[11'h7F6] = 8'hE0;
+
+    // ---- a sixth program, at 0x540: the two return pairs --------------------
+    // SBT entry 17, Privileged Instruction   (Figure 8-2's +68) -> 0x780
+    mem[11'h044] = 8'h80; mem[11'h045] = 8'h07;
+    // SBT entry 20, Illegal Data Field       (Figure 8-2's +80) -> 0x790
+    mem[11'h050] = 8'h90; mem[11'h051] = 8'h07;
+    // handler 17: MOV.B #0xB1, [R8]
+    mem[11'h780] = 8'h09; mem[11'h781] = 8'h80; mem[11'h782] = 8'hF4;
+    mem[11'h783] = 8'hB1; mem[11'h784] = 8'h68;
+    // handler 20: MOV.B #0xB2, [R8]
+    mem[11'h790] = 8'h09; mem[11'h791] = 8'h80; mem[11'h792] = 8'hF4;
+    mem[11'h793] = 8'hB2; mem[11'h794] = 8'h68;
+
+    // MOV.W #0x600, R31
+    mem[11'h540] = 8'h2D; mem[11'h541] = 8'hA0; mem[11'h542] = 8'hF4;
+    mem[11'h543] = 8'h00; mem[11'h544] = 8'h06; mem[11'h545] = 8'h00;
+    mem[11'h546] = 8'h00; mem[11'h547] = 8'h7F;
+    // MOV.W #0x700, R8
+    mem[11'h548] = 8'h2D; mem[11'h549] = 8'hA0; mem[11'h54A] = 8'hF4;
+    mem[11'h54B] = 8'h00; mem[11'h54C] = 8'h07; mem[11'h54D] = 8'h00;
+    mem[11'h54E] = 8'h00; mem[11'h54F] = 8'h68;
+    // MOV.W #0x5A5A, R29   the caller's argument pointer, which CALL saves
+    mem[11'h550] = 8'h2D; mem[11'h551] = 8'hA0; mem[11'h552] = 8'hF4;
+    mem[11'h553] = 8'h5A; mem[11'h554] = 8'h5A; mem[11'h555] = 8'h00;
+    mem[11'h556] = 8'h00; mem[11'h557] = 8'h7D;
+    // MOV.W #0x6A0, R9     the argument list.  Loaded BEFORE R10 on purpose:
+    //                      the last immediate an instruction read before the
+    //                      CALL must not be the argument list's address, or an
+    //                      implementation that passed a stale operand instead
+    //                      of the effective address would pass.
+    mem[11'h558] = 8'h2D; mem[11'h559] = 8'hA0; mem[11'h55A] = 8'hF4;
+    mem[11'h55B] = 8'hA0; mem[11'h55C] = 8'h06; mem[11'h55D] = 8'h00;
+    mem[11'h55E] = 8'h00; mem[11'h55F] = 8'h69;
+    // MOV.W #0x590, R10    the first procedure
+    mem[11'h560] = 8'h2D; mem[11'h561] = 8'hA0; mem[11'h562] = 8'hF4;
+    mem[11'h563] = 8'h90; mem[11'h564] = 8'h05; mem[11'h565] = 8'h00;
+    mem[11'h566] = 8'h00; mem[11'h567] = 8'h6A;
+    // CALL [R10], [R9]     49 80 6A 69   Format II, m = m' = 0 so both mod
+    //                                    fields are register indirect.  CALL
+    //                                    takes their ADDRESSES, so what is at
+    //                                    0x590 and 0x6A0 is never read as an
+    //                                    operand -- and 0x6A0 is left at zero.
+    mem[11'h568] = 8'h49; mem[11'h569] = 8'h80; mem[11'h56A] = 8'h6A;
+    mem[11'h56B] = 8'h69;
+    // MOV.B #0x0C, [R8]    where the first RET comes back to
+    mem[11'h56C] = 8'h09; mem[11'h56D] = 8'h80; mem[11'h56E] = 8'hF4;
+    mem[11'h56F] = 8'h0C; mem[11'h570] = 8'h68;
+    // MOV.W #0x5B0, R10    the second procedure
+    mem[11'h571] = 8'h2D; mem[11'h572] = 8'hA0; mem[11'h573] = 8'hF4;
+    mem[11'h574] = 8'hB0; mem[11'h575] = 8'h05; mem[11'h576] = 8'h00;
+    mem[11'h577] = 8'h00; mem[11'h578] = 8'h6A;
+    // CALL [R10], [R9]
+    mem[11'h579] = 8'h49; mem[11'h57A] = 8'h80; mem[11'h57B] = 8'h6A;
+    mem[11'h57C] = 8'h69;
+    // MOV.B #0x0E, [R8]
+    mem[11'h57D] = 8'h09; mem[11'h57E] = 8'h80; mem[11'h57F] = 8'hF4;
+    mem[11'h580] = 8'h0E; mem[11'h581] = 8'h68;
+
+    // procedure 1, at 0x590: MOV.B #0x0B, [R8] ; RET #0
+    //   E2 is RET with m = 0, and E0 is immediate quick with the value in its
+    //   low nibble.  Nothing was pushed above the frame, so nothing is
+    //   discarded.
+    mem[11'h590] = 8'h09; mem[11'h591] = 8'h80; mem[11'h592] = 8'hF4;
+    mem[11'h593] = 8'h0B; mem[11'h594] = 8'h68;
+    mem[11'h595] = 8'hE2; mem[11'h596] = 8'hE0;
+    // procedure 2, at 0x5B0: MOV.B #0x0D, [R8] ; RET #4
+    //   "the optional number operand is used to automatically discard any
+    //   input parameters from the stack", so this one leaves the stack pointer
+    //   four bytes ABOVE where the caller had it.
+    mem[11'h5B0] = 8'h09; mem[11'h5B1] = 8'h80; mem[11'h5B2] = 8'hF4;
+    mem[11'h5B3] = 8'h0D; mem[11'h5B4] = 8'h68;
+    mem[11'h5B5] = 8'hE2; mem[11'h5B6] = 8'hE4;
+    // the privilege pair, each on its own so a raise cannot run the other
+    // RETIS #0   FA E0   -- privileged, so at execution level 3 it raises
+    mem[11'h5C0] = 8'hFA; mem[11'h5C1] = 8'hE0;
+    // RETIU #0   EA E0   -- not privileged, so at execution level 3 it runs
+    mem[11'h5C8] = 8'hEA; mem[11'h5C9] = 8'hE0;
 
     // the pointer the indirect destination goes through
     mem[11'h610] = 8'h00; mem[11'h611] = 8'h06;
@@ -1025,6 +1131,23 @@ initial begin
     step;
     chk(mem[11'h700] === 8'hA1,    "and the handler runs");
 
+    // RETIS: "PC <- [SP+] ; PSW <- [SP+] ; SP <- SP + count", and the count is
+    // an OPERAND, not something read out of the frame.
+    step;
+    chk(seq_pc === 32'h00000510,
+        "RETIS returned to the instruction the NMI interrupted");
+    chk(seq_psw === psw_before,
+        "with the PSW it was pushed with, flags and all: 'CY OV S Z Restored'");
+    chk(seq_psw[PSW_IS] === 1'b0,
+        "so PSW.IS is back off, and the level stack is current again");
+    chk(rf.gpr[31] === 32'h00000600,
+        "and R31 is the LEVEL stack pointer again, back where it started");
+    chk(rf.pr[0] === 32'h00000680,
+        "with the interrupt stack pointer restored to its own entry");
+    step;
+    chk(mem[11'h700] === 8'h01,
+        "and the interrupted instruction runs, at last");
+
     // ---- INT: a level, and PSW.IE decides ----------------------------------
     reset_and_arm;
     jump(32'h00000500);
@@ -1063,6 +1186,13 @@ initial begin
     step;
     chk(mem[11'h700] === 8'hA3,  "and the handler runs");
     @(negedge clk); int_req = 1'b0;
+    repeat (4) @(negedge clk);
+    step;
+    chk(seq_pc === 32'h0000051A,
+        "and RETIS returns from a maskable interrupt the same way");
+    chk(rf.gpr[31] === 32'h00000600, "with the stack pointer back");
+    chk(seq_psw[PSW_IE] === 1'b1,
+        "and PSW.IE restored, because the whole PSW comes back");
 
     // ---- BERR*: the bus fault, which aborts the instruction ----------------
     reset_and_arm;
@@ -1088,8 +1218,144 @@ initial begin
         "four words, on the interrupt stack this group also uses");
     chk(seq_psw[PSW_IE] === 1'b0,
         "and a bus error disables maskable interrupts, by Note 2");
-    step;
+    put_word(13'h6B0, 32'hFFFF_0008);   // a halfword count with a poisoned top
+    step; step;
     chk(mem[11'h700] === 8'hA2,  "the bus fault handler runs");
+    step;
+    chk(seq_pc === 32'h00000510,
+        "and RETIS returns to the instruction whose bus cycle failed");
+    chk(rf.gpr[31] === 32'h00000600,
+        "with the level stack current again");
+    chk(rf.pr[0] === 32'h00000680,
+        "the interrupt stack pointer is back where the frame started");
+    chk(insn_cycles === 5'd5,
+        "and the count cost ONE bus cycle, not two: it is a halfword operand");
+    step;
+    chk(mem[11'h700] === 8'h01,
+        "and the instruction completes, because the fault was aimed once");
+
+    // =======================================================================
+    // CALL and RET, the other return pair.  CALL passes the argument pointer;
+    // RET restores it and discards what the caller pushed.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    // Something at the argument list's address, so that "CALL took the
+    // ADDRESS" is distinguishable from "CALL read what was there".
+    put_word(13'h6A0, 32'hDEAD_BEEF);
+    jump(32'h00000540);
+    step; step; step; step; step;          // R31, R8, R29, R10, R9
+    chk(seq_pc === 32'h00000568,   "the setup ran");
+    chk(rf.gpr[29] === 32'h00005A5A, "with an argument pointer to save");
+
+    step;
+    chk(seq_pc === 32'h00000590,
+        "CALL transferred to the effective ADDRESS of its target operand");
+    chk(rf.gpr[29] === 32'h000006A0,
+        "and AP is the argument list's ADDRESS, not the word at it");
+    chk(mem_word(13'h5FC) === 32'h00005A5A,
+        "the caller's AP went down first: '[-SP] <- AP'");
+    chk(mem_word(13'h5F8) === 32'h0000056C,
+        "then the Next PC, so the return address is on top");
+    chk(rf.gpr[31] === 32'h000005F8, "two words of frame");
+    chk(insn_cycles === 5'd4,
+        "which is two bus cycles each on a sixteen bit bus, and no operand read");
+    step;
+    chk(mem[11'h700] === 8'h0B,   "the procedure ran");
+
+    step;
+    chk(seq_pc === 32'h0000056C,  "RET returned to the instruction after CALL");
+    chk(rf.gpr[29] === 32'h00005A5A,
+        "and restored the caller's argument pointer: 'AP <- [SP+]'");
+    chk(rf.gpr[31] === 32'h00000600,
+        "with the stack pointer back where it started: the frame is gone");
+    step;
+    chk(mem[11'h700] === 8'h0C,   "and the caller continues");
+
+    // A RET that discards, which is what the `num` operand is for.
+    step;                                  // point R10 at the second procedure
+    step;
+    chk(seq_pc === 32'h000005B0,  "the second call");
+    chk(rf.gpr[31] === 32'h000005F8, "pushes the same two words");
+    step;
+    chk(mem[11'h700] === 8'h0D,   "the second procedure ran");
+    step;
+    chk(seq_pc === 32'h0000057D,  "and RET #4 returned");
+    chk(rf.gpr[31] === 32'h00000604,
+        "leaving the stack pointer four bytes ABOVE the caller's: 'SP <- SP + tmp1'");
+    step;
+    chk(mem[11'h700] === 8'h0E,   "and the caller continues from there too");
+
+    // =======================================================================
+    // RETIS is privileged and RETIU is not, which is the whole documented
+    // difference between them: RETIS's Exceptions list begins "Privileged
+    // Instruction" and RETIU's does not.
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    pr_id = 5'd1; pr_wdata = 32'h0000_0660; pr_wr = 1'b1;  // PR_L0SP
+    @(negedge clk); pr_wr = 1'b0; @(negedge clk);
+    jump(32'h00000540);
+    step; step;                            // R31 = 0x600, R8 = 0x700
+    // Execution level 3, the way the CHLVL this tree does not have would set
+    // it.  R31 is now read as the level 3 stack pointer, which is what it
+    // holds.
+    @(negedge clk);
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h000005C0);
+    step;
+    chk(seq_pc === 32'h00000780,
+        "RETIS at execution level 3 is the Privileged Instruction exception");
+    chk(mem_word(13'h65C) === 32'h11000004,
+        "with vector 17's code, and its frame on the level 0 stack");
+    step;
+    chk(mem[11'h700] === 8'hB1, "and that handler runs");
+
+    // RETIU at the same level runs, because it is the user half of the pair.
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    pr_id = 5'd1; pr_wdata = 32'h0000_0660; pr_wr = 1'b1;
+    @(negedge clk); pr_wr = 1'b0; @(negedge clk);
+    jump(32'h00000540);
+    step; step;
+    // A frame to pop: the PC on top, the PSW under it -- the order v60_exc
+    // leaves them in -- and a PSW that stays at level 3.
+    put_word(13'h600, 32'h0000_056C);
+    put_word(13'h604, 32'h0300_0000);
+    @(negedge clk);
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h000005C8);
+    step;
+    chk(seq_pc === 32'h0000056C,
+        "RETIU at execution level 3 is not privileged, and returns");
+    chk(rf.gpr[31] === 32'h00000608,
+        "having popped two words and discarded a count of zero");
+    chk(seq_psw[PSW_EL_HI:PSW_EL_LO] === 2'b11,
+        "with the execution level the popped PSW carried");
+
+    // And the same instruction returning to a MORE privileged level is the
+    // Illegal Data Field exception: "levels are numbered from 0 to 3 with
+    // level 0 being the most privileged".
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    pr_id = 5'd1; pr_wdata = 32'h0000_0660; pr_wr = 1'b1;
+    @(negedge clk); pr_wr = 1'b0; @(negedge clk);
+    jump(32'h00000540);
+    step; step;
+    put_word(13'h600, 32'h0000_056C);
+    put_word(13'h604, 32'h0000_0000);      // execution level 0
+    @(negedge clk);
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h000005C8);
+    step;
+    chk(seq_pc === 32'h00000790,
+        "returning to a more privileged level raises Illegal Data Field");
+    chk(mem_word(13'h65C) === 32'h14000004, "which is vector 20, code 1400");
+    step;
+    chk(mem[11'h700] === 8'hB2, "and that handler runs");
 
     // A read that fails carries a different code from a write that does: the
     // 0300-031E group is one code per KIND of cycle.
