@@ -367,6 +367,17 @@ always_comb begin
         ALU_PUSHM, ALU_POPM: writes = 1'b0;
         // Both operands ".b.r"; the effect is entirely an exception.
         ALU_CHLVL: writes = 1'b0;
+        // "flags <- dst - Rn", which is CMP with x = Rn and y = dst.  Nothing
+        // is produced here: on a match the destination takes R28 and on a
+        // mismatch Rn takes the destination, and neither value is the
+        // subtraction.
+        ALU_CAXI: begin
+            raw    = diff[31:0];
+            f_cy   = carry_of(diff, opbytes);
+            f_ov   = (sign_of(xa, msb) != sign_of(ym, msb)) &&
+                     (sign_of(raw, msb) != sign_of(ym, msb));
+            writes = 1'b0;
+        end
         // "dst <- 0FFH" -- unconditionally, whatever the comparison said.
         // The flags are the comparison's and the result is the constant, which
         // is why this cannot be CMP with a different writeback.

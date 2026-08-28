@@ -562,6 +562,9 @@ EXEC_OP = {
     # a level-3 program may call UP, but only through this gate and onto a
     # handler the operating system installed.
     'CHLVL': 'CHLVL',
+    # Compare and swap, interlocked.  Its implicit R28 has no slot in the
+    # widths table, as `pat` and `blen` have none elsewhere.
+    'CAXI': 'CAXI',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

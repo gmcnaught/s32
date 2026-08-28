@@ -165,6 +165,13 @@ typedef enum logic [5:0] {
     // written; the whole effect is an exception, and the ONLY one in the set
     // whose handler does not run at execution level 0.
     ALU_CHLVL   = 6'd57,
+    // "lock ; flags <- dst - Rn ; if (Z=1) then dst <- R28 else Rn <- dst ;
+    // unlock" -- compare and swap, and "a more general form of the TASI
+    // instruction".  R28 is an IMPLICIT third operand: the new value comes
+    // from it and it appears nowhere in the syntax line.  The comparison is
+    // CMP's exactly, so that is all this does; which of the two writes happens
+    // is the sequencer's.
+    ALU_CAXI    = 6'd58,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

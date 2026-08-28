@@ -1038,6 +1038,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
             8'h47: r = ALU_SETF; // SETF
             8'h4A: r = ALU_UPDPSWH; // UPDPSW.H
             8'h4B: r = ALU_CHLVL; // CHLVL
+            8'h4C: r = ALU_CAXI; // CAXI
             8'h50: r = ALU_REM;  // REM
             8'h51: r = ALU_REMU; // REMU
             8'h52: r = ALU_REM;  // REM

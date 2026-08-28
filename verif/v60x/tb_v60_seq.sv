@@ -1225,6 +1225,10 @@ initial begin
     mem[11'h150] = 8'h09; mem[11'h151] = 8'h80; mem[11'h152] = 8'hF4;
     mem[11'h153] = 8'hE2; mem[11'h154] = 8'h68;
 
+    // CAXI R9, [R8]   4C 09 68   -- Format I, d = 0 (the page requires it),
+    //   so the register field is Rn and the mod field is the destination.
+    mem[11'h721] = 8'h4C; mem[11'h722] = 8'h09; mem[11'h723] = 8'h68;
+
     // TASI [R8]   E0 68   -- Format III, m = 0, a byte through a pointer
     mem[11'h650] = 8'hE0; mem[11'h651] = 8'h68;
 
@@ -3095,6 +3099,45 @@ initial begin
         "at level 0 -- CHLVL's target level did not leak into the next exception");
     chk(rf.gpr[31] === 32'h00000674,
         "and its frame went on L0SP, not on the level 2 stack");
+
+    // =======================================================================
+    // CAXI -- compare and swap, and "a more general form of the TASI
+    // instruction".  R28 is an IMPLICIT third operand: the new value comes
+    // from it and it appears nowhere in the syntax line.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    @(negedge clk);
+    rf.gpr[9]  = 32'h1234_5678;              // Rn, the comparand
+    rf.gpr[28] = 32'h5EED_C0DE;              // the value to install
+    put_word(13'h700, 32'h1234_5678);        // the destination MATCHES
+    repeat (2) @(negedge clk);
+    n_block = 0;
+    jump(32'h00000721);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "CAXI on a matching destination sets Z -- the comparison is dst - Rn");
+    chk(mem_word(13'h700) === 32'h5EED_C0DE,
+        "and installs R28, which the syntax line never mentions");
+    chk(rf.gpr[9] === 32'h1234_5678, "leaving Rn alone on a match");
+    chk(n_block == 4,
+        "with BLOCK* over all four cycles: a word read and a word write, interlocked");
+
+    // Now the destination no longer matches -- which is the case a retry loop
+    // is built on.  The word there is a THIRD value, equal to neither R28 nor
+    // Rn: with R28's value still sitting in memory, "Rn takes what was there"
+    // and "Rn takes R28" cannot be told apart.
+    @(negedge clk);
+    put_word(13'h700, 32'hFACE_0FF1);
+    repeat (2) @(negedge clk);
+    jump(32'h00000721);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b0, "a second CAXI does not match, and clears Z");
+    chk(rf.gpr[9] === 32'hFACE_0FF1,
+        "so Rn receives what was ACTUALLY there -- the retry value, without a second read");
+    chk(mem_word(13'h700) === 32'hFACE_0FF1,
+        "and the destination keeps its own contents");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

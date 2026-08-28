@@ -500,6 +500,9 @@ typedef enum logic [5:0] {
     // XCH's second write: dst2 goes out through the ordinary destination
     // path and dst1, which the page guarantees is a register, is written here.
     S_XCH,
+    // CAXI: fetch the implicit R28, then -- on a mismatch -- give Rn what the
+    // destination held, which is what makes a retry loop possible.
+    S_CAXI_R, S_CAXI_W,
     // PUSHM and POPM: read the stack pointer, then walk the mask one register
     // at a time -- select, access, write back, repeat -- and write the stack
     // pointer once at the end.  The loop is here rather than unrolled because
@@ -544,6 +547,10 @@ logic [31:0] sp_r;        // the stack pointer the stack engine is walking
 logic [31:0] fp_r;        // and the frame pointer, for PREPARE and DISPOSE
 logic [31:0] msk_r;       // PUSHM and POPM's remaining register list
 logic  [4:0] idx_r;       // and the register it is working on
+// CAXI's implicit third operand.  "the contents of R28 are stored in the
+// destination" -- R28 appears nowhere in the syntax line, so it is fetched
+// here rather than through the operand path.
+logic [31:0] r28_r;
 logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
                           // or -- for CALL, before either -- the argument list
 logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
@@ -865,7 +872,9 @@ wire        is_popm  = (aop == ALU_POPM);
 // that reads then writes -- INC, DEC, SET1, CLR1, NOT1 -- is plain `rw`.  That
 // letter is the architecture's own list of what needs a lock.
 wire        is_tasi = (aop == ALU_TASI);
-wire        is_lockop = is_tasi;
+wire        is_caxi = (aop == ALU_CAXI);
+wire        is_lockop = is_tasi || is_caxi;
+
 
 // CHLVL, the execution-level gateway and the only exception in this tree whose
 // handler does NOT run at level 0.
@@ -1034,6 +1043,10 @@ wire [31:0] eff_result = md_used ? md_result_r : alu_result;
 wire  [3:0] eff_flags  = md_used ? md_flags_r  : alu_flags;
 wire        eff_writes = md_used ? md_writes_r : alu_writes;
 
+// "if ( Z = 1 ) then dst <- R28 else Rn <- dst".  The comparison is CMP's, so
+// its Z is the match, and the ALU is already producing it.
+wire        caxi_match = alu_flags[PSW_Z];
+
 
 always_ff @(posedge clk) begin
     if (rst) begin
@@ -1077,6 +1090,7 @@ always_ff @(posedge clk) begin
         fp_r            <= 32'd0;
         msk_r           <= 32'd0;
         idx_r           <= 5'd0;
+        r28_r           <= 32'd0;
         stk_val         <= 32'd0;
         stk_cnt         <= 32'd0;
         stk_phase       <= 1'b0;
@@ -1603,6 +1617,15 @@ always_ff @(posedge clk) begin
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
             end
+            // CAXI needs a register the syntax line never mentions.  Read
+            // here, where both operands are in and the register file's ports
+            // are free again -- S_OP2 was using them for the destination's
+            // addressing mode.
+            else if (is_caxi) begin
+                rf_ra_sel <= 5'd28;
+                md_used   <= 1'b0;
+                state     <= S_CAXI_R;
+            end
             // The ALU is combinational and its inputs are already presented.
             // v60_muldiv is not, so those six are started here and waited on.
             else if (md_is) begin
@@ -1624,7 +1647,34 @@ always_ff @(posedge clk) begin
         end
 
         S_WB: begin
-            if (!eff_writes) begin
+            if (is_caxi) begin
+                // One write either way, and which VALUE it carries is the
+                // whole instruction: R28 on a match, the destination's own
+                // contents on a mismatch.  Writing the original back is not a
+                // no-op -- the operand's access type is `rwi`, a
+                // read-modify-write, and the bus cycle is part of what BLOCK*
+                // is announcing.
+                //
+                // NOT SETTLED by the page: whether a failing CAXI issues the
+                // write cycle at all.  The Operation block's `else` branch
+                // does not write dst, but the access type marks the operand
+                // read-modify-write unconditionally and the interlock is
+                // described as "an indivisible read-modify-write bus cycle".
+                // Recorded as a decision here.  See docs/v60/TRANCHE-TWO.md.
+                if (ea_rmw_pending) begin
+                    ea_rmw_data <= caxi_match ? {32'd0, r28_r} : val2;
+                    ea_rmw_go   <= 1'b1;
+                    state       <= S_WBW;
+                end else begin
+                    // A register destination: "the execution of the
+                    // instruction is meaningless but the operation is carried
+                    // out."
+                    ea_we    <= 1'b1;
+                    ea_wdata <= caxi_match ? {32'd0, r28_r} : val2;
+                    ea_start <= 1'b1;
+                    state    <= S_WBW;
+                end
+            end else if (!eff_writes) begin
                 // CMP and TEST leave no result.  If the destination was read
                 // through a read-modify-write access, that access is still
                 // open and has to be closed with what was already there;
@@ -1668,6 +1718,8 @@ always_ff @(posedge clk) begin
                 state     <= S_EXC_SW;
             end else if (is_xch) begin
                 state <= S_XCH;
+            end else if (is_caxi && !caxi_match) begin
+                state <= S_CAXI_W;
             end else begin
                 state <= S_RETIRE;
             end
@@ -2326,6 +2378,24 @@ always_ff @(posedge clk) begin
                 // pointer it started from, whatever the frame contained.
                 rf_wr_data <= fp_r + 32'd4;
             state <= S_RETIRE;
+        end
+
+        // ---- CAXI ------------------------------------------------------------
+        S_CAXI_R: begin
+            r28_r <= rf_ra;
+            state <= S_WB;
+        end
+
+        // "Otherwise the destination contents are placed in Rn."  So on a
+        // MISMATCH the caller gets the word that was actually there, which is
+        // what lets a compare-and-swap loop retry with the observed value
+        // rather than re-reading it -- and re-reading it would not be
+        // indivisible.
+        S_CAXI_W: begin
+            rf_wr_en   <= 1'b1;
+            rf_wr_sel  <= idu_reg;
+            rf_wr_data <= val2[31:0];
+            state      <= S_RETIRE;
         end
 
         // ---- PUSHM and POPM's mask walk --------------------------------------
