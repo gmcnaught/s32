@@ -2,7 +2,9 @@
 //  V60 directed test for the audit fixes (E1):
 //   - MOVCUB string copy (A1): copies a byte string src->dst
 //   - CALL/RET with AP preservation (A5/A6): AP restored across call
-//   - reserved primary opcodes 6B/7B take vector 8 and push PC/PSW
+//   - reserved primary opcodes 58/5A take vector 8 and push PC/PSW
+//   - 6B/7B are NOT reserved: they are Bcc with the "False / Never" condition
+//     and fall through by two and three bytes (see check_never_branch)
 //  64KB RAM on the 16-bit bus; PASS printed if all checks hold.
 //============================================================================
 `timescale 1ns/1ps
@@ -104,17 +106,61 @@ begin
 end
 endtask
 
+// Condition code 1011 is "False / Never" -- databook p.3.295's Condition
+// Encodings table prints all sixteen and marks none of them reserved, where
+// the two tables beside it on that page DO print "reserved" for their unused
+// encodings -- and p.3.298's Bcc row is `011 b c3 c2 c1 c0` with no exclusion.
+// So 6B and 7B are branches that can never be taken, two and three bytes long.
+//
+// They used to be checked here as reserved opcodes taking vector 8, which is
+// what MAME's dispatch table implies and what this core did.  The
+// disagreement was found by verif/v60x/tb_v60_cosim.sv; see docs/v60/COSIM.md.
+//
+// The displacement is 0x7F, and the RAM beyond it is zero -- which decodes as
+// HALT -- so a branch wrongly TAKEN halts at 0x7F or 0x7F7F instead of at the
+// instruction after this one, and the PC check below says so.
+task automatic check_never_branch(input [7:0] op, input integer len);
+    integer cycles;
+begin
+    rst = 1'b1;
+    repeat (4) @(posedge clk);
+    for (i = 0; i < 32768; i = i + 1) ram[i] = 16'h0000;
+    if (len == 2) ram[0] = {8'h7f, op};                  // op, disp8, HALT
+    else begin    ram[0] = {8'h7f, op}; ram[1] = 16'h007f; end  // op, disp16, HALT
+    cpu.r[31] = 32'h0000_8000;
+    rst = 1'b0;
+    cycles = 0;
+    while (!cpu.halted && cycles < 2000) begin
+        @(posedge clk);
+        cycles = cycles + 1;
+    end
+    if (!cpu.halted || cpu.pc !== len[31:0] ||
+        cpu.r[31] !== 32'h0000_8000) begin
+        errors = errors + 1;
+        $display("NEVER-BRANCH %02x FAIL halt=%0d pc=%08x sp=%08x (expected pc=%0d, sp unmoved)",
+                 op, cpu.halted, cpu.pc, cpu.r[31], len);
+    end
+    else $display("NEVER-BRANCH %02x PASS cycles=%0d", op, cycles);
+end
+endtask
+
 task automatic check_clrtlb_length;
     integer cycles;
 begin
     rst = 1'b1;
     repeat (4) @(posedge clk);
     for (i = 0; i < 256; i = i + 1) ram[i] = 16'h0000;
-    // CLRTLB #$6b6b6b6b is six bytes.  Each immediate byte would itself be a
-    // reserved primary opcode if the operand were incorrectly skipped.
+    // CLRTLB #$00000000 is six bytes, and the HALT that stops this test is the
+    // zero byte after them.  The immediate used to be 6B6B6B6B, on the grounds
+    // that "each immediate byte would itself be a reserved primary opcode if
+    // the operand were incorrectly skipped" -- 6B is not reserved any more, and
+    // an operand skipped short would decode two never-taken branches and reach
+    // the same HALT at the same PC, so that filler had stopped discriminating.
+    // Zero bytes are HALT, so a short skip halts EARLY and the PC check catches
+    // it, which is what the check was for.
     ram[0] = 16'hf4fe;
-    ram[1] = 16'h6b6b;
-    ram[2] = 16'h6b6b;
+    ram[1] = 16'h0000;
+    ram[2] = 16'h0000;
     ram[3] = 16'h0000;
     cpu.r[31] = 32'h0000_8000;
     rst = 1'b0;
@@ -418,8 +464,8 @@ initial begin
     // This exercises BSR/RSR return path and register file integrity.
     $display("R0=%08x R30=%08x halted=%0d", cpu.r[0], cpu.r[30], cpu.halted);
     if (!cpu.halted || cpu.r[0] != 32'h00001111) errors = errors + 1;
-    check_reserved(8'h6b, 8'h00);
-    check_reserved(8'h7b, 8'h00);
+    check_never_branch(8'h6b, 2);
+    check_never_branch(8'h7b, 3);
     check_reserved(8'h58, 8'h03);
     check_reserved(8'h5a, 8'h03);
     check_clrtlb_length;

@@ -47,38 +47,84 @@ finishes two bytes early and the boundary moves.
 Both were found by mutation: the first attempt used round numbers and the
 mutations passed.
 
-## The one divergence, and what to do about it
+## The divergence it found: opcodes `6B` and `7B` — resolved
 
-**Opcodes `6B` and `7B`.**
-
-The clean-room table decodes them as Format IV branches. The databook's row for
-Bcc is `011 b cccc` (p. 3.298) with no exclusion, and the Condition Encodings
-table on p. 3.295 prints `1011` as a real condition — "False / Never" — so they
-are two and three bytes long and never branch.
-
-`s32_v60.sv` raises the reserved-opcode exception on both, and says why in its
-own source:
+The first run of this bench had those two opcodes in the executed program, put
+there precisely because a never-taken branch is what a length test wants from a
+branch. The shipping core branched to a handler on both: it raised the
+reserved-opcode exception, and said why in its own source —
 
 > `0x6B/0x7B are holes in MAME's authoritative primary dispatch table, not`
 > `branch-condition encodings.`
 
-A dispatch table with no entry for a branch that can never be taken is not the
-same statement as an encoding that does not exist, and NEC's two tables both
-print one.
+### What the plates say
 
-The bench measures the clean-room side, quotes the shipping side, and reports it
-as `KNOWN` rather than failing: it is a disagreement about what an encoding
-*means*, which no length test can settle. It is recorded here so that neither
-side is "fixed" against the other without a page.
+Two pages, and they had to be read off the plates because both books' OCR
+mangles the opcode column.
 
-The first run of this bench found it, with those two opcodes in the executed
-program — they were chosen precisely because a never-taken branch is what a
-length test wants. They are out of the program now, because the shipping core
-branches to a handler on them and a straight-line comparison cannot survive
-that.
+**p. 3.295, Condition Encodings.** Sixteen rows, `c3 c2 c1 c0` against Name and
+Condition, and the last two of the middle block are
+
+```
+    1 0 1 0    True     Always
+    1 0 1 1    False    Never
+```
+
+Not one of the sixteen is marked reserved — and the two tables printed beside
+it *on the same page* do mark theirs: Integer Data Type Selection prints
+`11 reserved`, Bit Field Extension prints `11 reserved`. NEC says "reserved"
+when it means reserved. The same page's Branch Displacements table gives
+`b = 0` byte, `b = 1` halfword.
+
+**p. 3.298, Control Transfer Instructions.** The Bcc row is
+
+```
+    Bcc    0 1 1 b c3 c2 c1 c0    IV
+```
+
+with no exclusion, no note, and an empty Exceptions column.
+
+### Why absence of a mnemonic is not absence of an encoding
+
+The Programmer's Reference's Bcc page lists sixteen mnemonics — BGT, BGE, BLT,
+BLE, BH, BNL, BL, BNH, BE, BNE, BV, BNV, BN, BP, BC, BNC — and two of those are
+aliases (`BL`/`BC` are both `0010`, `BNL`/`BNC` both `0011`). So it names
+fourteen distinct conditions and omits exactly two: `1010` and `1011`.
+
+`1010` is "True / Always", which an assembler spells `BR`. This core has always
+executed `6A`, and games depend on it. The Reference simply has no *conditional*
+mnemonic for a branch that is unconditional, and nothing useful to call one that
+never branches — that is an assembler-syntax fact, not an encoding fact.
+
+`1010` and `1011` are adjacent rows of one sixteen-row table. There is no
+reading of these pages under which one is a branch and the other is a reserved
+opcode.
+
+### What changed
+
+`s32_v60.sv` decodes both `0x60-0x6F` and `0x70-0x7F` whole. Its own
+`cond_true()` already returned 0 for `4'hb`, so removing the two carve-outs was
+the entire fix: a branch that is never taken, two and three bytes long.
+
+`verif/v60/tb_v60_audit.sv` asserted the old behaviour — "reserved primary
+opcodes 6B/7B take vector 8 and push PC/PSW" — and now asserts the new one
+through `check_never_branch()`: the core falls through by two and three bytes,
+pushes nothing, and does not reach the vector-8 handler. Its `check_clrtlb_length`
+test had to change too, and that is worth recording: it filled a six-byte
+CLRTLB immediate with `6B` bytes on the grounds that "each immediate byte would
+itself be a reserved primary opcode if the operand were incorrectly skipped".
+With `6B` no longer reserved, a short skip would have decoded two never-taken
+branches and arrived at the same HALT at the same PC — the test would have
+passed vacuously. The filler is zero bytes now, which are HALT, so a short skip
+halts early and the PC check catches it.
+
+The two opcodes are back in this bench's executed program, which is only
+possible because both sides now agree about them.
 
 ## What else came out of building it
 
+- **`s32_v60.sv` traps two legal opcodes.** Resolved above — that is what the
+  bench was built to find, and it found it on its first run.
 - **`fmt_base_bytes` was dead.** `v60_fmt_pkg` carried a helper that added the
   opcode byte, the second base byte and the format's displacement, and nothing
   in the tree called it — which is how a mutation to it passed every bench.

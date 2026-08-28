@@ -96,10 +96,13 @@ Three items, all closed, and each one turned up something that was not the
 work itself:
 
 **The co-simulation oracle** — the two cores on one instruction stream,
-compared on instruction boundaries. One divergence, recorded and not resolved:
-opcodes `6B` and `7B` are Format IV branches with the "False / Never" condition
-here and reserved opcodes in `s32_v60.sv`, which says they are "holes in MAME's
-authoritative primary dispatch table". Two things around it were also wrong:
+compared on instruction boundaries. It found one divergence on its first run and
+it is now closed **in the shipping core's favour of the pages**: opcodes `6B`
+and `7B` are Bcc with the "False / Never" condition that p. 3.295 prints and
+p. 3.298's row does not exclude, not reserved opcodes. `s32_v60.sv` raised
+vector 8 on them — a hole in MAME's dispatch table read as an absent encoding —
+and `tb_v60_audit` asserted that it did; both moved. Two things around it were
+also wrong:
 `fmt_base_bytes` had no caller at all, and `insn_table.py`'s operand-access
 cross-check silently did not run when the tool was invoked from the directory
 the generator is invoked from.

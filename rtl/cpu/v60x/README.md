@@ -226,9 +226,13 @@ against a second opinion.
 | every format's base length and displacement: I, II, III, IV both widths, V, VI | p. 3.293 | `tb_v60_cosim` |
 | the shipping core writing its PC once per instruction, forward | — | `tb_v60_cosim` |
 
-One divergence is recorded rather than resolved: opcodes `6B` and `7B`, which
-this tree decodes as Format IV branches with the "False / Never" condition and
-`s32_v60.sv` raises on as reserved. See `docs/v60/COSIM.md`.
+It found one divergence and it is resolved: opcodes `6B` and `7B`. Condition
+code `1011` is "False / Never" on p. 3.295 — a table that marks none of its
+sixteen rows reserved, on a page whose two neighbouring tables both do mark
+theirs — and p. 3.298's Bcc row is `011 b c3 c2 c1 c0` with no exclusion. They
+are branches that are never taken. `s32_v60.sv` raised the reserved-opcode
+exception on them, inherited from a hole in MAME's dispatch table, and does not
+any more; `verif/v60/tb_v60_audit.sv` moved with it. See `docs/v60/COSIM.md`.
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:

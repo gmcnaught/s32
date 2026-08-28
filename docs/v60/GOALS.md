@@ -180,12 +180,15 @@ solve yourself.
 CSV path is fixed too, and `insn_table.py` now fails outright if the
 cross-check did not run rather than printing a zero underneath a pass.
 
-It found one divergence, which is recorded and not resolved: opcodes `6B` and
-`7B` decode here as Format IV branches with the "False / Never" condition that
-p. 3.295's Condition Encodings table prints, and `s32_v60.sv` raises the
-reserved-opcode exception on them because they are "holes in MAME's
-authoritative primary dispatch table". A hole in a dispatch table is not an
-absent encoding.
+It found one divergence and it is resolved, in the pages' favour: opcodes `6B`
+and `7B` are Bcc with condition `1011`, "False / Never". p. 3.295's Condition
+Encodings table prints all sixteen codes and marks none reserved — where the two
+tables beside it on that page do mark theirs — and p. 3.298's Bcc row is
+`011 b c3 c2 c1 c0` with no exclusion. `s32_v60.sv` raised the reserved-opcode
+exception on them, from a hole in MAME's dispatch table; it does not any more,
+and `verif/v60/tb_v60_audit.sv` moved with it. A hole in a dispatch table is not
+an absent encoding — and `1010`, its neighbour in the same sixteen-row table, is
+the unconditional branch every game uses.
 
 Two smaller things came with it: `v60_fmt_pkg`'s `fmt_base_bytes` had no caller
 in the whole tree — which is how a mutation to it passed every bench — and the

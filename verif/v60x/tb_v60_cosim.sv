@@ -47,26 +47,24 @@
 //  rather than merely noticed.
 //
 //  ---------------------------------------------------------------------------
-//  One divergence is already known, and it is not a length
+//  The divergence this bench found, and how it was closed
 //  ---------------------------------------------------------------------------
-//  Opcodes 6B and 7B.  The clean-room table decodes them as Format IV branches
-//  -- the databook's row for Bcc is `011 b cccc` (p.3.298) with no exclusion,
-//  and the Condition Encodings table on p.3.295 prints `1011` as a real
-//  condition, "False / Never" -- so they are two and three bytes long and
-//  never branch.
+//  Opcodes 6B and 7B.  Its first run had them in the executed program, chosen
+//  because condition code 1011 is "False / Never" and a never-taken branch is
+//  what a length test wants -- and the shipping core branched to a handler:
+//  it raised the reserved-opcode exception on both, "holes in MAME's
+//  authoritative primary dispatch table, not branch-condition encodings".
 //
-//  `s32_v60.sv` raises the reserved-opcode exception on both, and says why in
-//  its own source: "0x6B/0x7B are holes in MAME's authoritative primary
-//  dispatch table, not branch-condition encodings."  A dispatch table with no
-//  entry for a branch that can never be taken is not the same statement as an
-//  encoding that does not exist, and NEC's two tables both print one.
+//  NEC's pages say otherwise twice.  p.3.298's Bcc row is `011 b c3 c2 c1 c0`
+//  with no exclusion and an empty Exceptions column, and p.3.295's Condition
+//  Encodings table prints all sixteen codes with 1011 as "False / Never" --
+//  where the two tables printed beside it on that page DO mark their unused
+//  encodings "reserved".  1010 and 1011 are adjacent rows of one table, and
+//  this core has always executed 1010, which every game uses as `BR`.
 //
-//  The bench measures the clean-room side and quotes the shipping side, and
-//  reports it as KNOWN rather than failing: it is a disagreement about what an
-//  encoding MEANS, which no length test can settle.  The first run of this
-//  bench found it, with those two opcodes in the executed program; they are
-//  out of it now because the shipping core branches to a handler on them and a
-//  straight-line comparison cannot survive that.
+//  `s32_v60.sv` decodes both ranges whole now, and the two opcodes are back in
+//  the program below -- which is only possible because both sides agree.  See
+//  docs/v60/COSIM.md.
 //============================================================================
 `timescale 1ns/1ps
 
@@ -411,6 +409,20 @@ initial begin
     ab(8'h70); ab(8'h03); ab(8'h00);
     insn_end;
 
+    // Condition code 1011, which p.3.295's Condition Encodings table names
+    // "False / Never".  These two were the divergence this bench was written
+    // to find: the shipping core raised the reserved-opcode exception on them
+    // because MAME's dispatch table has no entry, and NEC's two tables both
+    // print the encoding.  They are in the executed program now, which is
+    // only possible because both sides agree.
+    insn_begin("Bcc(Never) disp8");
+    ab(8'h6B); ab(8'h03);
+    insn_end;
+
+    insn_begin("Bcc(Never) disp16");
+    ab(8'h7B); ab(8'h03); ab(8'h00);
+    insn_end;
+
     // A branch to itself, so the shipping core stops advancing.  Not compared.
     ab(8'h6A); ab(8'h00);
 
@@ -485,38 +497,12 @@ initial begin
     chk(clean_pc[0] === 32'd0 && ship_pc[0] === 32'd0,
         "both started at the program's first byte");
 
-    // ---- the known divergence, measured on the side that can be measured ---
-    // 6B and 7B are decoded here and reported; the shipping core's reading is
-    // quoted from its own source, because it raises on them rather than
-    // returning a length.
-    begin : holes
-        integer k;
-        reg [7:0] hole [0:1];
-        hole[0] = 8'h6B; hole[1] = 8'h7B;
-        for (k = 0; k < 2; k = k + 1) begin
-            cmem[11'h700]     = hole[k];
-            cmem[11'h701]     = 8'h03;
-            cmem[11'h702]     = 8'h00;
-            @(negedge clk);
-            redirect_pc = 32'h0000_0700;
-            redirect    = 1'b1;
-            @(negedge clk);
-            redirect    = 1'b0;
-            @(negedge clk);
-            i_start = 1'b1;
-            @(negedge clk);
-            i_start = 1'b0;
-            while (!i_done) @(negedge clk);
-            $display("KNOWN opcode %02h: clean-room decodes Format IV, length %0d, reserved_op=%0b",
-                     hole[k], i_len, i_res_op);
-            $display("      s32_v60.sv raises the reserved-opcode exception instead: \"holes in MAME's");
-            $display("      authoritative primary dispatch table, not branch-condition encodings\"");
-            $display("      p.3.298 prints Bcc as 011 b cccc with no exclusion; p.3.295's Condition");
-            $display("      Encodings table prints 1011 as False / Never, which is a condition");
-            chk(!i_res_op,
-                "the clean-room table has an encoding for it, whatever it means");
-        end
-    end
+    // Neither side may call condition code 1011 a reserved opcode.  The
+    // boundary comparison above already proves the shipping core executed
+    // both; this says the clean-room table does not flag them either, which
+    // is the half a length comparison cannot see.
+    chk(clean_op[18] === 8'h6B && clean_op[19] === 8'h7B,
+        "the two former holes are the instructions the bench put there");
 
     if (errors == 0) $display("V60 COSIM PASS");
     else             $display("V60 COSIM FAIL (%0d errors)", errors);
