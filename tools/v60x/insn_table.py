@@ -118,7 +118,21 @@ TABLE = [
     ('NEGF',     '010111{s}0',    '00001001', 'II', '3.297'),
     ('ABSF',     '010111{s}0',    '00001010', 'II', '3.297'),
     ('SCLF',     '010111{s}0',    '00010000', 'II', '3.297'),
-    ('CVTF',     '01011111',      '00001000', 'II', '3.297'),
+    # CVTF is the databook's name for 5F-08.  The Programmer's Reference §7's
+    # CVT page prints the pair from the other side and settles both the
+    # direction and the operand widths that were open here:
+    #
+    #     cvt.sl   src.s.r, dst.l.w   Convert Short Real to Long Real   5F-10
+    #     cvt.ls   src.l.r, dst.s.w   Convert Long Real to Short Real   5F-08
+    #
+    # So CVTF is long -> short.  And 5F-10, the other direction, is ABSENT
+    # from the databook's summary altogether -- p.3.297 prints no row for it,
+    # though 5C/5E sub-op 10 is SCLF -- so the summary under-reports the
+    # instruction set by one encoding and the Reference is its only source.
+    # Without the row below, v60_idu calls a documented instruction a reserved
+    # opcode.
+    ('CVTF',     '01011111',      '00001000', 'II', 'PgmRef §7 CVT'),
+    ('CVT.SL',   '01011111',      '00010000', 'II', 'PgmRef §7 CVT'),
     ('CVT.WS',   '01011111',      '00000000', 'II', '3.297'),
     ('CVT.WL',   '01011111',      '00010001', 'II', '3.297'),
     ('CVT.SW',   '01011111',      '00000001', 'II', '3.297'),
@@ -330,8 +344,10 @@ DATA_TYPE = {
     'MOVF': ('s', 's'), 'ADDF': ('s', 's'), 'SUBF': ('s', 's'),
     'MULF': ('s', 's'), 'DIVF': ('s', 's'), 'CMPF': ('s', 's'),
     'NEGF': ('s', 's'), 'ABSF': ('s', 's'), 'SCLF': (4, 's'),
-    'CVTF': ('?', '?'),       # converts between the two reals; which way is
-                              # in the Reference, not in the opcode
+    # RESOLVED from the Reference's CVT page -- see the TABLE rows above.
+    # cvt.ls is "src.l.r, dst.s.w": a long real in, a short real out.
+    'CVTF': (8, 4),
+    'CVT.SL': (4, 8),         # cvt.sl -- "src.s.r, dst.l.w", the other way
     'CVT.WS': (4, 4), 'CVT.WL': (4, 8), 'CVT.SW': (4, 4), 'CVT.LW': (8, 4),
     'TRAPFL': (None, None),
 

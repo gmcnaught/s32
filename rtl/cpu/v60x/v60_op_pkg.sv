@@ -362,6 +362,7 @@ function automatic insn_fmt_e op_format_escape(input logic [7:0] op,
             16'h5F01: r = FMT_II;      // CVT.SW
             16'h5F08: r = FMT_II;      // CVTF
             16'h5F09: r = FMT_II;      // CVT.LW
+            16'h5F10: r = FMT_II;      // CVT.SL
             16'h5F11: r = FMT_II;      // CVT.WL
             default: r = FMT_UNKNOWN;
         endcase
@@ -962,10 +963,12 @@ function automatic logic [3:0] op_data_bytes_escape(input logic [7:0] op,
             16'h5F01: r = 4'd4 ;  // CVT.WS (operand 2)
             16'h5F02: r = 4'd4 ;  // CVT.SW
             16'h5F03: r = 4'd4 ;  // CVT.SW (operand 2)
-            16'h5F10: r = 4'd15;  // CVTF
-            16'h5F11: r = 4'd15;  // CVTF (operand 2)
+            16'h5F10: r = 4'd8 ;  // CVTF
+            16'h5F11: r = 4'd4 ;  // CVTF (operand 2)
             16'h5F12: r = 4'd8 ;  // CVT.LW
             16'h5F13: r = 4'd4 ;  // CVT.LW (operand 2)
+            16'h5F20: r = 4'd4 ;  // CVT.SL
+            16'h5F21: r = 4'd8 ;  // CVT.SL (operand 2)
             16'h5F22: r = 4'd4 ;  // CVT.WL
             16'h5F23: r = 4'd8 ;  // CVT.WL (operand 2)
             default: r = 4'd15;
