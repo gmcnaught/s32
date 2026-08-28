@@ -772,6 +772,24 @@ wire        io_dst = (aop == ALU_OUT);
 // 24 bits, so v60_ea's `dx_addr` has already dropped the top byte -- the
 // hardware does the only thing it can and the page permits it.
 wire        io_src_bad = io_src && (src_is_reg || (op1_mode == AM_RN));
+
+// MOVEA's source, which has the same shape of restriction and a different
+// reason.  Its Addressing Modes table marks Rn, Immediate and Immediate.Quick
+// as X -- Illegal Addressing Mode -- for the src column, and the page's own
+// legend line spells X out.  "movea.b src.b.n, dst.w.w": the `.n` access type
+// means the source is an ADDRESS and no bus cycle is issued for it, so a mode
+// that has no address cannot be one.
+//
+// DEFECT this fixes (audit item M1).  Nothing raised it, and the two illegal
+// mode groups failed two different ways: v60_ea's reg-direct and immediate
+// branches both set `ea <= 0` without consulting `addr_only`, and `illegal` is
+// driven from `we`, which a source never is -- so `movea.w R5, R9` and
+// `movea.w #5, R9` quietly wrote 0.  Caught here, from the mode, for the same
+// reason S_OP2's immediate-destination check is: an access that must not
+// happen is better not started.
+wire        movea_src_bad = src_addr_only &&
+                            (src_is_reg || (op1_mode == AM_RN) ||
+                             am_is_immediate(op1_mode));
 wire        io_dst_bad = io_dst && dst_is_reg;
 
 // Privileged instructions: "programs executing at other execution levels
@@ -1149,8 +1167,10 @@ always_ff @(posedge clk) begin
 
         // ---- the source ------------------------------------------------------
         S_OP1: begin
-            if (io_src_bad) begin
-                // IN's port operand named a register.  Raised before the
+            if (io_src_bad || movea_src_bad) begin
+                // A source operand whose addressing mode the page marks X:
+                // IN's port named a register, or MOVEA was asked for the
+                // address of something that has none.  Raised before the
                 // access, like every other Instruction Exception here.
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;

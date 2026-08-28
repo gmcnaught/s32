@@ -16,6 +16,23 @@ column in this document means.
 
 ---
 
+**Status: all twenty-three implemented, 2026-08-28.** This file is the research
+that preceded them and is left as it was written, so that what it got right and
+what implementation had to correct are both visible. Two corrections it needs,
+both recorded at the point of decision in the RTL rather than edited in above:
+
+* **`IN`'s opcode disagreement is resolved**, in the databook's favour — the
+  Reference prints `21 23 25` on the `IN` page *and* on the `OUT` page, which
+  cannot both be right. `IN` is `20/22/24`. `insn_table.py`'s `DISAGREEMENTS`
+  entry now records the resolution.
+* **`LDPR`'s second operand is READ, not written**, whatever its `.w.w` says —
+  `PrivilegedRegister( regID ) <- src` cannot know which register to load
+  otherwise. The `.w` names the register the operand designates.
+
+`docs/v60/TRANCHE-ONE-AUDIT.md`'s items are all closed, M1 included.
+
+---
+
 ## Two things that bite before you start
 
 ### 1. `SETF` and `TRAP` put the condition in opposite nibbles

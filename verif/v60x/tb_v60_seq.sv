@@ -1107,6 +1107,17 @@ initial begin
     //   the second, which is what makes 6A the INDIRECT [R10] a port needs.
     mem[11'h3F4] = 8'h21; mem[11'h3F5] = 8'hC0; mem[11'h3F6] = 8'h69;
     mem[11'h3F7] = 8'h6A;
+    // MOVEA's illegal source modes.  Its Addressing Modes table marks Rn,
+    // Immediate and Immediate.Quick as X for the src column: "movea.b
+    // src.b.n, dst.w.w" asks for an ADDRESS, and none of the three has one.
+    // MOVEA.w R10, R9   44 E0 6A 69
+    mem[11'h490] = 8'h44; mem[11'h491] = 8'hE0; mem[11'h492] = 8'h6A;
+    mem[11'h493] = 8'h69;
+    // MOVEA.w #5, R9    44 A0 F4 05 00 00 00 69
+    mem[11'h494] = 8'h44; mem[11'h495] = 8'hA0; mem[11'h496] = 8'hF4;
+    mem[11'h497] = 8'h05; mem[11'h498] = 8'h00; mem[11'h499] = 8'h00;
+    mem[11'h49A] = 8'h00; mem[11'h49B] = 8'h69;
+
     // IN.b [0[R10]], R9   20 A0 8A 00 69   -- an INDIRECT port.  The pointer
     //   at [R10] is read from MEMORY and only the operand it names is an I/O
     //   access: an addressing mode's own accesses are not the instruction's.
@@ -2592,6 +2603,41 @@ initial begin
     chk(seq_pc === 32'h00000780,
         "IN at execution level 3 is the Privileged Instruction exception");
     chk(n_io == 0, "raised before any I/O cycle went out");
+
+    // =======================================================================
+    // MOVEA's illegal source modes -- audit item M1.  Rn, Immediate and
+    // Immediate.Quick are all marked X in its src column, and nothing raised
+    // it: v60_ea's reg-direct and immediate branches both set ea <= 0 without
+    // consulting addr_only, and `illegal` is driven from `we`, which a source
+    // never is.  So both quietly wrote ZERO, which is a plausible-looking
+    // answer and the reason this went unnoticed.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9]  = 32'h1234_5678;
+    rf.gpr[10] = 32'h0000_0710;
+    repeat (2) @(negedge clk);
+    jump(32'h00000490);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "MOVEA from a REGISTER source is the Illegal Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+    chk(rf.gpr[9] === 32'h1234_5678,
+        "and the destination is untouched -- it used to be quietly written with 0");
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h1234_5678;
+    repeat (2) @(negedge clk);
+    jump(32'h00000494);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "and from an IMMEDIATE source it is the same exception");
+    chk(rf.gpr[9] === 32'h1234_5678, "with the destination again untouched");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

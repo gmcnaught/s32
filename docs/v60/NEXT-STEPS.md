@@ -52,7 +52,41 @@ page:
 
 ## 3. The rest of the instruction set
 
-In rough order of how much machinery each needs:
+**Tranche one is done** — all twenty-three of it, 2026-08-28. `NOP` `HALT`
+`BRK` `BRKV` `TRAP` `TRAPFL` `GETPSW` `UPDPSW.H` `UPDPSW.W` `LDPR` `STPR`
+`MOVEA` `SETF` `INC` `DEC` `RVBIT` `RVBYT` `TEST1` `SET1` `CLR1` `NOT1`
+`IN` `OUT`, each with its pages cited at the point of decision, each
+mutation-checked, both simulators. `docs/v60/TRANCHE-ONE.md` and
+`docs/v60/BREAK-AND-TRAP.md` are the research; what implementing it turned up
+that the research did not is in the commit messages and summarised in
+*What this replaced*.
+
+Three things it added that later tranches inherit:
+
+- **The privileged register port is wired into `v60_seq`** (`rf_pr_id`,
+  `rf_pr_wr`, `rf_pr_wdata`, `rf_pr_rdata`). `LDPR`, `STPR` and `TRAPFL` use
+  it; the MMU group in the last tranche will.
+- **The I/O address space is reachable.** `v60_ea` takes `io` as an input and
+  `v60_dmux` carries `a_io`, so `MRQ*,ST2-ST0 = 1011` appears on the pins and
+  `bst_needs_io_recovery()` is no longer unreachable code. Nothing but `IN` and
+  `OUT` can produce it.
+- **`exc_kind` is three bits and has five values.** `EK_TRAP` was the addition:
+  Figure 8-5's Software Traps frame is `EK_INSN`'s shape with the Next PC
+  instead of the Current one, and that one difference is load-bearing — a
+  software trap returns PAST the instruction and an instruction exception
+  returns TO it.
+
+**The rule that governs every remaining instruction that can fault**, learned
+here and worth stating once: *the frame decides whether writebacks stand.* An
+Instruction Exception carries the Current PC, so the handler restarts the
+instruction and nothing may have been committed — which is why `LDPR`'s and
+`STPR`'s id checks, the bit group's offset check, `IN`'s port check and
+`MOVEA`'s source check all raise at the earliest state that has the value,
+before any access. The zero divide, `BRKV` and `TRAP` carry the Next PC, do not
+restart, and their addressing-mode writebacks must stand. Same tree, opposite
+rules, and the frame is the only thing that says which.
+
+What is left, in rough order of how much machinery each needs:
 
 - **The `X` forms of the multiplies and divides** — `MULX`, `MULUX`, `DIVX`,
   `DIVUX`. The other six are done (see *What this replaced*); these four are
