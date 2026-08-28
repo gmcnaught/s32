@@ -118,10 +118,35 @@ one. They need the FP datapath and belong with that group below.
 
 What is left, in rough order of how much machinery each needs:
 - **The bit-string group.** All ten subops are read (see
-  `docs/v60/INSTRUCTION-DECODE.md`) and none is executed. They are the first
-  instructions here that are *interruptible mid-execution* — "to minimize the
-  interrupt latency time, the ORNBS instruction ..." — which is a sequencer
-  property, not an ALU one.
+  `docs/v60/INSTRUCTION-DECODE.md`) and none is executed. They are among the
+  instructions that are *interruptible mid-execution*, which is a sequencer
+  property and not an ALU one — **and `docs/v60/INTERRUPTIBILITY.md` now scopes
+  it.** Three results from that study change what should be built:
+
+  1. **It is eighteen instructions, not thirteen.** Two different sentences
+     carry the property; counting only "to minimize the interrupt latency
+     time" misses `MOVC` `MOVCF` `MOVCS` `SCHC` `SKPC`, which carry the
+     *stronger* wording ("interruptable and resumable with registers R28 and
+     R27"). Size any budget on eighteen.
+  2. **The bus invariant is not the problem.** The architecture's own boundary
+     is "following the completion of a bus cycle", which is exactly where
+     `v60_dmux`'s mux is already safe — no cycle is in flight, `own_pfu` never
+     changes mid-cycle, and every one of `tb_v60_pfu`'s assertions holds
+     unmodified. **Turning `v60_dmux` into a second arbiter port solves a
+     problem the pages do not pose.**
+  3. **The resumption contract is what is unsettled.** R28/R27 hold *where*;
+     nothing held says how a re-entered instruction knows *how much is left*.
+     §3 says the resume registers are allocated "starting from R28 and
+     allocated in a downward direction", and across all eighteen pages the only
+     other register ever named is R26 — which is the fill or stop *character*,
+     an input. So a conformant residual-count mechanism cannot be derived from
+     the sources held.
+
+  **Recommendation, and it is a recommendation rather than a page fact:** ship
+  the eighteen **non-interruptible** and record it, as `s32_v60.sv` already
+  does. Reopen if a plate of any one of the eighteen §7 pages settles the
+  residual count — the Reference PDF is not held, only its OCR, and that is a
+  cheap bounded check that should happen before any RTL does.
 - **The floating point group**, the MMU, task and context switching, address
   traps and emulation mode. Each is its own subsystem.
 
