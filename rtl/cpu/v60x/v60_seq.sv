@@ -510,6 +510,14 @@ logic [31:0] stk_val;     // what its second access produced: a PSW, an AP,
                           // or -- for CALL, before either -- the argument list
 logic [31:0] stk_cnt;     // RET's `num` and RETIU/RETIS's `count`
 logic        stk_phase;   // which of the two stack accesses is running
+// HALT's state, and the only thing in this sequencer that outlives an
+// instruction.  "The processor halts and waits for an interrupt" -- so HALT
+// retires like anything else, advancing the PC past itself, and what is held
+// here is the refusal to fetch the next one.  Advancing FIRST is what the page
+// requires: "program execution will continue with the instruction following
+// the HALT instruction", so the interrupt's frame carries HALT + 1 and the
+// handler's return does not land back on the HALT.
+logic        halted_r;
 logic        berr_r;      // a bus fault is outstanding
 logic [23:0] berr_addr_r; // where it happened -- the frame's parameter word
 logic [15:0] berr_code_r;
@@ -726,7 +734,8 @@ wire        stpr_id_bad = (aop == ALU_STPR) && pr_id_bad;
 // attempting the instruction and not for what it would have read -- and `aop`
 // is only assigned at the end of that state.
 function automatic logic op_privileged(input alu_op_e o);
-    op_privileged = (o == ALU_UPDPSWW) || (o == ALU_LDPR) || (o == ALU_STPR);
+    op_privileged = (o == ALU_UPDPSWW) || (o == ALU_LDPR) || (o == ALU_STPR) ||
+                    (o == ALU_HALT);
 endfunction
 
 // The destination operand's addressing mode.  Spelled out rather than
@@ -828,6 +837,7 @@ always_ff @(posedge clk) begin
         exc_kind        <= EK_INSN;
         exc_ack_r       <= 1'b0;
         nmi_take        <= 1'b0;
+        halted_r        <= 1'b0;
         berr_r          <= 1'b0;
         berr_addr_r     <= 24'd0;
         berr_code_r     <= 16'd0;
@@ -942,6 +952,14 @@ always_ff @(posedge clk) begin
                 exc_vec_r <= 8'd0;
                 exc_ack_r <= 1'b1;
                 state     <= S_EXC_SW;
+            end else if (halted_r) begin
+                // Waiting.  The three tests above are the only ways out, which
+                // is exactly what the page says it waits for -- and note that
+                // a maskable interrupt still has to pass PSW.IE, so a HALT
+                // executed with interrupts disabled waits for an NMI or
+                // nothing.  Nothing here re-fetches, so the instruction after
+                // the HALT does not run until an interrupt has been through.
+                state <= S_IDLE;
             end else begin
                 idu_start <= 1'b1;
                 state     <= S_FETCH;
@@ -1034,6 +1052,12 @@ always_ff @(posedge clk) begin
                     // One byte, and nothing happens.
                     state <= S_RETIRE;
                 end
+            end else if (op_alu(idu_op) == ALU_HALT) begin
+                // Retire first, wait after: see halted_r above.  The privilege
+                // check has already run, before this, because it runs before
+                // any operand is fetched and HALT has none.
+                halted_r <= 1'b1;
+                state    <= S_RETIRE;
             end else if (op_alu(idu_op) == ALU_TRAPFL) begin
                 // Its two inputs are both registers -- the PSW here and TKCW
                 // in the register file -- so the only thing this state does is
@@ -1855,6 +1879,9 @@ always_ff @(posedge clk) begin
         // sequencer runs at execution level 0 and these three exceptions
         // handle at execution level 0.
         S_EXC_SW: begin
+            // Whatever woke it, the wait is over.  Cleared here rather than in
+            // S_IDLE's three branches because every one of them arrives here.
+            halted_r        <= 1'b0;
             rf_stack_switch <= 1'b1;
             rf_new_el       <= 2'd0;
             // Step (vii) puts an exception's frame on the stack the new

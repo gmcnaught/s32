@@ -1051,6 +1051,12 @@ initial begin
     mem[11'h2F3] = 8'h0D; mem[11'h2F4] = 8'hF0; mem[11'h2F5] = 8'hFE;
     mem[11'h2F6] = 8'hCA; mem[11'h2F7] = 8'h69;
 
+    // HALT at 0x3B0 -- 00, Format V, one byte -- and an instruction after it
+    // that must NOT run until an interrupt has been through.
+    mem[11'h3B0] = 8'h00;
+    mem[11'h3B1] = 8'h09; mem[11'h3B2] = 8'h80; mem[11'h3B3] = 8'hF4;
+    mem[11'h3B4] = 8'h4D; mem[11'h3B5] = 8'h68;
+
     // TRAPFL at 0x2B0 -- CB, Format V, one byte
     mem[11'h2B0] = 8'hCB;
     // MOV.B #0x6E, [R8]   -- reached only when the TRAPFL above falls through
@@ -2289,6 +2295,66 @@ initial begin
     chk(mem_word(13'h67C) === 32'h11000004, "with vector 17's code");
     chk(mem_word(13'h674) === 32'h000002D0,
         "and the CURRENT PC -- the exception is for ATTEMPTING it");
+
+    // =======================================================================
+    // HALT.  "The processor halts and waits for an interrupt.  Following the
+    // execution of the interrupt handler, program execution will continue with
+    // the instruction following the HALT instruction."
+    // =======================================================================
+    reset_and_arm;
+    mem[11'h700] = 8'h00;
+    jump(32'h00000440);
+    step; step;                              // R31 = 0x600, R8 = 0x700
+    jump(32'h000003B0);
+    step;
+    chk(seq_pc === 32'h000003B1,
+        "HALT retires and advances past itself -- the resume point is HALT + 1");
+    chk(!stopped, "and it is a wait, not a stop");
+
+    // Now let it run with nothing asserted.  Nothing may retire and the
+    // instruction after the HALT may not run.
+    run = 1'b1;
+    repeat (80) @(negedge clk);
+    chk(!retired, "and then waits: nothing retires while it is halted");
+    chk(mem[11'h700] === 8'h00,
+        "and the instruction after the HALT has not run");
+    chk(seq_pc === 32'h000003B1, "the PC has not moved either");
+
+    // An NMI ends the wait.
+    @(negedge clk); nmi_n = 1'b0;
+    repeat (3) @(negedge clk); nmi_n = 1'b1;
+    while (!retired && !stopped) @(negedge clk);
+    run = 1'b0;
+    @(negedge clk);
+    chk(seq_pc === 32'h000007D0, "an interrupt ends the wait and is taken");
+    chk(mem_word(13'h678) === 32'h000003B1,
+        "and the frame carries HALT + 1, so the handler returns PAST the halt");
+    step;
+    chk(mem[11'h700] === 8'hA1, "the handler runs");
+
+    // And after it returns, the instruction after the HALT finally does -- the
+    // processor does not re-halt.
+    step;                                    // RETIS
+    chk(seq_pc === 32'h000003B1, "RETIS returns to the instruction after the HALT");
+    step;
+    chk(mem[11'h700] === 8'h4D,
+        "which now runs: the wait was ended, not resumed");
+
+    // HALT is privileged.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    pr_id = 5'd1; pr_wdata = 32'h0000_0680; pr_wr = 1'b1;   // PR_L0SP
+    @(negedge clk);
+    pr_wr = 1'b0;
+    seq.psw[PSW_EL_HI:PSW_EL_LO] = 2'b11;
+    repeat (2) @(negedge clk);
+    jump(32'h000003B0);
+    step;
+    chk(seq_pc === 32'h00000780,
+        "HALT at execution level 3 is the Privileged Instruction exception");
+    chk(seq.halted_r === 1'b0, "and it did not halt on the way");
 
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);

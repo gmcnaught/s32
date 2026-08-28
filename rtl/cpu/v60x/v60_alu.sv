@@ -327,6 +327,8 @@ always_comb begin
         // names, which is not an operand at all -- so nothing is written
         // here.
         ALU_LDPR: writes = 1'b0;
+        // No operand, and all four flags Unchanged.
+        ALU_HALT: writes = 1'b0;
         // "dst <- PrivilegedRegister( regID )".  The sequencer has already
         // read the privileged register and presents it as x.
         ALU_STPR: raw = x;
@@ -400,7 +402,8 @@ wire keep_all = (op == ALU_MOV)   || (op == ALU_MOVS)  || (op == ALU_MOVZ) ||
                 (op == ALU_RVBIT) || (op == ALU_RVBYT) || (op == ALU_SETF) ||
                 (op == ALU_NOP)   || (op == ALU_MOVEA) || (op == ALU_GETPSW) ||
                 (op == ALU_BRKV)  || (op == ALU_BRK)    || (op == ALU_TRAP) ||
-                (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR);
+                (op == ALU_TRAPFL) || (op == ALU_LDPR)  || (op == ALU_STPR) ||
+                (op == ALU_HALT);
 wire keep_but_ov = (op == ALU_MOVT);
 
 assign result    = raw & mask;

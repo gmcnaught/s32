@@ -91,6 +91,12 @@ typedef enum logic [5:0] {
     // the PSW.
     ALU_LDPR    = 6'd40,
     ALU_STPR    = 6'd41,
+    // "The processor halts and waits for an interrupt.  Following the
+    // execution of the interrupt handler, program execution will continue with
+    // the instruction following the HALT instruction."  Format V, one byte,
+    // privileged -- and the sequencer's only stateful instruction: it retires
+    // normally and then declines to fetch again.
+    ALU_HALT    = 6'd42,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 6'd19,

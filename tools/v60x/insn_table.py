@@ -503,6 +503,10 @@ EXEC_OP = {
     # Illegal Data Field on an id outside 0..31 -- which is STPR's page's
     # boundary; LDPR's page states only the "unpredictable" half.
     'LDPR': 'LDPR', 'STPR': 'STPR',
+    # Privileged, and the resume point is HALT + 1: "program execution will
+    # continue with the instruction following the HALT instruction", so it
+    # retires before it waits and does not re-halt on return.
+    'HALT': 'HALT',
     'UPDPSW.H': 'UPDPSWH', 'UPDPSW.W': 'UPDPSWW',
     # v60_muldiv's, which is not combinational.  The X forms are deliberately
     # NOT here: their destination is a doubleword, "a register pair, low

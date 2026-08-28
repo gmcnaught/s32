@@ -998,6 +998,7 @@ function automatic alu_op_e op_alu(input logic [7:0] op);
     alu_op_e r;
     begin
         case (op)
+            8'h00: r = ALU_HALT; // HALT
             8'h02: r = ALU_STPR; // STPR
             8'h08: r = ALU_RVBIT; // RVBIT
             8'h09: r = ALU_MOV;  // MOV.B
