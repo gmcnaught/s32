@@ -36,7 +36,7 @@ if [[ "${ROMBOOT_SKIP_BUILD:-0}" != 1 ]]; then
     -CFLAGS "-D_GLIBCXX_USE_CXX11_ABI=0" \
     +define+SIMULATION +define+S32_REAL_FB_SIM +define+S32_SYSTEM32_ONLY \
     +define+S32_PROFILE_STANDARD +define+S32_GAME_ONLY_STD \
-    --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f scratch/romboot.f
+    --top-module tb_core_romboot --Mdir "$MDIR" -o romboot -f verif/verilator/romboot.f
 fi
 SIM="$MDIR/romboot"
 [[ -x "${SIM}.exe" ]] && SIM="${SIM}.exe"
