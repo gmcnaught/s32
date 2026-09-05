@@ -139,7 +139,7 @@ v60_regfile rf (
     .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb),
     .ra_pair(rf_ra_pair),
     .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data),
-    .psw_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
+    .cur_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
     .stack_switch(rf_stack_switch), .new_el(rf_new_el), .new_is(rf_new_is),
     .pr_id(mux_pr_id), .pr_wr(mux_pr_wr), .pr_wdata(mux_pr_wdata),
     .pr_rdata(rf_pr_rdata), .pr_rd_ok(rf_pr_rd_ok), .pr_wr_ok(rf_pr_wr_ok),

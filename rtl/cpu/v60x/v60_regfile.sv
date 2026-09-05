@@ -53,7 +53,9 @@ module v60_regfile
     input        [31:0] wr_data,
 
     // ---- the stack ----------------------------------------------------------
-    input         [1:0] psw_el,        // which stack pointer R31 is
+    // `cur_el`, not `psw_el`: v60_psw_pkg exports a FUNCTION psw_el() and
+    // a port may not share its name with an imported function (Verilator).
+    input         [1:0] cur_el,        // PSW.EL: which stack pointer R31 is
     input               psw_is,
     // A change of execution level, or a switch to or from the interrupt
     // stack.  R31 is saved into the entry the OLD selection names and reloaded
@@ -140,8 +142,8 @@ always_ff @(posedge clk) begin
         // load.  Doing both in one cycle is what makes a switch to the SAME
         // entry a no-op rather than a corruption.
         if (stack_switch) begin
-            pr[sp_id(psw_is, psw_el)] <= gpr[31];
-            if (sp_id(new_is, new_el) == sp_id(psw_is, psw_el))
+            pr[sp_id(psw_is, cur_el)] <= gpr[31];
+            if (sp_id(new_is, new_el) == sp_id(psw_is, cur_el))
                 gpr[31] <= gpr[31];
             else
                 gpr[31] <= pr[sp_id(new_is, new_el)];

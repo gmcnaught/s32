@@ -157,9 +157,13 @@ initial begin
     ready_n = 1'b1;
     fork
         begin : release_ready
+            // A static loop variable, not `repeat`: Verilator 5.027 refuses a
+            // repeat counter inside a forked branch (LIFETIME -- the temporary
+            // it makes for the count could outlive the process that owns it).
+            integer k;
             @(negedge clk);
             wait (state === T_TW);
-            repeat (DIV*2) @(negedge clk);   // hold for two TW states
+            for (k = 0; k < DIV*2; k = k + 1) @(negedge clk);   // two TW states
             ready_n = 1'b0;
         end
     join_none

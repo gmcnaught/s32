@@ -37,6 +37,24 @@ jobs:
       - name: V60 unit benches
         run: bash verif/v60/run_v60_icarus.sh
 
+  v60x-unit:
+    name: Clean-room V60 suite (Icarus)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Icarus Verilog
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends iverilog
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # Both simulators locally; Icarus alone here.  The runner regenerates the
+      # opcode package first and fails if the checked-in copy is stale.
+      - name: Clean-room benches
+        run: V60X_SIMS=icarus bash verif/v60x/run_v60x.sh
+
   cosim:
     name: Differential co-sim (50 seeds)
     runs-on: ubuntu-latest

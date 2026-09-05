@@ -20,7 +20,7 @@ reg rst = 1'b1;
 reg   [4:0] ra_sel = 5'd0, rb_sel = 5'd0, wr_sel = 5'd0, pr_id = 5'd0;
 reg         wr_en = 1'b0, pr_wr = 1'b0;
 reg  [31:0] wr_data = 32'd0, pr_wdata = 32'd0;
-reg   [1:0] psw_el = 2'd0, new_el = 2'd0;
+reg   [1:0] cur_el = 2'd0, new_el = 2'd0;
 reg         psw_is = 1'b0, new_is = 1'b0, stack_switch = 1'b0;
 
 wire [31:0] ra, rb, pr_rdata, sbr;
@@ -31,7 +31,7 @@ v60_regfile dut (
     .clk(clk), .rst(rst),
     .ra_sel(ra_sel), .rb_sel(rb_sel), .ra(ra), .rb(rb), .ra_pair(ra_pair),
     .wr_en(wr_en), .wr_sel(wr_sel), .wr_data(wr_data),
-    .psw_el(psw_el), .psw_is(psw_is),
+    .cur_el(cur_el), .psw_is(psw_is),
     .stack_switch(stack_switch), .new_el(new_el), .new_is(new_is),
     .pr_id(pr_id), .pr_wr(pr_wr), .pr_wdata(pr_wdata),
     .pr_rdata(pr_rdata), .pr_rd_ok(pr_rd_ok), .pr_wr_ok(pr_wr_ok),
@@ -82,7 +82,7 @@ begin
     new_is = is_bit; new_el = el; stack_switch = 1'b1;
     @(negedge clk);
     stack_switch = 1'b0;
-    psw_is = is_bit; psw_el = el;   // the PSW follows the switch
+    psw_is = is_bit; cur_el = el;   // the PSW follows the switch
 end
 endtask
 
@@ -118,7 +118,7 @@ initial begin
     // =======================================================================
     // R31 and the cache are independent -- the page says so in as many words.
     // =======================================================================
-    psw_el = 2'd0; psw_is = 1'b0;      // level 0, not the interrupt stack
+    cur_el = 2'd0; psw_is = 1'b0;      // level 0, not the interrupt stack
     ldpr(5'd1, 32'h0000_0AA0);         // L0SP
     wr(5'd31, 32'h1111_1111);          // the program moves its stack pointer
     stpr(5'd1);

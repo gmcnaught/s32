@@ -18,6 +18,11 @@ export PATH="/opt/homebrew/bin:$PATH"
 # exactly that way.
 export PYTHONDONTWRITEBYTECODE=1
 
+# Which simulators to run.  Default both, on purpose (see the header).  CI has
+# no Verilator, so it sets V60X_SIMS=icarus; a bench that passes there and
+# fails locally under Verilator is still a failure.
+SIMS="${V60X_SIMS:-icarus verilator}"
+
 RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_am_pkg.sv rtl/cpu/v60x/v60_am_decode.sv \
      rtl/cpu/v60x/v60_dxu.sv rtl/cpu/v60x/v60_dmux.sv \
@@ -29,7 +34,7 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
      rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
      rtl/cpu/v60x/v60_exc.sv rtl/cpu/v60x/v60_seq.sv"
-WORK="${WORK:-/tmp/v60x}"
+WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 pass=0; fail=0
 
@@ -48,25 +53,31 @@ if ! diff -q "$WORK/v60_op_pkg.sv" rtl/cpu/v60x/v60_op_pkg.sv > /dev/null; then
 fi
 
 run() {
-  local tb=$1 marker=$2 src="$RTL verif/v60x/$1.sv"
+  local tb=$1 marker=$2 extra="${3:-}" src="$RTL verif/v60x/$1.sv"
 
-  if ! iverilog -g2012 -s "$tb" -o "$WORK/$tb.icarus" $src > "$WORK/$tb.ibuild" 2>&1; then
-    echo "BUILDFAIL $tb (icarus)"; grep -v Anachronistic "$WORK/$tb.ibuild" | head -3
-    fail=$((fail+1)); return
+  if [[ " $SIMS " == *" icarus "* ]]; then
+    if ! iverilog -g2012 -s "$tb" -o "$WORK/$tb.icarus" $src > "$WORK/$tb.ibuild" 2>&1; then
+      echo "BUILDFAIL $tb (icarus)"; grep -v Anachronistic "$WORK/$tb.ibuild" | head -3
+      fail=$((fail+1))
+    else
+      vvp "$WORK/$tb.icarus" $extra > "$WORK/$tb.irun" 2>&1
+      if grep -qF "$marker" "$WORK/$tb.irun"; then echo "PASS  $tb (icarus)"; pass=$((pass+1))
+      else echo "FAIL  $tb (icarus)"; tail -4 "$WORK/$tb.irun" | sed 's/^/        /'; fail=$((fail+1)); fi
+    fi
   fi
-  vvp "$WORK/$tb.icarus" > "$WORK/$tb.irun" 2>&1
-  if grep -qF "$marker" "$WORK/$tb.irun"; then echo "PASS  $tb (icarus)"; pass=$((pass+1))
-  else echo "FAIL  $tb (icarus)"; tail -4 "$WORK/$tb.irun" | sed 's/^/        /'; fail=$((fail+1)); fi
 
-  rm -rf "$WORK/$tb.vl"
-  if ! verilator --binary --timing -Wno-fatal -Wno-lint --top-module "$tb" \
-        -o "$tb.bin" -Mdir "$WORK/$tb.vl" $src > "$WORK/$tb.vbuild" 2>&1; then
-    echo "BUILDFAIL $tb (verilator)"; grep "%Error" "$WORK/$tb.vbuild" | head -3
-    fail=$((fail+1)); return
+  if [[ " $SIMS " == *" verilator "* ]]; then
+    rm -rf "$WORK/$tb.vl"
+    if ! verilator --binary --timing -Wno-fatal -Wno-lint --top-module "$tb" \
+          -o "$tb.bin" -Mdir "$WORK/$tb.vl" $src > "$WORK/$tb.vbuild" 2>&1; then
+      echo "BUILDFAIL $tb (verilator)"; grep "%Error" "$WORK/$tb.vbuild" | head -3
+      fail=$((fail+1))
+    else
+      "$WORK/$tb.vl/$tb.bin" $extra > "$WORK/$tb.vrun" 2>&1
+      if grep -qF "$marker" "$WORK/$tb.vrun"; then echo "PASS  $tb (verilator)"; pass=$((pass+1))
+      else echo "FAIL  $tb (verilator)"; tail -4 "$WORK/$tb.vrun" | sed 's/^/        /'; fail=$((fail+1)); fi
+    fi
   fi
-  "$WORK/$tb.vl/$tb.bin" > "$WORK/$tb.vrun" 2>&1
-  if grep -qF "$marker" "$WORK/$tb.vrun"; then echo "PASS  $tb (verilator)"; pass=$((pass+1))
-  else echo "FAIL  $tb (verilator)"; tail -4 "$WORK/$tb.vrun" | sed 's/^/        /'; fail=$((fail+1)); fi
 }
 
 run tb_v60_biu_tstates "V60 BIU T-STATE PASS"
