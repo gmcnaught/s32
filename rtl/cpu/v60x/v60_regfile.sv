@@ -51,6 +51,14 @@ module v60_regfile
     input               wr_en,
     input         [4:0] wr_sel,
     input        [31:0] wr_data,
+    // Which bytes of the register the write touches.  "The lengths of the
+    // byte and halfword access types are shorter than the register length.
+    // These access types are right justified within the register.  Only the
+    // lower portion of the register corresponding to the access type is
+    // significant and the upper portion will remain unaffected" -- PgmRef
+    // p. 2-3.  Found by the lockstep bench: every sub-word register result
+    // came back zero-extended here and preserved in the shipping core.
+    input         [3:0] wr_be,
 
     // ---- the stack ----------------------------------------------------------
     // `cur_el`, not `psw_el`: v60_psw_pkg exports a FUNCTION psw_el() and
@@ -132,7 +140,12 @@ always_ff @(posedge clk) begin
             pr[i]  <= 32'd0;
         end
     end else begin
-        if (wr_en) gpr[wr_sel] <= wr_data;
+        if (wr_en) begin
+            if (wr_be[0]) gpr[wr_sel][7:0]   <= wr_data[7:0];
+            if (wr_be[1]) gpr[wr_sel][15:8]  <= wr_data[15:8];
+            if (wr_be[2]) gpr[wr_sel][23:16] <= wr_data[23:16];
+            if (wr_be[3]) gpr[wr_sel][31:24] <= wr_data[31:24];
+        end
 
         // LDPR.  A write to an id the figure does not allow is dropped here;
         // raising the privileged-instruction exception is the sequencer's.

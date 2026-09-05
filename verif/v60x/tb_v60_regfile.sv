@@ -30,7 +30,7 @@ wire        pr_rd_ok, pr_wr_ok;
 v60_regfile dut (
     .clk(clk), .rst(rst),
     .ra_sel(ra_sel), .rb_sel(rb_sel), .ra(ra), .rb(rb), .ra_pair(ra_pair),
-    .wr_en(wr_en), .wr_sel(wr_sel), .wr_data(wr_data),
+    .wr_en(wr_en), .wr_sel(wr_sel), .wr_data(wr_data), .wr_be(4'b1111),
     .cur_el(cur_el), .psw_is(psw_is),
     .stack_switch(stack_switch), .new_el(new_el), .new_is(new_is),
     .pr_id(pr_id), .pr_wr(pr_wr), .pr_wdata(pr_wdata),

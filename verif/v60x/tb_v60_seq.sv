@@ -120,6 +120,7 @@ wire [31:0] rf_sbr;
 wire [31:0] rf_ra, rf_rb, rf_wr_data;
 wire [63:0] rf_ra_pair;
 wire        rf_wr_en;
+wire  [3:0] rf_wr_be;
 
 // The privileged register port has two drivers: this bench, which places SBR
 // and the interrupt stack pointer during reset_and_arm because there is no
@@ -138,7 +139,7 @@ v60_regfile rf (
     .clk(clk), .rst(rst),
     .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb),
     .ra_pair(rf_ra_pair),
-    .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data),
+    .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data), .wr_be(rf_wr_be),
     .cur_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
     .stack_switch(rf_stack_switch), .new_el(rf_new_el), .new_is(rf_new_is),
     .pr_id(mux_pr_id), .pr_wr(mux_pr_wr), .pr_wdata(mux_pr_wdata),
@@ -277,7 +278,7 @@ v60_seq seq (
     .op2_bytes(o2_bytes),
     .rf_ra_sel(rf_ra_sel), .rf_rb_sel(rf_rb_sel), .rf_ra(rf_ra),
     .rf_ra_pair(rf_ra_pair), .rf_rb(rf_rb),
-    .rf_wr_en(rf_wr_en), .rf_wr_sel(rf_wr_sel), .rf_wr_data(rf_wr_data),
+    .rf_wr_en(rf_wr_en), .rf_wr_be(rf_wr_be), .rf_wr_sel(rf_wr_sel), .rf_wr_data(rf_wr_data),
     .ea_start(ea_start), .ea_mode(ea_mode), .ea_index(ea_index),
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
     .ea_rn_val(ea_rn_val), .ea_rn1_val(ea_rn1_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),
@@ -501,6 +502,13 @@ begin
     repeat (4) @(negedge clk);
     rst = 1'b0;
     repeat (2) @(negedge clk);
+    // The processor comes out of reset ON the interrupt stack: PSW is
+    // 10000000H (p.3.282, PgmRef S8), so R31 is the ISP until software leaves
+    // it.  Every program below assumes it is running on a level stack with
+    // the ISP placed separately -- which is where software puts things before
+    // it runs anything -- so that state is placed here, the way PSW.IE is
+    // placed by hand further down.  Nothing in this bench tests the leaving.
+    seq.psw[PSW_IS] = 1'b0;
     pr_id = 5'd5; pr_wdata = 32'h0000_0000; pr_wr = 1'b1;   // PR_SBR
     @(negedge clk);
     pr_id = 5'd0; pr_wdata = 32'h0000_0680;                 // PR_ISP

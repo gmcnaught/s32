@@ -251,6 +251,7 @@ module v60_seq
     input        [63:0] rf_ra_pair,
     input        [31:0] rf_rb,
     output logic        rf_wr_en,
+    output logic  [3:0] rf_wr_be,       // the destination's width, as byte lanes
     output logic  [4:0] rf_wr_sel,
     output logic [31:0] rf_wr_data,
 
@@ -1159,6 +1160,11 @@ wire        alu_writes;
 wire [31:0] xch_wdata  = (w_dst == 4'd1) ? {24'd0, val2[7:0]}  :
                          (w_dst == 4'd2) ? {16'd0, val2[15:0]} : val2[31:0];
 
+// A byte or halfword result lands in the low lanes of its register and the
+// rest "will remain unaffected" (PgmRef p. 2-3).  The register file takes
+// the lanes; this is where the width becomes them.
+wire [3:0] dst_be = (w_dst == 4'd1) ? 4'b0001 :
+                    (w_dst == 4'd2) ? 4'b0011 : 4'b1111;
 wire [3:0] alu_bytes = ((w_dst == 4'd1) || (w_dst == 4'd2) ||
                         (w_dst == 4'd4)) ? w_dst : 4'd4;
 // The source's width, which only the extending moves read.
@@ -1274,6 +1280,7 @@ always_ff @(posedge clk) begin
         ea_start      <= 1'b0;
         ea_rmw_go     <= 1'b0;
         rf_wr_en      <= 1'b0;
+        rf_wr_be      <= 4'b1111;
         pc            <= 32'd0;
         psw           <= PSW_RESET;
         retired       <= 1'b0;
@@ -1373,6 +1380,7 @@ always_ff @(posedge clk) begin
         ea_lock   <= 1'b0;
         ea_rmw_go <= 1'b0;
         rf_wr_en  <= 1'b0;
+        rf_wr_be  <= 4'b1111;
         rf_pr_wr  <= 1'b0;
         retired   <= 1'b0;
         redirect  <= 1'b0;
@@ -2020,6 +2028,7 @@ always_ff @(posedge clk) begin
                 end
             end else if (dst_is_reg) begin
                 rf_wr_en   <= 1'b1;
+                rf_wr_be   <= dst_be;
                 rf_wr_sel  <= reg_operand;
                 rf_wr_data <= eff_result;
                 if      (dst_is_dbl) state <= S_WB_HI;
@@ -2101,6 +2110,7 @@ always_ff @(posedge clk) begin
         // operand does not half-complete.
         S_XCH: begin
             rf_wr_en   <= 1'b1;
+            rf_wr_be   <= dst_be;
             rf_wr_sel  <= xch_rn;
             rf_wr_data <= xch_wdata;
             state      <= S_RETIRE;

@@ -158,6 +158,7 @@ logic [31:0] rf_sbr;
 logic [31:0] rf_ra, rf_rb, rf_wr_data;
 logic [63:0] rf_ra_pair;
 logic        rf_wr_en;
+logic  [3:0] rf_wr_be;
 
 logic  [4:0] seq_pr_id;
 logic        seq_pr_wr;
@@ -175,7 +176,7 @@ v60_regfile u_rf (
     .clk(clk), .rst(rst),
     .ra_sel(rf_ra_sel), .rb_sel(rf_rb_sel), .ra(rf_ra), .rb(rf_rb),
     .ra_pair(rf_ra_pair),
-    .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data),
+    .wr_en(rf_wr_en), .wr_sel(rf_wr_sel), .wr_data(rf_wr_data), .wr_be(rf_wr_be),
     .cur_el(seq_psw[PSW_EL_HI:PSW_EL_LO]), .psw_is(seq_psw[PSW_IS]),
     .stack_switch(rf_stack_switch), .new_el(rf_new_el), .new_is(rf_new_is),
     .pr_id(mux_pr_id), .pr_wr(mux_pr_wr), .pr_wdata(mux_pr_wdata),
@@ -311,7 +312,7 @@ v60_seq u_seq (
     .op2_bytes(o2_bytes),
     .rf_ra_sel(rf_ra_sel), .rf_rb_sel(rf_rb_sel), .rf_ra(rf_ra),
     .rf_ra_pair(rf_ra_pair), .rf_rb(rf_rb),
-    .rf_wr_en(rf_wr_en), .rf_wr_sel(rf_wr_sel), .rf_wr_data(rf_wr_data),
+    .rf_wr_en(rf_wr_en), .rf_wr_be(rf_wr_be), .rf_wr_sel(rf_wr_sel), .rf_wr_data(rf_wr_data),
     .ea_start(ea_start), .ea_mode(ea_mode), .ea_index(ea_index),
     .ea_disp(ea_disp), .ea_disp_outer(ea_douter), .ea_imm(ea_imm),
     .ea_rn_val(ea_rn_val), .ea_rn1_val(ea_rn1_val), .ea_rx_val(ea_rx_val), .ea_pc_val(ea_pc_val),

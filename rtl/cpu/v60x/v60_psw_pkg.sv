@@ -62,9 +62,13 @@ localparam int PSW_FLOAT_LO   = 8,  PSW_FLOAT_HI   = 15;
 localparam int PSW_CONTROL_LO = 16, PSW_CONTROL_HI = 23;
 localparam int PSW_STATUS_LO  = 24, PSW_STATUS_HI  = 31;
 
-// "PSW 00000000H" at reset -- databook p.3.238.  Which is also EL = 0
-// (privileged), interrupts disabled, and the interrupt stack not in use.
-localparam logic [31:0] PSW_RESET = 32'h0000_0000;
+// "PSW 10000000H" at reset -- databook p.3.282, the reset-state register
+// table, and the Programmer's Reference section 8 says the same.  EL = 0
+// (privileged), interrupts disabled, and PSW.IS SET: the processor comes out
+// of reset on the interrupt stack.  Databook p.3.238 prints 00000000H for the
+// same thing, one page against two, and this tree took the one until the
+// lockstep bench found the shipping core (and MAME) starting with IS set.
+localparam logic [31:0] PSW_RESET = 32'h1000_0000;
 
 // ---------------------------------------------------------------------------
 // The integer flags, as one nibble.  It needs no order of its own: CY OV S Z

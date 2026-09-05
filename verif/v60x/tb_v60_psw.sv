@@ -146,10 +146,10 @@ initial begin
     chk(psw_el(psw) === 2'b11, "and psw_el reads it back");
 
     // Reset, and what it selects.
-    chk(PSW_RESET === 32'h0,                 "the PSW resets to zero (p.3.238)");
+    chk(PSW_RESET === 32'h1000_0000,         "the PSW resets to 10000000H (p.3.282, PgmRef S8)");
     chk(psw_el(PSW_RESET) === 2'b00,         "which is execution level 0");
     chk(PSW_RESET[PSW_IE] === 1'b0,          "interrupts disabled");
-    chk(PSW_RESET[PSW_IS] === 1'b0,          "and not on the interrupt stack");
+    chk(PSW_RESET[PSW_IS] === 1'b1,          "and on the interrupt stack");
 
     // The flags go in and come out where the table says.
     psw = 32'h0;
