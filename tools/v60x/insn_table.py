@@ -754,7 +754,7 @@ def check_table():
 
 
 def cross_check(csv_path):
-    """Check the table against docs/v60/v60_operand_access.csv.
+    """Check the table against tools/v60x/v60_operand_access.csv.
 
     That file's `opcodes` column comes from the Programmer's Reference and was
     compiled in a separate pass, so it is a genuine second source for the rows
@@ -812,8 +812,12 @@ def main():
     # assertion in v60_biu.
     import os as _os
     _here = _os.path.dirname(_os.path.abspath(__file__))
-    _csv_path = _os.path.join(_here, '..', '..', 'docs', 'v60',
-                              'v60_operand_access.csv')
+    # The table lives beside this script.  It is our own extraction from the
+    # Reference's section 7 operand lines (docs/reference/V60_instruction_timing_2026-08-25.md
+    # says how), not NEC's text, so it is tracked here rather than left in the
+    # private submodule -- CI has no access to that submodule and this check
+    # must run there too.
+    _csv_path = _os.path.join(_here, 'v60_operand_access.csv')
     problems, checked = cross_check(_csv_path)
     for pr in problems:
         print('CROSSCHK', pr)
