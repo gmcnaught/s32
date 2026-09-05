@@ -76,6 +76,12 @@ No bus timing and no electricals — that is what the databook is for. Its value
 here is as the reference against which this core's MAME-derived instruction
 semantics should be audited.
 
+Its **OCR text layer** is also held, as `NEC_V60pgmRef_djvu.txt` (archive.org
+item `NEC_V60pgmRef`, 513 KB) — the form the timing sweep in
+`INSTRUCTION-TIMING.md` was run over, and the second printing of the
+addressing-mode figure used by `ADDRESSING-MODES.md`. Same caveat as the
+databook extract: search it, read the plates.
+
 Use the archive item's `_text.pdf` derivative: same page images but with a real
 OCR text layer. **The plain `NEC_V60pgmRef.pdf` is image-only — do not use it.**
 A flat dump ships as `V60_ProgrammersRef_1986_text.txt`.
@@ -362,6 +368,17 @@ offset. Two things fall straight out of it, both consistent with this core:
   bug against NEC's own layout, not merely against MAME.
 - CHLVL's `24 + level` maps to **Change to Execution Level 0–3 (vectors
   24–27)**. Correct.
+
+**Update, and the documents' half is now settled.** `docs/v60/EXCEPTIONS.md`
+reads the SBT off the databook's own p. 3.270 plate — which prints the vector
+NUMBER in a column beside the offset — and `docs/v60/MMU-AND-TASKS.md` reached
+the same place independently from §8: **Reserved Opcode is vector 16 and Area
+Not Present is vector 8**, and the V70 table quoted below agrees. `v60_seq`
+raises 16. So the documents are unanimous and the clean-room core follows them;
+what remains open is only whether MAME's 8 reflects real silicon, which no page
+held here can decide. It is the same shape as the `SCHC`/`SKPC` Z-sense
+divergence in `docs/v60/COSIM.md`: a MAME-against-the-pages conflict with game
+behaviour at stake, recorded rather than "fixed".
 
 But the same table assigns vector 8 to *Area Not Present* and vector 16 to
 *Reserved Opcode*, while this core uses vector 8 for reserved-opcode and

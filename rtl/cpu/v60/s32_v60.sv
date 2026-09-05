@@ -1440,37 +1440,45 @@ else if (ce) begin
             else begin pc <= pc + 1; st <= S_FILL; st_after_fill<=S_DECODE; end
         end
 
-        // ---- Bcc disp8 (0x60-0x6a,0x6c-0x6f) / disp16 equivalent ----
-        // 0x6B/0x7B are holes in MAME's authoritative primary dispatch
-        // table, not branch-condition encodings.  Decode the holes inside the
-        // corresponding family so the casez items remain mutually exclusive.
+        // ---- Bcc disp8 (0x60-0x6F) / disp16 (0x70-0x7F) ----
+        // The whole of both ranges, including 0x6B and 0x7B.
+        //
+        // Those two used to raise the reserved-opcode exception here, on the
+        // grounds that they are "holes in MAME's authoritative primary
+        // dispatch table, not branch-condition encodings".  NEC's own pages
+        // say otherwise, twice:
+        //
+        //   * databook p.3.298 prints the Bcc row as `0 1 1 b c3 c2 c1 c0`
+        //     with no exclusion and an empty Exceptions column;
+        //   * databook p.3.295's Condition Encodings table prints all sixteen
+        //     codes and names 1011 "False / Never", where the two tables
+        //     beside it on the same page DO mark their unused encodings
+        //     "reserved" -- so NEC marks a reserved encoding when it means one.
+        //
+        // 1010 and 1011 are adjacent rows of that one table: "True / Always"
+        // and "False / Never".  This core has always executed 0x6A, and games
+        // depend on it -- there is no reading under which its neighbour is a
+        // reserved opcode.  The Programmer's Reference's Bcc page lists no
+        // mnemonic for either, because neither is a conditional test; an
+        // assembler spells 1010 `BR` and has nothing useful to call 1011.
+        //
+        // cond_true() below already returns 0 for 4'hb, so the fall-through is
+        // the whole fix: a branch that is never taken, two or three bytes long.
+        // Found by verif/v60x/tb_v60_cosim.sv, which compares this core's
+        // instruction boundaries against the clean-room decoder's.
         8'b0110_????: begin
-            if (opcode == 8'h6b) begin
-                exc_vector <= 8'd8;
-                exc_pushval <= psw;
-                st <= S_EXC_PUSH1;
-            end
-            else begin
-                if (cond_true(opcode[3:0]))
-                     pc <= pc + {{24{fb[1][7]}}, fb[1]};
-                else pc <= pc + 2;
-                st <= S_FILL; st_after_fill <= S_DECODE;
-            end
+            if (cond_true(opcode[3:0]))
+                 pc <= pc + {{24{fb[1][7]}}, fb[1]};
+            else pc <= pc + 2;
+            st <= S_FILL; st_after_fill <= S_DECODE;
         end
         8'b0111_????: begin
             logic [15:0] bd16;
-            if (opcode == 8'h7b) begin
-                exc_vector <= 8'd8;
-                exc_pushval <= psw;
-                st <= S_EXC_PUSH1;
-            end
-            else begin
-                bd16 = fb16(1);
-                if (cond_true(opcode[3:0]))
-                     pc <= pc + {{16{bd16[15]}}, bd16};
-                else pc <= pc + 3;
-                st <= S_FILL; st_after_fill <= S_DECODE;
-            end
+            bd16 = fb16(1);
+            if (cond_true(opcode[3:0]))
+                 pc <= pc + {{16{bd16[15]}}, bd16};
+            else pc <= pc + 3;
+            st <= S_FILL; st_after_fill <= S_DECODE;
         end
 
         // ---- BSR disp16 (0x48): push return, branch ----

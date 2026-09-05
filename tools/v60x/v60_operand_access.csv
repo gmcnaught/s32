@@ -1,0 +1,221 @@
+mnemonic,variant,description,opcodes,operands,reads,writes,rmw,data_bus_cycles_if_all_memory,operand_detail,confidence
+ABSF,absf.s,Absolute Value,5C-0A 5E-0A,2,1,1,0,4,src.s(4B).r ; dst.s(4B).w,ok
+ABSF,absf.l,Absolute Value,5C-0A 5E-0A,2,1,1,0,8,src.l(8B).r ; dst.l(8B).w,ok
+ADD,add.b,,80 82 84,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+ADD,add.h,,80 82 84,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+ADD,add.w,,80 82 84,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+ADDC,addc.b,Add with Carry,90 92 94,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+ADDC,addc.h,Add with Carry,90 92 94,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+ADDC,addc.w,Add with Carry,90 92 94,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+ADDDC,adddc,,,3,2,0,1,4,src.b(1B).r ; dst.b(1B).rw ; pat.b(1B).r,ok
+ADDF,addf.s,Add Floating,5C-18 5E-18,2,1,0,1,6,src.s(4B).r ; dst.s(4B).rw,ok
+ADDF,addf.l,Add Floating,5C-18 5E-18,2,1,0,1,12,src.l(8B).r ; dst.l(8B).rw,ok
+AND,and.b,Logical AND,,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+AND,and.h,Logical AND,,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+AND,and.w,Logical AND,,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+ANDBSD,andbsd,AND Bit String,5B-10 5B-11,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,ok
+ANDBSD,andbsu,AND Bit String,5B-10 5B-11,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+ANDBSU,andbsd,,5B-10 5B-11,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+ANDBSU,andbsu,,5B-10 5B-11,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,ok
+ANDNBSD,andnbsd,AND Complemented Bit String,5B-12 5B-13,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,ok
+ANDNBSD,andnbsu,AND Complemented Bit String,5B-12 5B-13,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+ANDNBSU,andnbsd,,5B-12 5B-13,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+ANDNBSU,andnbsu,,5B-12 5B-13,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,ok
+BCC,bcc,,,0,0,0,0,0,,ok
+BRK,brk,,C8,0,0,0,0,0,,ok
+BRKV,brkv,Break on Overflow,C9,0,0,0,0,0,,ok
+BSR,bsr,Branch to Subroutine,48,0,0,0,0,0,,ok
+CALL,call,Call Procedure,49,2,1,0,1,4,target.b(1B).ex ; arg.w(4B).r,review
+CAXI,caxi,Compare and Exchange Interlocked,4C,1,0,0,1,4,dst.w(4B).rwi,ok
+CHKAE,chkae,Check Access Permission,4D 4E 4F,2,2,0,0,3,va.p(4B).r ; level.b(1B).r,ok
+CHKAE,chkar,Check Access Permission,4D 4E 4F,2,2,0,0,3,va.p(4B).r ; level.b(1B).r,review
+CHKAE,chkaw,Check Access Permission,4D 4E 4F,2,2,0,0,3,va.p(4B).r ; level.b(1B).r,review
+CHKAR,chkae,,4D 4E 4F,2,2,0,0,3,va.p(4B).r ; level.b(1B).r,review
+CHKAR,chkar,,4D 4E 4F,2,2,0,0,3,va.p(4B).r ; level.b(1B).r,ok
+CHKAR,chkaw,,4D 4E 4F,2,2,0,0,3,va.p(4B).r ; level.b(1B).r,review
+CHLVL,chlvl,,4B,2,2,0,0,2,level.b(1B).r ; arg.b(1B).r,review
+CLR1,clrl,Clear Bit,A7,2,1,0,1,6,offset.w(4B).r ; base.w(4B).rw,review
+CLRTLB,clrtlb,Clear TLB Entry,,1,1,0,0,2,va.p(4B).r,ok
+CLRTLBA,clrtlba,Clear All TLB Entries,10,0,0,0,0,0,,ok
+CMP,cmp.b,Compare,B8 BA BC,3,3,0,0,3,srcl.b(1B).r ; src2.b(1B).r ; srd.h(2B).r,review
+CMP,cmp.h,Compare,B8 BA BC,2,2,0,0,3,src2.h(2B).r ; srd.w(4B).r,review
+CMP,cmp.w,Compare,B8 BA BC,1,1,0,0,2,src2.w(4B).r,ok
+CMPBF,cmpbfl,Compare Bit Field,5D-00 5D-01 5D-02,3,3,0,0,5,bsrc.w(4B).r ; blen.b(1B).r ; src.w(4B).r,review
+CMPBF,cmpbfs,Compare Bit Field,5D-00 5D-01 5D-02,3,3,0,0,5,bsrc.w(4B).r ; blen.b(1B).r ; src.w(4B).r,review
+CMPBF,cmpbfz,Compare Bit Field,5D-00 5D-01 5D-02,3,3,0,0,5,bsrc.w(4B).r ; blen.b(1B).r ; src.w(4B).r,review
+CMPC,cmpc.b,Compare Character,5A-00,4,4,0,0,4,src.b(1B).r ; slen.b(1B).r ; dst.b(1B).r ; dlen.b(1B).r,review
+CMPC,cmpc.b,Compare Character,5A-00,4,4,0,0,4,src.h(2B).r ; slen.b(1B).r ; dst.h(2B).r ; dlen.b(1B).r,review
+CMPCF,cmpcf.b,Compare Character with Filler,,4,4,0,0,4,src.b(1B).r ; slen.b(1B).r ; dst.b(1B).r ; dlen.b(1B).r,review
+CMPCF,cmpcf.b,Compare Character with Filler,,4,4,0,0,4,src.h(2B).r ; slen.b(1B).r ; dst.h(2B).r ; dlen.b(1B).r,review
+CMPCS,cmpcs.b,Compare Character with Stopper,,4,4,0,0,4,src.b(1B).r ; slen.b(1B).r ; dst.b(1B).r ; dlen.b(1B).r,review
+CMPCS,cmpcs.b,Compare Character with Stopper,,4,4,0,0,4,src.h(2B).r ; slen.b(1B).r ; dst.h(2B).r ; dlen.b(1B).r,review
+CMPF,cmpf.s,Compare Floating,5C-00 5E-00,2,2,0,0,4,srd.s(4B).r ; src2.s(4B).r,review
+CMPF,cmpf.l,Compare Floating,5C-00 5E-00,2,2,0,0,8,srd.l(8B).r ; src2.l(8B).r,review
+CVT,cvt.ls,Convert,5F-00 5F-01 5F-08 5F-09 5F-10 5F-11,2,1,1,0,6,src.s(4B).r ; dst.l(8B).w,ok
+CVT,cvt.lw,Convert,5F-00 5F-01 5F-08 5F-09 5F-10 5F-11,2,1,1,0,6,src.l(8B).r ; dst.s(4B).w,ok
+CVTD,cvtd.pz,,59-18,3,2,1,0,3,src.b(1B).r ; dst.h(2B).w ; pat.b(1B).r,review
+DBCC,dbcc,,,0,0,0,0,0,,ok
+DEC,dec.b,Decrement,,1,0,0,1,2,dst.b(1B).rw,ok
+DEC,dec.h,Decrement,,1,0,0,1,2,dst.h(2B).rw,ok
+DEC,dec.w,Decrement,,1,0,0,1,4,dst.w(4B).rw,ok
+DIV,div.b,,A1 A3 A5,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+DIV,div.h,,A1 A3 A5,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+DIV,div.w,,A1 A3 A5,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+DIVF,divf.s,Divide Floating,5E-1B,2,1,0,1,6,src.s(4B).r ; dst.s(4B).rw,ok
+DIVF,divf.l,Divide Floating,5E-1B,2,1,0,1,12,src.l(8B).r ; dst.l(8B).rw,ok
+DIVU,divu.b,Unsigned Divide,B1 B3 B5,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+DIVU,divu.h,Unsigned Divide,B1 B3 B5,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+DIVU,divu.w,Unsigned Divide,B1 B3 B5,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+DIVUX,divux,,B6,2,1,0,1,10,src.w(4B).r ; dst.d(8B).rw,ok
+DIVX,divx,,A6,2,1,0,1,10,src.w(4B).r ; dst.d(8B).rw,ok
+EXTBF,extbfl,,5D-08 5D-09 5D-0A,3,2,1,0,5,bsrc.w(4B).r ; blen.b(1B).r ; dst.w(4B).w,review
+EXTBF,extbfs,,5D-08 5D-09 5D-0A,3,2,1,0,5,bsrc.w(4B).r ; blen.b(1B).r ; dst.w(4B).w,review
+EXTBF,extbfz,,5D-08 5D-09 5D-0A,3,2,1,0,5,bsrc.w(4B).r ; blen.b(1B).r ; dst.w(4B).w,review
+GETATE,getate,,05,1,0,1,0,4,dst.d(8B).w,ok
+GETPSW,getpsw,,,1,0,1,0,2,dst.w(4B).w,ok
+GETRA,getra,,03,1,0,1,0,2,dst.w(4B).w,ok
+HALT,halt,,00,0,0,0,0,0,,ok
+IN,in.b,,21 23 25,2,1,1,0,2,port.b(1B).r ; dst.b(1B).w,ok
+IN,in.h,,21 23 25,2,1,1,0,2,port.h(2B).r ; dst.h(2B).w,ok
+IN,in.b,,21 23 25,2,1,1,0,4,port.w(4B).r ; dst.w(4B).w,ok
+INC,inc.b,Increment,,1,0,0,1,2,dst.b(1B).rw,ok
+INC,inc.w,Increment,,1,0,0,1,2,dst.h(2B).rw,ok
+INC,inc.w,Increment,,1,0,0,1,4,dst.w(4B).rw,ok
+INSBF,insbfl,,5D-18 5D-19,3,2,0,1,7,src.w(4B).r ; bdst.w(4B).rw ; blen.b(1B).r,review
+INSBF,insbfr,,5D-18 5D-19,3,2,0,1,7,src.w(4B).r ; bdst.w(4B).rw ; blen.b(1B).r,review
+JMP,jmp,,,1,0,0,1,2,target.b(1B).ex,review
+JSR,jsr,Jump to Subroutine,,0,0,0,0,0,,ok
+LDPR,ldpr,,12,1,1,0,0,2,src.w(4B).r,ok
+LDTASK,ldtask,Load Task,01,1,1,0,0,2,list.w(4B).r,ok
+MOV,mov.b,,09 1B 2D 3F,1,1,0,0,1,src.b(1B).r,ok
+MOV,mov.h,,09 1B 2D 3F,1,1,0,0,1,src.h(2B).r,ok
+MOV,mov.w,,09 1B 2D 3F,1,1,0,0,2,src.w(4B).r,ok
+MOV,mov.b,,09 1B 2D 3F,2,1,1,0,5,src.d(8B).r ; dst.b(1B).w,ok
+MOV,mov.h,,09 1B 2D 3F,1,0,1,0,1,dst.h(2B).w,ok
+MOV,mov.w,,09 1B 2D 3F,1,0,1,0,2,dst.w(4B).w,ok
+MOV,mov.d,,09 1B 2D 3F,1,0,1,0,4,dst.d(8B).w,ok
+MOVBSU,movbsd,,5B-08 5B-09,3,2,1,0,3,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).w,review
+MOVBSU,movbsu,,5B-08 5B-09,2,2,0,0,2,bsrc.b(1B).r ; blen.b(1B).r,ok
+MOVCFU,movcfd.b,,,4,3,1,0,4,src.b(1B).r ; slen.b(1B).r ; dst.b(1B).w ; dlen.b(1B).r,review
+MOVCFU,movcfd.b,,,4,3,1,0,4,src.h(2B).r ; slen.b(1B).r ; dst.h(2B).w ; dlen.b(1B).r,review
+MOVCS,movcs.h,,5A-0C,4,3,1,0,4,src.b(1B).r ; slen.b(1B).r ; dst.b(1B).w ; dlen.b(1B).r,review
+MOVCS,movcs.h,,5A-0C,4,3,1,0,4,src.h(2B).r ; slen.b(1B).r ; dst.h(2B).w ; dlen.b(1B).r,review
+MOVCU,movcu.b,,58-08 58-09 5A-08 5A-09,4,3,1,0,4,src.b(1B).r ; slen.b(1B).r ; dst.b(1B).w ; dlen.b(1B).r,review
+MOVCU,movcu.b,,58-08 58-09 5A-08 5A-09,4,3,1,0,4,src.h(2B).r ; slen.b(1B).r ; dst.h(2B).w ; dlen.b(1B).r,review
+MOVEA,movea.b,,40 42 44,2,0,1,1,4,src.b(1B).n ; dst.w(4B).w,ok
+MOVEA,movea.b,,40 42 44,2,0,1,1,4,src.h(2B).n ; dst.w(4B).w,ok
+MOVEA,movea.b,,40 42 44,2,0,1,1,6,src.w(4B).n ; dst.w(4B).w,ok
+MOVF,movf.s,,5E-08,2,1,1,0,4,src.s(4B).r ; dst.s(4B).w,ok
+MOVF,movf.l,,5E-08,2,1,1,0,8,src.l(8B).r ; dst.l(8B).w,ok
+MOVS,movs.bh,,1C,2,1,1,0,2,src.b(1B).r ; dst.h(2B).w,ok
+MOVS,movs.bh,,1C,2,1,1,0,3,src.b(1B).r ; dst.w(4B).w,ok
+MOVS,movs.bh,,1C,2,1,1,0,3,src.h(2B).r ; dst.w(4B).w,ok
+MOVT,movt.hb,,19 29 2B,2,1,1,0,2,src.h(2B).r ; dst.b(1B).w,ok
+MOVT,movt.hb,,19 29 2B,2,1,1,0,3,src.w(4B).r ; dst.b(1B).w,ok
+MOVT,movt.hb,,19 29 2B,2,1,1,0,3,src.w(4B).r ; dst.h(2B).w,ok
+MOVZ,movz.bh,,1D,2,1,1,0,2,src.b(1B).r ; dst.h(2B).w,ok
+MOVZ,movz.bh,,1D,2,1,1,0,3,src.b(1B).r ; dst.w(4B).w,ok
+MOVZ,movz.bh,,1D,2,1,1,0,3,src.h(2B).r ; dst.w(4B).w,ok
+MUL,mul.b,,81 83 85,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+MUL,mul.h,,81 83 85,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+MUL,mul.w,,81 83 85,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+MULF,mulf.s,,5E-1A,2,1,0,1,6,src.s(4B).r ; dst.s(4B).rw,ok
+MULF,mulf.l,,5E-1A,2,1,0,1,12,src.l(8B).r ; dst.l(8B).rw,ok
+MULU,mulu.b,,91 93 95,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+MULU,mulu.h,,91 93 95,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+MULU,mulu.w,,91 93 95,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+MULUX,mulux,,96,2,1,0,1,10,src.w(4B).r ; dst.d(8B).rw,ok
+MULX,mulx,,86,2,1,0,1,10,src.w(4B).r ; dst.d(8B).rw,ok
+NEG,neg.b,,39 3B 3D,2,1,1,0,2,src.b(1B).r ; dst.b(1B).w,ok
+NEG,neg.h,,39 3B 3D,2,1,1,0,2,src.h(2B).r ; dst.h(2B).w,ok
+NEG,neg.w,,39 3B 3D,2,1,1,0,4,src.w(4B).r ; dst.w(4B).w,ok
+NEGF,negf.s,Negate Floating,5E-09,2,1,1,0,4,src.s(4B).r ; dst.s(4B).w,ok
+NEGF,negf.l,Negate Floating,5E-09,2,1,1,0,8,src.l(8B).r ; dst.l(8B).w,ok
+NOP,nop,No Operation,CD,0,0,0,0,0,,ok
+NOT1,notl,,B7,2,1,0,1,6,offset.w(4B).r ; base.w(4B).rw,review
+NOTBSD,notbsd,Negate Bit String,5B-0A 5B-0B,3,2,1,0,3,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).w,ok
+NOTBSD,notbsu,Negate Bit String,5B-0A 5B-0B,3,2,1,0,3,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).w,review
+NOTBSU,notbsd,,5B-0A 5B-0B,3,2,1,0,3,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).w,review
+NOTBSU,notbsu,,5B-0A 5B-0B,3,2,1,0,3,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).w,ok
+OR,dst.b,,88 8A 8C,1,1,0,0,1,src.b(1B).r,review
+OR,dst.h,,88 8A 8C,1,1,0,0,1,src.h(2B).r,review
+OR,or.w,,88 8A 8C,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+ORBSU,orbsd,,5B-14 5B-15,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+ORBSU,orbsu,,5B-14 5B-15,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,ok
+ORNBSU,ornbsd,,5B-16 5B-17,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+ORNBSU,ornbsu,,5B-16 5B-17,2,1,0,1,3,blen.b(1B).r ; bdst.b(1B).rw,ok
+OUT,out.b,,,2,1,1,0,2,src.b(1B).r ; port.b(1B).w,ok
+OUT,out.h,,,2,1,1,0,2,src.h(2B).r ; port.h(2B).w,ok
+OUT,out.w,,,2,1,1,0,4,src.w(4B).r ; port.w(4B).w,ok
+POP,pop,,,1,0,1,0,2,dst.w(4B).w,ok
+POPM,popm,,,1,1,0,0,2,list.w(4B).r,ok
+PREPARE,prepare,Prepare Stack Frame,,1,1,0,0,2,num.w(4B).r,ok
+PUSH,push,Push Word,,1,1,0,0,2,src.w(4B).r,ok
+PUSHM,pushm,,,1,1,0,0,2,list.w(4B).r,ok
+REM,rem.b,,50 52 54,2,1,0,1,3,dst.b(1B).rw ; sflc.h(2B).r,ok
+REM,rem.h,,50 52 54,2,1,0,1,4,dst.h(2B).rw ; src.w(4B).r,ok
+REM,rem.w,,50 52 54,1,0,0,1,4,dst.w(4B).rw,ok
+REMU,remu.b,,51 53 55,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+REMU,remu.h,,51 53 55,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+REMU,remu.w,,51 53 55,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+RET,ret,,,0,0,0,0,0,,ok
+RETIS,retis,Return from Interrupt (System),,0,0,0,0,0,,ok
+RETIU,retiu,Return from Interrupt (User),,0,0,0,0,0,,ok
+ROT,rot.b,,89 8B 8D,2,1,0,1,3,count.b(1B).r ; dst.b(1B).rw,ok
+ROT,rot.b,,89 8B 8D,2,1,0,1,3,count.b(1B).r ; dst.h(2B).rw,ok
+ROT,rot.b,,89 8B 8D,2,1,0,1,5,count.b(1B).r ; dst.w(4B).rw,ok
+ROTC,rotc.b,,99 9B 9D,2,1,0,1,3,count.b(1B).r ; dst.b(1B).rw,ok
+ROTC,rotc.b,,99 9B 9D,2,1,0,1,3,count.b(1B).r ; dst.h(2B).rw,ok
+ROTC,rotc.b,,99 9B 9D,2,1,0,1,5,count.b(1B).r ; dst.w(4B).rw,ok
+RVBIT,rvbit,,08,2,1,1,0,2,src.b(1B).r ; dst.b(1B).w,ok
+RVBYT,rvbyt,Reverse Byte Order,2C,2,1,1,0,4,src.w(4B).r ; dst.w(4B).w,ok
+SCH1BSU,schlbsu,,5B-02 5B-03,3,2,1,0,4,bsrc.b(1B).r ; blen.b(1B).r ; dst.w(4B).w,review
+SCHCD,schcd.b,Search Character,58-18 58-19 5A-18,3,3,0,0,3,src.b(1B).r ; slen.b(1B).r ; char.b(1B).r,ok
+SCHCD,schcd.b,Search Character,58-18 58-19 5A-18,3,3,0,0,3,src.h(2B).r ; slen.b(1B).r ; char.h(2B).r,ok
+SCHCU,schcd.b,,58-18 58-19 5A-18,3,3,0,0,3,src.b(1B).r ; slen.b(1B).r ; char.b(1B).r,review
+SCHCU,schcd.b,,58-18 58-19 5A-18,3,3,0,0,3,src.h(2B).r ; slen.b(1B).r ; char.h(2B).r,review
+SCHOBS,schobs,,5B-00,3,2,1,0,4,bsrc.b(1B).r ; blen.b(1B).r ; dst.w(4B).w,ok
+SCLF,sclf.s,,5E-10,2,1,0,1,5,count.h(2B).r ; dst.s(4B).rw,ok
+SCLF,sclf.l,,5E-10,2,1,0,1,9,count.h(2B).r ; dst.l(8B).rw,ok
+SET1,setl,Set Bit,97,2,1,0,1,6,offset.w(4B).r ; base.w(4B).rw,review
+SETF,setf,,47,2,1,1,0,2,cond.b(1B).r ; dst.b(1B).w,ok
+SHA,sha.b,,B9 BB BD,2,1,0,1,3,dst.b(1B).rw ; count.b(1B).r,ok
+SHA,sha.b,,B9 BB BD,2,1,0,1,3,dst.h(2B).rw ; count.b(1B).r,ok
+SHA,sha.w,,B9 BB BD,1,0,0,1,4,dst.w(4B).rw,ok
+SHL,shl.b,,A9 AB AD,2,1,0,1,3,dst.b(1B).rw ; count.b(1B).r,ok
+SHL,shl.b,,A9 AB AD,2,1,0,1,3,dst.h(2B).rw ; count.b(1B).r,ok
+SHL,shl.w,,A9 AB AD,1,0,0,1,4,dst.w(4B).rw,ok
+SKPCD,skpcd.b,Skip Character,5A-1A 5A-1B,3,3,0,0,3,src.b(1B).r ; slen.b(1B).r ; char.b(1B).r,ok
+SKPCD,skpcd.b,Skip Character,5A-1A 5A-1B,3,3,0,0,3,src.h(2B).r ; slen.b(1B).r ; char.h(2B).r,ok
+SKPCU,skpcd.b,,5A-1A 5A-1B,3,3,0,0,3,src.b(1B).r ; slen.b(1B).r ; char.b(1B).r,review
+SKPCU,skpcd.b,,5A-1A 5A-1B,3,3,0,0,3,src.h(2B).r ; slen.b(1B).r ; char.h(2B).r,review
+STPR,stpr,,02,1,0,1,0,2,dst.w(4B).w,ok
+STTASK,sttask,Store Task,,1,1,0,0,2,list.w(4B).r,ok
+SUBC,dst.b,,98 9A 9C,1,1,0,0,1,src.b(1B).r,review
+SUBC,dst.h,,98 9A 9C,1,1,0,0,1,src.h(2B).r,review
+SUBC,subc.w,,98 9A 9C,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+SUBDC,subdc,,59-01,3,2,0,1,4,src.b(1B).r ; dst.b(1B).rw ; pat.b(1B).r,ok
+SUBF,subf.s,,5C-19,2,1,0,1,6,src.s(4B).r ; dst.s(4B).rw,ok
+SUBF,subf.l,,5C-19,2,1,0,1,12,src.l(8B).r ; dst.l(8B).rw,ok
+SUBRDC,subrdc,,59-02,3,2,0,1,4,src.b(1B).r ; dst.b(1B).rw ; pat.b(1B).r,ok
+TASI,tasi,,,1,0,0,1,2,dst.b(1B).rwi,ok
+TB,tb,,,0,0,0,0,0,,ok
+TEST,test.b,,,1,1,0,0,1,src.b(1B).r,ok
+TEST,test.h,,,1,1,0,0,1,src.h(2B).r,ok
+TEST,test.w,,,1,1,0,0,2,src.w(4B).r,ok
+TEST1,testl,Test Bit,87,2,2,0,0,4,offset.w(4B).r ; base.w(4B).r,review
+TRAP,trap,Trap on Condition,,1,1,0,0,1,vector.b(1B).r,ok
+TRAPFL,trapfl,Trap on Floating Point Exception,CB,0,0,0,0,0,,ok
+UPDATE,update,Update Area Table Entry,15,1,1,0,0,2,va.p(4B).r,ok
+UPDPSW,updpsw.w,Update PSW,13 4A,1,1,0,0,2,mask.w(4B).r,ok
+UPDPTE,updpte,Update Page Table Entry,14,1,1,0,0,2,va.p(4B).r,ok
+XCH,xch.b,,41 43 45,2,0,0,2,4,dstl.b(1B).rw ; dst2.b(1B).rw,review
+XCH,xch.h,,41 43 45,2,0,0,2,4,dstl.h(2B).rw ; dst2.h(2B).rw,review
+XCH,xch.w,,41 43 45,1,0,0,1,4,dst2.w(4B).rw,ok
+XOR,xor.b,,B2 B4,2,1,0,1,3,src.b(1B).r ; dst.b(1B).rw,ok
+XOR,xor.h,,B2 B4,2,1,0,1,3,src.h(2B).r ; dst.h(2B).rw,ok
+XOR,xor.w,,B2 B4,2,1,0,1,6,src.w(4B).r ; dst.w(4B).rw,ok
+XORBSD,xorbsd,XOR Bit String,5B-18 5B-19,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,ok
+XORBSD,xorbsu,XOR Bit String,5B-18 5B-19,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+XORBSU,instruction,,5B-18 5B-19 5B-1A 5B-1B,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
+XORBSU,xombsd,,5B-18 5B-19 5B-1A 5B-1B,3,2,0,1,4,bsrc.b(1B).r ; blen.b(1B).r ; bdst.b(1B).rw,review
