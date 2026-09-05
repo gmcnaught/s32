@@ -431,9 +431,9 @@ Unknown 1, which is the actual blocker.
 4. **Reopen it if a source appears that settles Unknown 1.** The specific thing
    to look for is a statement of what a resumed string instruction uses as its
    remaining length — a register beyond R28/R27, or a rule for re-deriving it.
-   The Programmer's Reference PDF is not held (only its OCR), and §7's
-   Description blocks are where such a sentence would live, so **a plate of any
-   one of the eighteen pages could close this.** That is a cheap, bounded
+   The Programmer's Reference PDF is held now (`docs/reference/`, 2026-09-05),
+   and §7's Description blocks are where such a sentence would live, so **a
+   plate of any one of the eighteen pages could close this.** That is a cheap, bounded
    next step and it should happen before any RTL does.
 
 The one-line answer to "is this work safe to start": **the bus-invariant

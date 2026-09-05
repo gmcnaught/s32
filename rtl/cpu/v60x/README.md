@@ -265,20 +265,18 @@ removes the cache the trap needs.
 
 ## Not built yet
 
-No MMU, no FPU, no task or context switching, no address traps, no emulation
-mode. What exists is a bus, the operand vocabulary above it, the machinery
-that turns one operand reference into bus cycles, an instruction stream, a
-decoder, enough architectural state and datapath to execute the integer
-two-operand instructions of Formats I and II including the shift group and the
-conversions, the control transfers that make a sequence of them a program —
-all three return pairs among them — the multiplies and divides of the integer
-set, four of the instruction exceptions, the integer arithmetic one, and the
-three externally raised ones.
+No MMU translation, no task switching, no address traps, no emulation mode.
+**93 of the instruction table's 135 mnemonics execute** and are benched; the
+42 that do not are four groups, each its own subsystem: the floating point
+arithmetic (twelve — `MOVF`, `NEGF` and `ABSF` are done), the character
+strings (eight), the bit strings (ten) and the MMU and task group (twelve).
+`tools/v60x/insn_table.py`'s `EXEC_OP`, `EXEC_OP_ESCAPE` and `CTRL_OP` are the
+authority on which is which. The doubleword register pair, the decimal group
+and the bit field group are done (2026-08-28).
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
-piece would take. In short: everything outside the integer set, and a
-doubleword operand's register pair — which is what the X forms of the
-multiplies and divides are waiting on.
+piece would take; `docs/v60/LANDING-PLAN.md` is how this tree reaches `main`
+and the shipping core.
 
 Of the externally raised group, what is missing is the bus freeze interrupt
 (vector 1, and `v60_biu` has no `BFREZ` pin), the double bus error (§8 halts;

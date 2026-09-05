@@ -543,6 +543,11 @@ contradicts its own prose:
   only its OCR text layer, so this line cannot be checked on a plate. Recorded
   as OCR-suspect rather than resolved.
 
+  **Read on the plate 2026-09-05** (p. 7-18): the printed expression really is
+  `level < PSW.EL`, beneath prose that says the opposite. The book contradicts
+  itself; the prose reading — the only one under which the instruction can
+  reach a more privileged level — stands.
+
 Either way the failure is an **Illegal Data Field** exception — §8's `#20`,
 offset +80 — and not a silent no-op or a Privileged Instruction exception.
 
@@ -574,7 +579,7 @@ or gated path rather than an execution-level check — `POPM` restores only
 - **`XCH`'s internal order**, and what a fault mid-exchange leaves behind. The
   Operation is one symmetric arrow with no temporary.
 - **`CHLVL`'s permission inequality**, above — the prose and the printed
-  expression are negations and the plate is not held.
+  expression are negations on the plate itself; the prose is taken.
 - **Whether `PSW.IS` interacts with `CHLVL`'s "target execution level stack".**
   The page says the argument goes on the target level's stack; §3 says the SP
   is "a cache of five registers … one for each of the four execution levels and

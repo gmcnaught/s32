@@ -841,6 +841,11 @@ as a defect.
    consequential gap in this document: a wrong direction produces a TCB that
    is self-consistent and incompatible with everything else.
 
+   **Settled 2026-09-05 on the plate.** Figure 5-1 (p. 5-2) draws the "TCB
+   Base Address" arrow at `TKCW`, the bottom row, with `L0SP..L3SP`,
+   `R0..R30`, then `ATBR0..ATLR3` above it: addresses ascend up the figure.
+   `s32_v60.sv`'s layout is correct.
+
 2. **Where `TR` sits in the TCB, or whether it does.** §5's context list names
    `TR` under "Task Information" alongside `TKCW`, but Figure 5-1 shows only
    `TKCW`. Since `TR` holds the address *of* the TCB, storing it inside the

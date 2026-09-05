@@ -5,9 +5,11 @@ matters. `BRKV` is already in and is not re-derived here
 (`docs/v60/TRANCHE-ONE.md`); it appears only where it is the control that makes
 a `BRK` finding legible.
 
-**One constraint on this doc, stated up front.** The Programmer's Reference
-**PDF is not held** in `docs/reference/` — only `NEC_V60pgmRef_djvu.txt`, its
-OCR text layer. So *neither* side of the `BRK` conflict can be read at 600 dpi:
+**One constraint on this doc, stated up front.** When it was written the
+Programmer's Reference **PDF was not held** in `docs/reference/` — only
+`NEC_V60pgmRef_djvu.txt`, its OCR text layer. It is held now
+(`NEC_V60_ProgrammersRef_1986.pdf`, 2026-09-05); Figure 8-5 and `BRK`'s page
+remain to be read on it. So *neither* side of the `BRK` conflict can be read at 600 dpi:
 both Figure 8-5 and `BRK`'s §7 page are in that book. The conflict is settled
 below anyway, and from plates — but from the **databook's**, which is held, and
 from a third Reference passage that does not depend on reading a figure. Where

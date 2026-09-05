@@ -643,6 +643,12 @@ hard to read. None of it is decided here.
    Operation blocks**, so there is no plate to check. This one must be decided,
    and it changes results.
 
+   **Settled 2026-09-05 on the plate.** p. 7-108 prints `dst ← src − dst` and
+   its Description says "the difference of the source operand and destination
+   operand". The OCR was faithful: `SUBF` is source-first, the sole such
+   operation in the integer or floating point sets. Implement it that way and
+   cite the page.
+
 2. **Rounding for the arithmetic instructions.** `ADDF`/`SUBF` name the
    programmed rounding mode only for the *sign of a zero result*. No page
    states that `RD` governs the significand rounding of `ADDF`/`SUBF`/`MULF`/
@@ -850,9 +856,10 @@ open, and says it "must be decided". This section is the evidence, gathered
 afterwards. **It does not close the question from a page — but it moves it a
 long way, and it inverts one of the arguments the item leans on.**
 
-The Programmer's Reference PDF is still not held. Everything quoted from it is
-`docs/reference/NEC_V60pgmRef_djvu.txt`, its OCR text layer. Everything quoted
-from the databook is read on the plate.
+The Programmer's Reference PDF was not held when this was written. Everything
+quoted from it below is `docs/reference/NEC_V60pgmRef_djvu.txt`, its OCR text
+layer. Everything quoted from the databook is read on the plate. **§8 at the
+end records the plate reading that closed it.**
 
 ## 1. What the OCR actually prints, verbatim
 
@@ -1165,3 +1172,10 @@ second operand `src2` is *second minus first* — the same direction as
 `dst − src`. So `SUBF` and `CMPF` agree under the decision and disagree under
 the printed line, and a program that subtracts and then compares the same pair
 would expose the difference immediately. That is worth a test either way.
+
+## 8. Read on the plate
+
+`docs/reference/NEC_V60_ProgrammersRef_1986.pdf`, p. 7-108, 2026-09-05. The
+Operation block prints `dst ← src − dst`, plainly, under a Description that
+reads "the difference of the source operand and destination operand". The
+OCR reproduced the page. `SUBF` is source-first; §7 above is superseded.

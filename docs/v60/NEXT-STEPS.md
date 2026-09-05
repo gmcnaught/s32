@@ -12,6 +12,15 @@ it came from, every bench runs under both simulators, every bench is
 mutation-checked and what survives is closed rather than noted, and anything not
 from a page is marked at the point of decision.
 
+**Updated 2026-09-05.** The Programmer's Reference scan is held now, as
+`docs/reference/NEC_V60_ProgrammersRef_1986.pdf` (a private submodule), and
+four items that were waiting on its plates are closed: `SUBF`'s operand order
+(p. 7-108, `dst ← src − dst`), the TCB layout direction (Figure 5-1, base at
+`TKCW`, ascending), `CHLVL`'s inequality (p. 7-18 contradicts itself; the
+prose stands) and the SBT's low end (Figure 8-2 confirms every vector this
+tree uses). Each is recorded in the document that raised it. The landing
+sequence from here is `docs/v60/LANDING-PLAN.md`.
+
 `docs/v60/GOALS.md` is this list in the form the work is started in — four
 paste-ready goal texts, each carrying its own pages and acceptance criteria.
 Its order differs from this file's on purpose, and its Goal 1 — item 2 below,
@@ -172,8 +181,14 @@ What is left, in rough order of how much machinery each needs:
   consumed them. It also brought bit addressing into `v60_ea` — base shifted
   left by three, offset added signed and unscaled — which the bit *string* group
   will reuse whole.
-- **The floating point group**, the MMU, task and context switching, address
-  traps and emulation mode. Each is its own subsystem.
+- **The floating point arithmetic** — `ADDF` `SUBF` `MULF` `DIVF` `CMPF`
+  `SCLF` `CVTF` and the five `CVT` forms. `MOVF`, `NEGF` and `ABSF` are done
+  (`docs/v60/FLOATING-POINT-AUDIT.md`, and the TKCW-gated trap model that came
+  out of it). Five decisions remain recorded in `FLOATING-POINT.md`; `SUBF`'s
+  order is no longer one of them.
+- **The MMU**, task and context switching, address traps and emulation mode.
+  Each is its own subsystem; `docs/v60/MMU-AND-TASKS.md` tiers the MMU group
+  by what real mode needs.
 
 ## 4. A doubleword operand is a register PAIR — **done**
 

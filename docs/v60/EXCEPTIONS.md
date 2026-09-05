@@ -284,7 +284,9 @@ processor: the handler reads the frame's parameter-count field and passes it.
 - **The bus freeze interrupt**, vector 1. `v60_biu` has no `BFREZ` pin.
 - **NMI's own masking rule.** "Additional non-maskable interrupts will not be
   acknowledged until the processing of the first NMI completes and the RETIS
-  instruction is executed" (p. 3.271). There is no RETIS.
+  instruction is executed" (p. 3.271). `RETIS` exists now
+  (`docs/v60/RETURN-PAIRS.md`); the hold-off itself is not implemented, because
+  nothing records that an NMI is in progress.
 - **A clean abort.** Figure 8-5 marks the bus fault "Abort", and what `v60_seq`
   does is abandon the instruction at the first access completion after the
   fault: it does not retire and its addressing-mode writeback is dropped, but a

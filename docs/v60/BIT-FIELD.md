@@ -517,8 +517,8 @@ bit field differ here.
   `docs/v60/MULTIPLY-DIVIDE.md` established from BRKV's page ("PC ← [ Exception
   Vector 21 ]" for the Integer Arithmetic Exception at offset 84). The OCR of
   Figure 8-2 pairs its labels with offsets one row out from that, so the figure
-  was not used. The figure has not been read on a plate: the Programmer's
-  Reference PDF is not held in `docs/reference/`, only its OCR text layer, and
-  the databook extract (pp. 3.229-3.301) does not contain §8.
+  was not used. Read on the plate 2026-09-05 (Figure 8-2, p. 8-2): Illegal
+  Data Field is vector 20 at +80, Reserved Opcode 16 at +64, Area Not Present
+  8 at +32. The anchor holds.
 - **Timing.** p. 3.297's Clocks column is blank for all three rows, as it is
   for every row in the summary (`docs/v60/INSTRUCTION-TIMING.md`).
