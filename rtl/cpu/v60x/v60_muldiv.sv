@@ -81,8 +81,10 @@
 `timescale 1ns/1ps
 
 module v60_muldiv
-    import v60_alu_pkg::*;
-    import v60_psw_pkg::*;
+    // One import statement, not one per package: Quartus 17.0 accepts a
+    // single package_import_declaration in a module header and rejects a
+    // second with "expecting ;".  Same packages, same order.
+    import v60_alu_pkg::*, v60_psw_pkg::*;
 (
     input               clk,
     input               rst,

@@ -193,12 +193,10 @@
 `timescale 1ns/1ps
 
 module v60_seq
-    import v60_bus_pkg::*;
-    import v60_fmt_pkg::*;
-    import v60_op_pkg::*;
-    import v60_am_pkg::*;
-    import v60_alu_pkg::*;
-    import v60_psw_pkg::*;
+    // One import statement, not one per package: Quartus 17.0 accepts a
+    // single package_import_declaration in a module header and rejects a
+    // second with "expecting ;".  Same packages, same order.
+    import v60_bus_pkg::*, v60_fmt_pkg::*, v60_op_pkg::*, v60_am_pkg::*, v60_alu_pkg::*, v60_psw_pkg::*;
 (
     input               clk,
     input               rst,
@@ -352,6 +350,7 @@ module v60_seq
     output logic [31:0] pc,             // the architectural PC
     output logic [31:0] psw,
     output logic        retired,        // one pulse per instruction
+    output logic        halted,         // HALT retired; waiting for an interrupt
     output logic  [4:0] insn_cycles,    // bus cycles the operands cost
     output logic        stopped,        // hit something it cannot execute
     // Why, because the three are different things and a machine with an
@@ -616,6 +615,7 @@ logic        stk_phase;   // which of the two stack accesses is running
 // the HALT instruction", so the interrupt's frame carries HALT + 1 and the
 // handler's return does not land back on the HALT.
 logic        halted_r;
+assign halted = halted_r;
 logic        berr_r;      // a bus fault is outstanding
 logic [23:0] berr_addr_r; // where it happened -- the frame's parameter word
 logic [15:0] berr_code_r;

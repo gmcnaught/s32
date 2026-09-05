@@ -33,7 +33,7 @@ RTL="rtl/cpu/v60x/v60_bus_pkg.sv rtl/cpu/v60x/v60_biu.sv \
      rtl/cpu/v60x/v60_muldiv.sv \
      rtl/cpu/v60x/v60_fmt_pkg.sv rtl/cpu/v60x/v60_op_pkg.sv \
      rtl/cpu/v60x/v60_fmt_decode.sv rtl/cpu/v60x/v60_idu.sv \
-     rtl/cpu/v60x/v60_exc.sv rtl/cpu/v60x/v60_seq.sv"
+     rtl/cpu/v60x/v60_exc.sv rtl/cpu/v60x/v60_seq.sv rtl/cpu/v60x/v60_top.sv"
 WORK="${WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 pass=0; fail=0
@@ -96,6 +96,12 @@ run tb_v60_alu         "V60 ALU PASS"
 run tb_v60_muldiv      "V60 MULDIV PASS"
 run tb_v60_exc         "V60 EXC PASS"
 run tb_v60_seq         "V60 SEQ PASS"
+
+# The assembled core, on one of the shipping differential harness's generated
+# programs (verif/cosim/gen_diff_program.py).  The bench proves the top level
+# runs a placed program to HALT; the lockstep bench is what compares results.
+python3 verif/cosim/gen_diff_program.py 1 "$WORK/top_p1" > /dev/null
+run tb_v60_top         "V60 TOP PASS" "+hex=$WORK/top_p1.hex"
 
 # The co-simulation oracle needs the SHIPPING core beside the clean-room one,
 # so it compiles a different file list.  Everything else about it is the same:

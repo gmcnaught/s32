@@ -43,8 +43,10 @@
 `timescale 1ns/1ps
 
 module v60_fmt_decode
-    import v60_fmt_pkg::*;
-    import v60_op_pkg::*;
+    // One import statement, not one per package: Quartus 17.0 accepts a
+    // single package_import_declaration in a module header and rejects a
+    // second with "expecting ;".  Same packages, same order.
+    import v60_fmt_pkg::*, v60_op_pkg::*;
 (
     input               clk,
     input               rst,
