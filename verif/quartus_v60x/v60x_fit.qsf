@@ -1,0 +1,51 @@
+# Standalone fit of the clean-room V60, on the DE10-Nano's device, with the
+# production build's optimisation settings (verif/quartus_v60/base/v60_base.qsf
+# is the shipping core's equivalent).  Nothing here reaches files.qip.
+#
+#   quartus_map v60x_fit && quartus_fit v60x_fit && quartus_sta v60x_fit
+#
+# The clock is clk_ram's period (Arcade-SegaSystem32.sdc), because that is the
+# domain the shipping BIU already lives in and the one a swapped-in core would
+# have to close.
+set_global_assignment -name FAMILY "Cyclone V"
+set_global_assignment -name DEVICE 5CSEBA6U23I7
+set_global_assignment -name TOP_LEVEL_ENTITY v60x_probe
+set_global_assignment -name SDC_FILE v60x_fit.sdc
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_bus_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_am_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_psw_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_alu_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_fmt_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_op_pkg.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_biu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_am_decode.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_dxu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_dmux.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_ea.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_bus_arb.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_pfu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_regfile.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_alu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_fpu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_muldiv.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_fmt_decode.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_idu.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_exc.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_seq.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../../rtl/cpu/v60x/v60_top.sv
+set_global_assignment -name SYSTEMVERILOG_FILE v60x_probe.sv
+set_global_assignment -name OPTIMIZATION_MODE "HIGH PERFORMANCE EFFORT"
+set_global_assignment -name ALLOW_POWER_UP_DONT_CARE ON
+set_global_assignment -name OPTIMIZATION_TECHNIQUE SPEED
+set_global_assignment -name MUX_RESTRUCTURE ON
+set_global_assignment -name REMOVE_REDUNDANT_LOGIC_CELLS ON
+set_global_assignment -name ADV_NETLIST_OPT_SYNTH_WYSIWYG_REMAP ON
+set_global_assignment -name SYNTH_GATED_CLOCK_CONVERSION ON
+set_global_assignment -name PRE_MAPPING_RESYNTHESIS ON
+set_global_assignment -name PROJECT_OUTPUT_DIRECTORY output_files
+
+set_global_assignment -name LAST_QUARTUS_VERSION "17.0.2 Lite Edition"
+# The device has 145 user I/O pins and the probe has 199: every port is virtual
+# except the clock, so the fit measures the core and not a pinout.
+set_instance_assignment -name VIRTUAL_PIN ON -to *
+set_instance_assignment -name VIRTUAL_PIN OFF -to clk
