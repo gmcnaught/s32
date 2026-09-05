@@ -1,0 +1,37 @@
+# Divergence classes the lockstep bench (tb_v60_lockstep.sv) is expected to
+# find between the shipping core and the clean-room core, each adjudicated by
+# a page.  Format: opcode field, then a comment.  run_lockstep.sh fails on any
+# class not listed here, so a new line means a new finding, written up first.
+#
+# "ship" = rtl/cpu/v60/s32_v60.sv (MAME's core in RTL); "clean" = rtl/cpu/v60x.
+
+# MUL's overflow is a SIGNED fit -- PgmRef S7 MUL, docs/v60/MULTIPLY-DIVIDE.md.
+# MAME's test is unsigned and reports overflow for MUL.W -1, 1; ship follows
+# MAME.  Clean follows the page.  Byte, halfword and word forms.
+81 PSW.OV
+83 PSW.OV
+85 PSW.OV
+
+# NOT: "CY Unchanged, OV Cleared" -- PgmRef S7 NOT, p. 7-xx (PDF p. 192).
+# Ship clears CY; clean leaves it.  The rest of the logical group agrees.
+38 PSW.CY
+3a PSW.CY
+3c PSW.CY
+
+# SHA: "CY Set if the last shifted bit was set, cleared if the last shifted
+# bit was zero or the shift count was zero"; "OV Set if integer overflow
+# occurs" where "integer overflow occurs if the sign of the destination
+# changes at anytime during the execution"; a count beyond the operand length
+# stores zero or the sign -- PgmRef S7 SHA (PDF p. 220).  Clean is checked
+# against a one-bit-per-step model of that page (tb_v60_alu, 132,135 cases);
+# ship computes both flags from the final result and clamps differently.
+b9 PSW.CY
+bb PSW.CY
+bd PSW.CY
+b9 PSW.OV
+bb PSW.OV
+bd PSW.OV
+
+# GETPSW copies the flags into a register, so a flag class above shows up a
+# second time as R7 when the island's GETPSW runs.  Not a finding of its own.
+f7 R7

@@ -985,6 +985,29 @@ always @(posedge clk_sys) begin
     end
 end
 
+// +OPTRACE=<file>: one line per instruction the V60 decodes -- PC, opcode
+// byte, second byte -- for tools/v60x/exposure.py, which says which of the
+// instruction set a game actually executes and how much of it the clean-room
+// core (rtl/cpu/v60x) covers.  The boundary is the cycle S_DECODE is entered,
+// which is where every other per-instruction observer in this bench looks;
+// the opcode is fb[0] there, the second byte fb[1].  Opt-in and
+// observation-only: a normal boot run writes nothing.
+reg [1023:0] optrace_path;
+integer      optrace_fd = 0;
+reg    [6:0] optrace_st_d = 7'd0;
+initial begin
+    if ($value$plusargs("OPTRACE=%s", optrace_path)) begin
+        optrace_fd = $fopen(optrace_path, "w");
+        if (optrace_fd == 0) $display("OPTRACE: cannot open %0s", optrace_path);
+    end
+end
+always @(posedge clk_sys) if (optrace_fd != 0 && core.v60.ce) begin
+    optrace_st_d <= core.v60.st;
+    if (core.v60.st == S_DECODE_V && optrace_st_d != S_DECODE_V)
+        $fwrite(optrace_fd, "%08x %02x %02x\n", core.v60.pc, core.v60.fb[0], core.v60.fb[1]);
+end
+final if (optrace_fd != 0) $fclose(optrace_fd);
+
 // Narrow Spider-Man fetch/PC diagnostic.  The ROM branch at 0x062174 is
 // encoded 62 C2; its only legal successors are 0x062136 and 0x062176.
 // Keep this opt-in and observation-only so normal boot runs are unchanged.
