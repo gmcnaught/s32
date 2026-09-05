@@ -33,7 +33,7 @@ New-Item -ItemType Directory -Force -Path $BuildTemp | Out-Null
 if ($ModelDirectory.Contains(" ")) {
     throw "ModelDirectory must not contain spaces: $ModelDirectory"
 }
-$fileList = Join-Path $Root "scratch\romboot.f"
+$fileList = Join-Path $Root "verif\verilator\romboot.f"
 if (-not (Test-Path -LiteralPath $fileList)) {
     throw "Missing source file list: $fileList"
 }
