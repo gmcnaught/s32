@@ -54,6 +54,12 @@ jobs:
       # opcode package first and fails if the checked-in copy is stale.
       - name: Clean-room benches
         run: V60X_SIMS=icarus bash verif/v60x/run_v60x.sh
+      # Both cores on one program, compared after every instruction.  Fails on
+      # any divergence class verif/v60x/lockstep_known.txt does not adjudicate.
+      - name: Lockstep against the shipping core
+        run: bash verif/v60x/run_lockstep.sh 20
+      - name: Exposure tool
+        run: python3 -m unittest verif/v60x/test_exposure.py
 
   cosim:
     name: Differential co-sim (50 seeds)

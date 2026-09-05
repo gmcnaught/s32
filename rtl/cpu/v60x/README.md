@@ -210,6 +210,8 @@ register file, the address unit and the ALU, and retires it.
 | a divide by zero raising vector 21, where MAME does not trap | §7 + Table 8-1 | `tb_v60_muldiv`, `tb_v60_seq` |
 | its frame: the Current PC as a PARAMETER and the Next PC on top | Fig 8-5 | `tb_v60_seq` |
 | the sequencer waiting for a unit that is not combinational | — | `tb_v60_seq`, `tb_v60_muldiv` |
+| a byte or halfword result leaving the rest of its register unaffected | PgmRef p. 2-3 | `tb_v60_lockstep` |
+| the PSW resetting to 10000000H: level 0, interrupts off, ON the interrupt stack | p. 3.282, PgmRef §8 | `tb_v60_psw`, `tb_v60_lockstep` |
 
 ### Against the shipping core
 
@@ -233,6 +235,17 @@ theirs — and p. 3.298's Bcc row is `011 b c3 c2 c1 c0` with no exclusion. They
 are branches that are never taken. `s32_v60.sv` raised the reserved-opcode
 exception on them, inherited from a hole in MAME's dispatch table, and does not
 any more; `verif/v60/tb_v60_audit.sv` moved with it. See `docs/v60/COSIM.md`.
+
+### In lockstep with the shipping core
+
+**They agree about what instructions do, with nine adjudicated exceptions.**
+`tb_v60_lockstep` runs both cores on one generated program and compares the
+registers, the flags and the PC after every instruction; `lockstep_known.txt`
+is the list of classes where they differ and the page that decides each.
+Two of its first findings were this tree's (the two rows above), three are
+the shipping core's: `NOT`'s carry, `SHA`'s flags, `MUL`'s overflow.
+`docs/v60/LOCKSTEP.md` has the run. `v60_top` is the assembled core the
+bench drives, and `docs/v60/FIT-RESULT.md` is what Quartus makes of it.
 
 Every bench runs under **both** Icarus and Verilator on every invocation
 (`verif/v60x/run_v60x.sh`), and every claim above has been mutation-checked:

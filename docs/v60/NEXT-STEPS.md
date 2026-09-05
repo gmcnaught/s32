@@ -21,6 +21,22 @@ prose stands) and the SBT's low end (Figure 8-2 confirms every vector this
 tree uses). Each is recorded in the document that raised it. The landing
 sequence from here is `docs/v60/LANDING-PLAN.md`.
 
+**Measured, 2026-09-05.** The core has a top level (`v60_top`), a fit and a
+lockstep bench against the shipping core; `docs/v60/FIT-RESULT.md` and
+`docs/v60/LOCKSTEP.md` carry the numbers. Two things they change here:
+
+- **Timing is now the first item, not the last.** 7,414 ALMs is fine; an
+  Fmax of 20.6 MHz on a 96.6 MHz clock is not, and the path is the
+  decode-to-ALU chain, 46 levels. Register the opcode table's answer, or
+  move the execution stage onto the V60 clock with the BIU. Before any more
+  instructions.
+- **Stage 4 has an order.** The divergences the lockstep found in the
+  shipping core, by how often generated code hits them: `NOT`'s carry
+  ("CY Unchanged"), `SHA`'s carry and overflow, `MUL`'s overflow. Each is one
+  page and one PR into `s32_v60.sv`. Game exposure — which of the 42
+  unexecuted instructions games run — is measurable now with
+  `+OPTRACE` and `tools/v60x/exposure.py`, on a machine that has ROMs.
+
 `docs/v60/GOALS.md` is this list in the form the work is started in — four
 paste-ready goal texts, each carrying its own pages and acceptance criteria.
 Its order differs from this file's on purpose, and its Goal 1 — item 2 below,
