@@ -619,6 +619,18 @@ EXEC_OP_ESCAPE = {
     # INSBF has only two: the Reference prints insbfr and insbfl and no third,
     # which is why p.3.297 leaves its ext=10 cell blank.
     ('INSBF', 0): 'INSBFR', ('INSBF', 1): 'INSBFL',
+    # The character manipulation group.  Keyed, like the rest of this table, by
+    # the sub-op's low two bits -- which is what separates them: MOVC is 08/09
+    # (low bits 0/1) and MOVCF is 0A/0B (low bits 2/3), so the pair that
+    # differs only in DIRECTION lands on one operation and the sequencer reads
+    # the direction bit.  CMPC/CMPCF/CMPCS are 00/01/02 and have no direction
+    # bit at all; MOVCS is 0C and has none either.
+    ('MOVC', 0): 'MOVC',   ('MOVC', 1): 'MOVC',
+    ('MOVCF', 2): 'MOVCF', ('MOVCF', 3): 'MOVCF',
+    ('MOVCS', 0): 'MOVCS',
+    ('CMPC', 0): 'CMPC', ('CMPCF', 1): 'CMPCF', ('CMPCS', 2): 'CMPCS',
+    ('SCHC', 0): 'SCHC',   ('SCHC', 1): 'SCHC',
+    ('SKPC', 2): 'SKPC',   ('SKPC', 3): 'SKPC',
 }
 
 

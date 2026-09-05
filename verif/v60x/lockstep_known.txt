@@ -35,3 +35,13 @@ bd PSW.OV
 # GETPSW copies the flags into a register, so a flag class above shows up a
 # second time as R7 when the island's GETPSW runs.  Not a finding of its own.
 f7 R7
+
+# The character manipulation group (2026-09-05) diverges from the shipping core
+# in four places -- SCHC's and SKPC's Z, CMPC's R28/R27, and CMPCS's CY -- and
+# NONE of them is listed above, because the lockstep cannot reach them:
+# verif/v60x/gen_lockstep_program.py emits no 0x58 or 0x5A opcode, so no
+# generated program executes one.  They are adjudicated in
+# docs/v60/CHARACTER-STRING.md's "What implementing it settled" and benched in
+# tb_v60_seq instead.  Teaching the generator to emit the group would make them
+# appear here; until it does, listing them would claim an observation that has
+# not been made.

@@ -1,5 +1,14 @@
 # The character manipulation group
 
+**Implemented 2026-09-05** in `rtl/cpu/v60x` -- all eight, all sixteen
+encodings, `v60_seq`'s `S_STR_*` engine, benched in `tb_v60_seq` under both
+simulators and mutation-checked with nine mutations. What implementing it
+decided, where this document had only recorded a disagreement, is in
+*What implementing it settled* at the end. The group was the last thing between
+the clean-room core and the four gate games: `tools/v60x/exposure.py` now reads
+100.00% on all four traces, where MOVC, SKPC and MOVCF had been the whole gap
+(`docs/v60/UPSTREAM-DIVERGENCE.md`).
+
 Eight instructions, sixteen encodings, on two escape opcodes. They are the
 first thing in this tree that would make the processor issue a **string mode
 bus cycle**, which is a bus state nothing here has ever driven, and the first
@@ -949,3 +958,64 @@ silence on the rest.
 
 8. **Timing**, as everywhere: the plate's Clocks column is blank on all eight
    rows (`docs/v60/INSTRUCTION-TIMING.md`).
+
+## What implementing it settled
+
+Four of the disagreements above were observations about the shipping core when
+this document was written. Implementing the group turned each into a decision,
+and every one of them went the same way the tree's other page-against-emulator
+findings did (`docs/v60/MULTIPLY-DIVIDE.md` is the precedent).
+
+1. **`SCHC`'s `Z` follows the page.** "Set if the search character is found,
+   otherwise cleared". `s32_v60.sv` says in its own comment that it uses "the
+   opposite Z sense from the published manual: Z=1 only when the whole range is
+   exhausted". The clean room sets `Z` on the find.
+
+2. **`SKPC`'s `Z` is read as "ended on its own criterion".** The page is
+   genuinely ambiguous here -- its sentence is copied verbatim from `SCHC`'s
+   and reads against its own Description -- so this is a *reading*, marked as
+   one. It is the reading that makes the pair coherent: each of the two scans
+   sets `Z` when it stopped because it found what it was looking for, and
+   clears it when the string ran out. For `SCHC` that is a match; for `SKPC` a
+   mismatch. Under the other reading `SKPC` would set `Z` for any non-empty run
+   of the skip character, which no sentence on the page asks for.
+
+3. **`CMPC`'s `R28`/`R27` are addresses.** "these registers contain the
+   addresses of the characters immediately following the the strings ...
+   Otherwise, R28 and R27 will contain the addresses of the characters in
+   disagreement." The shipping core writes `str_len1 + (cmin << shf)` -- a
+   length plus a scaled index, which does not involve the operand addresses at
+   all, and which its comment attributes to "MAME opCMPSTR tail".
+
+4. **`CMPCS` clears `CY` whenever the stop character is seen.** The sentence
+   attaches no equality condition: "The CY flag is cleared if the stop
+   character is detected in either string, otherwise it is set." The shipping
+   core reaches its stop test only after `a != b` has fallen through, so a
+   `CMPCS` whose characters differ and one of which *is* the stopper keeps `CY`
+   set. `tb_v60_seq` has that exact case, and it is the one a mutation of the
+   clean room survives without.
+
+Two things the implementation decided that no page settles, both marked at the
+point of decision in `v60_seq.sv`:
+
+- **The stop character is copied.** `MOVCS` runs "until ... the stop character
+  ... is detected in the source string", and no sentence says the detected
+  character is withheld from the destination. The shipping core copies it, so
+  this is the reading that leaves the two cores agreeing on a point the
+  documents do not cover.
+- **`MOVCF`'s filler runs upward in both directions.** The additional positions
+  are `dst[n .. dlen-1]` counted from the destination *base* -- which is where
+  they are for a downward pass too, because §2 p. 2-7 makes the direction bit a
+  visiting order and not a different correspondence. The fill itself has no
+  source to walk beside it and every position takes the same character, so no
+  page distinguishes the two orders.
+
+**Still not implemented, and recorded rather than hidden:** the group is
+**non-interruptible**, which is `docs/v60/NEXT-STEPS.md`'s recommendation and
+what `s32_v60.sv` already does. `R28` and `R27` are written at the termination
+branches and not maintained during the loop, so there is no state to resume
+from -- exactly the divergence this document's *Interruptibility* section
+describes, now present in both cores for the same documented reason. String
+mode bus cycles are still not issued either: every element access goes out as
+`BST_MEM_SINGLE`, and the vocabulary in `v60_bus_pkg` is still ahead of what
+speaks it.

@@ -4217,6 +4217,449 @@ initial begin
     chk(pop_sp_result === 32'h00000604,
         "and both leave SP one word up: the increment is written last and wins");
 
+    // ------------------------------------------------------------------
+    // The character manipulation group.  docs/v60/CHARACTER-STRING.md.
+    //
+    // Format VIIa's memory order is `op basewd mod ext mod' ext'` -- the
+    // figure at p.3.293 draws it right to left.  The base word is
+    // `1 m m' subop` in one byte, so 0x80 | m<<6 | m'<<5 | subop, and with
+    // both m and m' zero each mod field reads as [Rn] rather than Rn
+    // (ADDRESSING-MODES.md's mmm=011 column).  The ext bytes are the two
+    // lengths: bit 7 clear means bits 6:0 are a literal count, and the count
+    // is in CHARACTERS, not bytes -- "The source and destination length
+    // parameters indicate the number of characters to be transferred rather
+    // than the number of bytes to be transferred."
+    //
+    // MOVCU.B [R8], #4, [R9], #4      58 88 68 04 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h780] = 8'h58; mem[11'h781] = 8'h88; mem[11'h782] = 8'h68;
+    mem[11'h783] = 8'h04; mem[11'h784] = 8'h69; mem[11'h785] = 8'h04;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;      // "ABCD"
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h00000780);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42 &&
+        mem[11'h752] === 8'h43 && mem[11'h753] === 8'h44,
+        "MOVC copied all four characters to the destination");
+    chk(mem[11'h754] === 8'h00,
+        "and stopped at the length: the fifth destination byte is untouched");
+
+    // "The number of characters copied is the minimum of the source and the
+    // destination string lengths."  A five-character destination and a
+    // two-character source copies two.
+    //
+    // MOVCU.B [R8], #2, [R9], #5      58 88 68 02 69 05
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h786] = 8'h58; mem[11'h787] = 8'h88; mem[11'h788] = 8'h68;
+    mem[11'h789] = 8'h02; mem[11'h78A] = 8'h69; mem[11'h78B] = 8'h05;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'hEE;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h00000786);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42,
+        "MOVC copied min(slen, dlen) = two characters");
+    chk(mem[11'h752] === 8'hEE,
+        "and left the rest of the longer destination alone -- MOVC has no filler");
+    chk(rf.gpr[28] === 32'h00000742 && rf.gpr[27] === 32'h00000752,
+        "R28 and R27 hold the address of the next character to be transferred");
+
+    // The direction bit, 58-09.  §2 p.2-7: "In all cases the ordering of
+    // characters within the string is in the upward (increasing addresses)
+    // direction.  Only the direction of processing changes."  So a downward
+    // MOVC of a non-overlapping string produces the SAME bytes in the same
+    // places -- it visits them last-first.  Anything that reversed the string
+    // would fail this; so would anything that ignored the bit and left the
+    // pointers where an upward pass leaves them.
+    //
+    // MOVCD.B [R8], #4, [R9], #4      58 89 68 04 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h78C] = 8'h58; mem[11'h78D] = 8'h89; mem[11'h78E] = 8'h68;
+    mem[11'h78F] = 8'h04; mem[11'h790] = 8'h69; mem[11'h791] = 8'h04;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h0000078C);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42 &&
+        mem[11'h752] === 8'h43 && mem[11'h753] === 8'h44,
+        "a downward MOVC leaves the same bytes in the same places as an upward one");
+    chk(rf.gpr[28] === 32'h0000073F && rf.gpr[27] === 32'h0000074F,
+        "and its pointers walked DOWN, ending one below the head of each string");
+
+    // The `c` bit: 0x5A is the halfword-character group, so each element is
+    // two bytes and a count of 2 moves four.  "the number of characters and
+    // the length of a byte character string are the same while a halfword
+    // character has a byte length twice the number of characters" (p. 2-7).
+    //
+    // MOVCU.H [R8], #2, [R9], #2      5A 88 68 02 69 02
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h792] = 8'h5A; mem[11'h793] = 8'h88; mem[11'h794] = 8'h68;
+    mem[11'h795] = 8'h02; mem[11'h796] = 8'h69; mem[11'h797] = 8'h02;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h00000792);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42 &&
+        mem[11'h752] === 8'h43 && mem[11'h753] === 8'h44,
+        "two HALFWORD characters is four bytes moved");
+    chk(rf.gpr[28] === 32'h00000744,
+        "and the pointer stepped by the character size, not by one");
+
+    // MOVCF -- "the shorter of the source and destination lengths determines
+    // the number of characters to be transferred with any additional
+    // positions in the destination string filled using the fill character in
+    // R26."  So the copy is MOVC's, and the tail is R26's.
+    //
+    // MOVCFU.B [R8], #2, [R9], #5     58 8A 68 02 69 05
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h798] = 8'h58; mem[11'h799] = 8'h8A; mem[11'h79A] = 8'h68;
+    mem[11'h79B] = 8'h02; mem[11'h79C] = 8'h69; mem[11'h79D] = 8'h05;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;              // '*', the fill character
+    repeat (2) @(negedge clk);
+    jump(32'h00000798);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42,
+        "MOVCF copied the two characters the shorter length allows");
+    chk(mem[11'h752] === 8'h2A && mem[11'h753] === 8'h2A && mem[11'h754] === 8'h2A,
+        "and filled the remaining three destination positions from R26");
+    chk(mem[11'h755] === 8'h00,
+        "and stopped at the destination length");
+
+    // MOVCS -- "copied to the destination string until the end of the source
+    // or destination string is reached or the stop character specified by R26
+    // is detected in the source string."
+    //
+    // It is the only move that touches a flag, and the two books disagree
+    // about that: p.3.298's row leaves MOVCS's flag cells blank, exactly as
+    // MOVC's and MOVCF's, where the Reference's Condition Codes block prints
+    // "CY Cleared if the stop character is found, otherwise set" and a
+    // Description to match.  The Reference is taken -- CMPCS's page carries
+    // the same rule in the same words, and a stopper that cannot report
+    // whether it stopped would be useless.  See CHARACTER-STRING.md.
+    //
+    // MOVCS.B [R8], #4, [R9], #4      58 8C 68 04 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h79E] = 8'h58; mem[11'h79F] = 8'h8C; mem[11'h7A0] = 8'h68;
+    mem[11'h7A1] = 8'h04; mem[11'h7A2] = 8'h69; mem[11'h7A3] = 8'h04;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;   // "AB*D" -- the stopper is
+    mem[11'h742] = 8'h2A; mem[11'h743] = 8'h44;   // the third character
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h0000079E);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42,
+        "MOVCS copied the characters ahead of the stopper");
+    chk(mem[11'h753] === 8'h00,
+        "and stopped: the character AFTER the stopper was not copied");
+    chk(seq_psw[PSW_CY] === 1'b0,
+        "CY is CLEARED when the stop character is found -- the Reference's block, not the plate's blank row");
+
+    // The other half of the same sentence: a source with no stop character in
+    // it runs to the length and leaves CY SET.  Without this the flag could be
+    // stuck low and the test above would still pass.
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h0000079E);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h753] === 8'h44,
+        "with no stopper present MOVCS copies the whole length");
+    chk(seq_psw[PSW_CY] === 1'b1, "and leaves CY set -- \"otherwise set\"");
+
+    // The scan pair, SCHC and SKPC.  Format VIIb: `op basewd mod ext mod'`,
+    // with ONE length -- the string's -- and a second ADDRESSED operand that
+    // is the character, not a second string.  Here m' is 1, so mod' reads as
+    // a register: 0x67 is R7.
+    //
+    //   base = 0x80 | m<<6 | m'<<5 | subop = 0x80 | 0x20 | subop
+    //
+    // Z is where this tree parts company with the shipping core, and it is
+    // the page that separates them.  SCHC's block prints "Z Set if the search
+    // character is found, otherwise cleared"; s32_v60.sv says in its own
+    // comment that it uses "the opposite Z sense from the published manual:
+    // Z=1 only when the whole range is exhausted", which is MAME's.  The
+    // documents win here as they did for MUL's overflow -- see
+    // docs/v60/CHARACTER-STRING.md and verif/v60x/lockstep_known.txt.
+    //
+    // SCHCU.B [R8], #4, R7            58 B8 68 04 67
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7A4] = 8'h58; mem[11'h7A5] = 8'hB8; mem[11'h7A6] = 8'h68;
+    mem[11'h7A7] = 8'h04; mem[11'h7A8] = 8'h67;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;      // "ABCD"
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[7] = 32'h0000_0043;                       // 'C'
+    repeat (2) @(negedge clk);
+    jump(32'h000007A4);
+    step;
+    chk(rf.gpr[28] === 32'h00000742,
+        "SCHC left R28 at the address of the character it found");
+    chk(rf.gpr[27] === 32'd2,
+        "and R27 at the character OFFSET from the start -- a count, where R28 is an address");
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "Z is SET because the search character was found -- the page's sense, not MAME's");
+
+    // The same instruction on a character that is not there.  "R28 contains
+    // ... the next character after the source string if no matching character
+    // was found."
+    reset_and_arm;
+    @(negedge clk);
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[7] = 32'h0000_005A;                       // 'Z', absent
+    repeat (2) @(negedge clk);
+    jump(32'h000007A4);
+    step;
+    chk(rf.gpr[28] === 32'h00000744,
+        "not found: R28 is the address one past the end of the string");
+    chk(rf.gpr[27] === 32'd4, "and R27 is the whole length");
+    chk(seq_psw[PSW_Z] === 1'b0, "and Z is CLEAR -- \"otherwise cleared\"");
+
+    // SKPC is SCHC's complement: it advances WHILE the character matches and
+    // stops on the first that does not.  Its own page copies SCHC's Z sentence
+    // verbatim ("Set if the skip character is found"), which reads against its
+    // Description -- CHARACTER-STRING.md records that the page cannot settle
+    // it.  The reading taken here is the one that makes the pair coherent: Z
+    // reports that the scan ended on its OWN criterion rather than by running
+    // out of string.  For SCHC that criterion is a match; for SKPC it is a
+    // mismatch.
+    //
+    // SKPCU.B [R8], #4, R7            58 BA 68 04 67
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7AA] = 8'h58; mem[11'h7AB] = 8'hBA; mem[11'h7AC] = 8'h68;
+    mem[11'h7AD] = 8'h04; mem[11'h7AE] = 8'h67;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h41;      // "AABC"
+    mem[11'h742] = 8'h42; mem[11'h743] = 8'h43;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[7] = 32'h0000_0041;                       // 'A', the skip character
+    repeat (2) @(negedge clk);
+    jump(32'h000007AA);
+    step;
+    chk(rf.gpr[28] === 32'h00000742,
+        "SKPC left R28 at the first character that is NOT the skip character");
+    chk(rf.gpr[27] === 32'd2, "and R27 at how many it skipped");
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "Z is set: the scan ended on its own criterion, not on exhaustion");
+
+    // And the run that never ends: "the next character after the source string
+    // if the skip criteria was continuously satisfied."
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h41;
+    mem[11'h742] = 8'h41; mem[11'h743] = 8'h41;      // "AAAA"
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[7] = 32'h0000_0041;
+    repeat (2) @(negedge clk);
+    jump(32'h000007AA);
+    step;
+    chk(rf.gpr[28] === 32'h00000744,
+        "a string that is entirely the skip character leaves R28 one past its end");
+    chk(seq_psw[PSW_Z] === 1'b0, "and Z clear: the scan ran out rather than stopping");
+
+    // The compare group.  Both operands are `.r` -- nothing is written -- and
+    // none of the three carries a direction bit, so all three run upward.
+    //
+    //   CMPC  58-00   base 0x80      CMPCF 58-01   base 0x81
+    //   CMPCS 58-02   base 0x82
+    //
+    // CMPC.B [R8], #4, [R9], #4       58 80 68 04 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7B0] = 8'h58; mem[11'h7B1] = 8'h80; mem[11'h7B2] = 8'h68;
+    mem[11'h7B3] = 8'h04; mem[11'h7B4] = 8'h69; mem[11'h7B5] = 8'h04;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;      // src "ABCD"
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    mem[11'h750] = 8'h41; mem[11'h751] = 8'h42;      // dst "ABCD"
+    mem[11'h752] = 8'h43; mem[11'h753] = 8'h44;
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h000007B0);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "CMPC of two identical strings sets Z -- \"identical length and contents\"");
+    chk(seq_psw[PSW_S] === 1'b0, "and clears S: neither is greater");
+    chk(rf.gpr[28] === 32'h00000744 && rf.gpr[27] === 32'h00000754,
+        "with R28 and R27 at the characters immediately following the strings");
+
+    // A disagreement, and S is the UNSIGNED comparison at the first differing
+    // character: "S Set if src > dst".  'Z' is 0x5A and 'C' is 0x43.
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h742] = 8'h5A;                            // src becomes "ABZD"
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h000007B0);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b0, "a disagreement clears Z");
+    chk(seq_psw[PSW_S] === 1'b1, "and sets S, because the source character is the greater");
+    chk(rf.gpr[28] === 32'h00000742 && rf.gpr[27] === 32'h00000752,
+        "and the two registers hold the addresses of the characters in disagreement");
+
+    // Equal prefixes, unequal lengths.  Nothing disagrees over min(2,4), but
+    // "the Z flag will be set if and only if the character strings are of
+    // identical length and contents" -- so Z stays clear, and S "will indicate
+    // the shorter string".
+    //
+    // CMPC.B [R8], #2, [R9], #4       58 80 68 02 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7B6] = 8'h58; mem[11'h7B7] = 8'h80; mem[11'h7B8] = 8'h68;
+    mem[11'h7B9] = 8'h02; mem[11'h7BA] = 8'h69; mem[11'h7BB] = 8'h04;
+    mem[11'h742] = 8'h43;                            // src back to "ABCD"
+    rf.gpr[8] = 32'h0000_0740;
+    rf.gpr[9] = 32'h0000_0750;
+    repeat (2) @(negedge clk);
+    jump(32'h000007B6);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b0,
+        "equal prefixes of unequal length do NOT set Z: the lengths are part of the test");
+    chk(seq_psw[PSW_S] === 1'b0, "and the shorter source is not the greater");
+
+    // CMPCF: "If the source and destination character strings are not of equal
+    // length, the shorter string will be automatically extended using the fill
+    // character in R26 to the longer string length."  A notional extension --
+    // both operands are still `.r`, so nothing is written.  With the filler
+    // matching what the longer string actually holds, the two become equal.
+    //
+    // CMPCF.B [R8], #2, [R9], #4      58 81 68 02 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7BC] = 8'h58; mem[11'h7BD] = 8'h81; mem[11'h7BE] = 8'h68;
+    mem[11'h7BF] = 8'h02; mem[11'h7C0] = 8'h69; mem[11'h7C1] = 8'h04;
+    mem[11'h752] = 8'h2A; mem[11'h753] = 8'h2A;      // dst "AB**"
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;                      // the filler is '*'
+    repeat (2) @(negedge clk);
+    jump(32'h000007BC);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b1,
+        "CMPCF extended the shorter source with R26 and found the strings equal");
+    chk(mem[11'h742] === 8'h43,
+        "and wrote nothing: the extension is notional, both operands are .r");
+
+    // The extension has to be able to DISAGREE, or the test above passes just
+    // as well when the comparison stops at the shorter length -- which is a
+    // mutation of v60_seq.sv that survived until this case existed.  Same two
+    // strings, but the destination's tail is real characters instead of the
+    // filler: the extended source "AB**" meets "ABCD" and differs at the third
+    // character, which only a comparison that ran past min(2,4) can see.
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h752] = 8'h43; mem[11'h753] = 8'h44;      // dst back to "ABCD"
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h000007BC);
+    step;
+    chk(seq_psw[PSW_Z] === 1'b0,
+        "CMPCF ran past the shorter length and found the filler disagreeing with 'C'");
+    chk(seq_psw[PSW_S] === 1'b0,
+        "and S is the unsigned comparison there: the filler 0x2A is not greater than 'C' 0x43");
+    chk(rf.gpr[28] === 32'h00000742 && rf.gpr[27] === 32'h00000752,
+        "with both pointers at the disagreement, two characters in");
+
+    // CMPCS.  "The CY flag is cleared if the stop character is detected in
+    // either string, otherwise it is set" -- and the plate prints a dash in
+    // that column for both stopper instructions, which CHARACTER-STRING.md
+    // resolves in the Reference's favour.
+    //
+    // CMPCS.B [R8], #4, [R9], #4      58 82 68 04 69 04
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7C2] = 8'h58; mem[11'h7C3] = 8'h82; mem[11'h7C4] = 8'h68;
+    mem[11'h7C5] = 8'h04; mem[11'h7C6] = 8'h69; mem[11'h7C7] = 8'h04;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;      // both "AB*D"
+    mem[11'h742] = 8'h2A; mem[11'h743] = 8'h44;
+    mem[11'h750] = 8'h41; mem[11'h751] = 8'h42;
+    mem[11'h752] = 8'h2A; mem[11'h753] = 8'h44;
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h000007C2);
+    step;
+    chk(seq_psw[PSW_CY] === 1'b0,
+        "CMPCS clears CY when the stop character is detected");
+
+    // And the other half, which is what makes the flag mean anything: the same
+    // instruction over strings with no stop character in them.
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h742] = 8'h43; mem[11'h752] = 8'h43;      // both "ABCD"
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h000007C2);
+    step;
+    chk(seq_psw[PSW_CY] === 1'b1,
+        "and sets it when the comparison terminates without detecting one");
+
+    // The case that separates the page from the shipping core, and the one a
+    // mutation of this file survives without: characters that DIFFER where one
+    // of them IS the stop character.  s32_v60.sv reaches its stop test only
+    // after `a != b` has fallen through, so it terminates on the difference
+    // with CY still set.  The Reference attaches no equality condition to the
+    // sentence -- "cleared if the stop character is detected in either string"
+    // -- so the detection stands on its own.
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;      // src "AB*D"
+    mem[11'h742] = 8'h2A; mem[11'h743] = 8'h44;
+    mem[11'h750] = 8'h41; mem[11'h751] = 8'h42;      // dst "ABCD"
+    mem[11'h752] = 8'h43; mem[11'h753] = 8'h44;
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h000007C2);
+    step;
+    chk(seq_psw[PSW_CY] === 1'b0,
+        "CMPCS clears CY even when the differing character IS the stopper");
+    chk(seq_psw[PSW_Z] === 1'b0, "and the disagreement still clears Z");
+    chk(seq_psw[PSW_S] === 1'b0,
+        "and S is clear: the unsigned comparison is '*' 0x2A against 'C' 0x43, so src is NOT greater");
+
     if (errors == 0) $display("V60 SEQ PASS");
     else             $display("V60 SEQ FAIL (%0d errors)", errors);
     $finish;
