@@ -13,10 +13,12 @@ Companion documents, both published Artifacts:
   <https://claude.ai/code/artifact/70fbfecf-c257-4221-b8ce-194656dc3775>
 
 **The files themselves are not in this repository.** They are NEC's
-copyrighted scans and this repository is public. They belong in
-`docs/reference/`, which is gitignored; see that directory's README. Cite by
-document and section in code comments, the way `rtl/cpu/v60/s32_v60_bus.sv`
-and `s32_v60_timebase.sv` already cite "databook §4".
+copyrighted scans and this repository is public. They live in a private
+repository, `gmcnaught/nec-v60-references`, mounted here as the submodule
+`docs/reference/` (`git submodule update --init` after cloning; its README
+lists every file). Cite by document and section in code comments, the way
+`rtl/cpu/v60/s32_v60_bus.sv` and `s32_v60_timebase.sv` already cite
+"databook §4".
 
 ## The shape of the problem
 
