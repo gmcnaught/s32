@@ -1076,6 +1076,60 @@ wire        movea_src_bad = src_addr_only &&
                              am_is_immediate(op1_mode));
 wire        io_dst_bad = io_dst && dst_is_reg;
 
+// The control transfers' operands, which have MOVEA's shape and MOVEA's
+// restriction.  JMP, JSR and CALL are given their operand's effective ADDRESS
+// -- `target.b.ex`, and CALL's `arg` the same way -- so a mode with no address
+// cannot be one, and all three pages mark Rn, Immediate and Immediate.Quick X:
+// PgmRef 7-50 (JMP), 7-51 (JSR) and 7-15 (CALL, for BOTH of its operands).
+//
+// DEFECT this fixes, and it is audit item M1 in the one other place the same
+// question is asked.  Nothing raised it, and it failed for exactly the reason
+// MOVEA's did: v60_ea's reg-direct and immediate branches both return `ea` = 0
+// without consulting `addr_only`, and its `illegal` is driven from `we`, which
+// an address-only access never sets.  So `jmp R5` and `jmp #addr` transferred
+// to address ZERO, and `call target, Rn` did not even do that -- it retired
+// having done nothing, which is a call that silently is not a call.
+// `wire x = ...` and not `ctrl_op_e x = ...`: an enum is a variable, and a
+// variable declared with an initialiser is initialised ONCE at time zero
+// rather than continuously assigned.  Written that way this check read
+// CTRL_NONE forever and raised nothing, which is a defect that looks exactly
+// like the one it was meant to fix.
+wire        ctrl_is_call  = (cop == CTRL_CALL);
+wire        ctrl_addr_op  = (cop == CTRL_JMP) || (cop == CTRL_JSR) ||
+                            ctrl_is_call;
+wire        ctrl_mode_bad = ctrl_addr_op &&
+                            ((op1_mode == AM_RN) || am_is_immediate(op1_mode) ||
+                             (ctrl_is_call &&
+                              ((op2_mode == AM_RN) ||
+                               am_is_immediate(op2_mode))));
+
+// An immediate read at doubleword width, which is RESERVED and not Illegal.
+// §6 prints the two rules one under the other, on the Immediate page (PgmRef
+// 6-35) and again on the Immediate Quick page (6-36):
+//
+//   "The use of the immediate mode as the destination operand addressing mode
+//    will result in a Illegal Addressing Mode exception.  The attempted use of
+//    the immediate addressing mode as a doubleword source operand will result
+//    in a Reserved Addressing Mode exception."
+//
+// This tree had implemented the first Note and not the second.  MOV.D's own
+// page (7-54) states it a third time, and §7's addressing-mode tables carry it
+// as the mark that is neither O nor X -- `Δ`, Reserved -- on the two immediate
+// rows of every page whose source is 64 bits wide.
+//
+// It is not folded into S_OP2's immediate-destination check because the two
+// are different exceptions: written, an immediate is Illegal Addressing Mode
+// (19); read at doubleword width it is Reserved Addressing Mode (18).
+//
+// op1 only, and that is a statement about this tree rather than about the
+// architecture: every instruction here that has an eight-byte SOURCE carries
+// it in the first operand, and the eight-byte second operands are all
+// destinations -- MULX, MULUX, DIVX and DIVUX are `dst.d.rw` -- where an
+// immediate is the Illegal case S_OP2 already raises.  The floating point
+// arithmetic and UPDATE would add second-operand cases; neither executes yet.
+wire        imm_dbl_bad = !src_is_reg && am_is_immediate(op1_mode) &&
+                          (op1_bytes == 4'd8);
+
 // Privileged instructions: "programs executing at other execution levels
 // (levels 1, 2 and 3) are said to be non-privileged and attempts to execute a
 // privileged instruction will cause an exception" (PgmRef §6).  p.3.299 groups
@@ -1656,6 +1710,14 @@ always_ff @(posedge clk) begin
                 // complaint from "this one has to be a register".
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (imm_dbl_bad) begin
+                // An immediate cannot supply 64 bits, and the architecture
+                // calls that Reserved rather than Illegal.  Raised before the
+                // operand is taken, like the two above it.
+                exc_vec_r  <= VEC_RESERVED_MODE;
+                exc_code_r <= CODE_RESERVED_MODE;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
             end else if (io_src_bad || movea_src_bad) begin
@@ -2264,7 +2326,19 @@ always_ff @(posedge clk) begin
 
         // ---- control transfers ------------------------------------------------
         S_CTRL: begin
-            case (cop)
+            // The transfer's first state, and the last one before its operand
+            // reaches the address unit -- where MOVEA's check sits relative to
+            // its own access.  NOT the decode state: `op2_mode` is the last
+            // thing v60_idu latches and it is not settled until here, so a
+            // check made a cycle earlier sees the target and misses CALL's
+            // argument.  That is a real half-fix, and the bench holds both.
+            if (ctrl_mode_bad) begin
+                exc_vec_r  <= VEC_ILLEGAL_MODE;
+                exc_code_r <= CODE_ILLEGAL_MODE;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end
+            else case (cop)
                 // "if condition then PC <- PC + sign_extended( disp )", and
                 // "the value of the PC used to compute the target address is
                 // the first byte of the branch instruction".

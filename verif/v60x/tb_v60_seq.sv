@@ -1217,6 +1217,57 @@ initial begin
     mem[11'h63F] = 8'h05; mem[11'h640] = 8'h00; mem[11'h641] = 8'h00;
     mem[11'h642] = 8'h00; mem[11'h643] = 8'h69;
 
+    // The control transfers' illegal operand modes.  JMP, JSR and CALL take
+    // their operand's effective ADDRESS -- the same `.n`-shaped question
+    // MOVEA's src raises -- and all three pages mark Rn, Immediate and
+    // Immediate.Quick as X in that column: PgmRef 7-50 (JMP), 7-51 (JSR) and
+    // 7-15 (CALL, for BOTH target and arg).  A register and an immediate have
+    // no address, so there is nothing for the instruction to transfer to.
+    // Placed ABOVE both stacks and AROUND the two words the tests write at run
+    // time.  The level stack is 0x600 and the interrupt stack 0x680 and both
+    // grow down, so anything under them is rewritten by the frames these very
+    // tests push; and 0x6A0 and 0x6B0 are put_word'd with data, which a grep
+    // for `mem[11'h...]` does not show.  Both traps were fallen into here, and
+    // both look like a decode bug rather than a placement one: the CALL below
+    // read 0xDEADBEEF as its mod fields and decoded an immediate.
+    // JMP R10          D7 6A   -- Format III, m = 1: the register column
+    mem[11'h694] = 8'hD7; mem[11'h695] = 8'h6A;
+    // JMP #0x390       D6 F4 90 03 00 00   -- m = 0 and the immediate mod byte
+    mem[11'h696] = 8'hD6; mem[11'h697] = 8'hF4; mem[11'h698] = 8'h90;
+    mem[11'h699] = 8'h03; mem[11'h69A] = 8'h00; mem[11'h69B] = 8'h00;
+    // JSR R10          E9 6A
+    mem[11'h69C] = 8'hE9; mem[11'h69D] = 8'h6A;
+    // JMP [R10]        D6 6A   -- the legal case, so the check cannot pass by
+    //   rejecting every operand a control transfer has.
+    mem[11'h69E] = 8'hD6; mem[11'h69F] = 8'h6A;
+    // ---- 0x6A0 is a put_word target ----
+    // CALL R10, [R8]   49 C0 6A 68   -- the TARGET in a register
+    mem[11'h6A4] = 8'h49; mem[11'h6A5] = 8'hC0; mem[11'h6A6] = 8'h6A;
+    mem[11'h6A7] = 8'h68;
+    // CALL [R10], R9   49 A0 6A 69   -- a legal target and the ARG in one
+    mem[11'h6A8] = 8'h49; mem[11'h6A9] = 8'hA0; mem[11'h6AA] = 8'h6A;
+    mem[11'h6AB] = 8'h69;
+    // ---- 0x6B0 is a put_word target ----
+
+    // An immediate DOUBLEWORD source, which is Reserved and not Illegal.  S6's
+    // Immediate page (PgmRef 6-35) and Immediate Quick page (6-36) each print
+    // two Notes and this tree implemented the first one only:
+    //   "The use of the immediate mode as the destination operand addressing
+    //    mode will result in a Illegal Addressing Mode exception.  The
+    //    attempted use of the immediate addressing mode as a doubleword source
+    //    operand will result in a Reserved Addressing Mode exception."
+    // MOV.D's own page (7-54) says it a third time.
+    // MOV.D #0x1122334455667788, R8   3F A0 F4 <8 bytes> 68
+    mem[11'h74E] = 8'h3F; mem[11'h74F] = 8'hA0; mem[11'h750] = 8'hF4;
+    mem[11'h751] = 8'h88; mem[11'h752] = 8'h77; mem[11'h753] = 8'h66;
+    mem[11'h754] = 8'h55; mem[11'h755] = 8'h44; mem[11'h756] = 8'h33;
+    mem[11'h757] = 8'h22; mem[11'h758] = 8'h11; mem[11'h759] = 8'h68;
+    // MOV.W #0x12345678, R8   2D A0 F4 78 56 34 12 68   -- a WORD immediate,
+    //   which is the mode the same instruction is allowed to use.
+    mem[11'h75A] = 8'h2D; mem[11'h75B] = 8'hA0; mem[11'h75C] = 8'hF4;
+    mem[11'h75D] = 8'h78; mem[11'h75E] = 8'h56; mem[11'h75F] = 8'h34;
+    mem[11'h760] = 8'h12; mem[11'h761] = 8'h68;
+
     // PUSHM / POPM #0x80000E00 -- R9, R10, R11 and the PSW (bit 31).
     //   The three registers are consecutive so the ORDER they land in is
     //   visible, and the PSW is at the far end of the mask from them so the
@@ -2952,6 +3003,132 @@ initial begin
     chk(seq_pc === 32'h000007C0,
         "and from an IMMEDIATE source it is the same exception");
     chk(rf.gpr[9] === 32'h1234_5678, "with the destination again untouched");
+
+    // =======================================================================
+    // The control transfers' illegal operand modes -- the same defect MOVEA
+    // had, in the one other place an operand is wanted for its ADDRESS.  JMP,
+    // JSR and CALL all reach v60_ea with addr_only set, and v60_ea's
+    // reg-direct and immediate branches both return ea = 0 without consulting
+    // it, so the transfer went to address ZERO rather than raising.  The pages
+    // mark all three modes X: PgmRef 7-50, 7-51 and 7-15.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0390;              // a real code address, so a core
+    put_word(13'h5FC, 32'd0);                // the last test's frame is still
+    repeat (2) @(negedge clk);               // there, and would pass for us
+    jump(32'h00000694);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "JMP to a REGISTER is the Illegal Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0390;
+    repeat (2) @(negedge clk);
+    jump(32'h00000696);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "and JMP to an IMMEDIATE is the same exception");
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0390;
+    rf.gpr[31] = 32'h0000_0600;
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    jump(32'h0000069C);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "JSR through a REGISTER is the Illegal Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004,
+        "raised before the return address was pushed -- 0x5FC is the frame");
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0390;
+    repeat (2) @(negedge clk);
+    jump(32'h000006A4);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "CALL with its TARGET in a register raises it too");
+
+    // The arg is the second operand and its own column of the same table, so
+    // a check that only looked at the target would pass everything above and
+    // still let this one through.  Its symptom was different from the others':
+    // this one did not transfer to zero, it retired having done NOTHING and
+    // fell through to the next instruction, with AP unwritten and the stack
+    // untouched.  A call that silently is not a call.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9]  = 32'h1234_5678;
+    rf.gpr[10] = 32'h0000_0390;
+    rf.gpr[31] = 32'h0000_0600;
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    jump(32'h000006A8);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "and CALL with its ARG in a register, which is a separate column");
+    chk(mem_word(13'h5FC) === 32'h13000004,
+        "with the frame, and nothing of the call's own, on the stack");
+
+    // The legal case, on the same operand, so none of the above can be passed
+    // by refusing every control transfer that has an operand at all.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[10] = 32'h0000_0390;
+    repeat (2) @(negedge clk);
+    jump(32'h0000069E);
+    step;
+    chk(seq_pc === 32'h00000390,
+        "while JMP through [R10] still transfers to the address R10 holds");
+
+    // =======================================================================
+    // An immediate doubleword source is RESERVED, not Illegal -- the second of
+    // the two Notes on S6's Immediate page (PgmRef 6-35), which this tree had
+    // implemented only the first of.  Two exceptions, two vectors: 19 for an
+    // immediate written to, 18 for an immediate read at doubleword width.
+    // =======================================================================
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    jump(32'h0000074E);
+    step;
+    chk(seq_pc === 32'h000007B0,
+        "MOV.D from an IMMEDIATE is the Reserved Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h12000004, "with vector 18's code, not 19's");
+    chk(rf.gpr[8] === 32'h0000_0700,
+        "and the register pair is untouched");
+    chk(rf.gpr[9] === 32'h0000_0000, "both halves of it");
+
+    // The same instruction at WORD width, which is the mode it may use -- so
+    // the check cannot be "MOV with an immediate source".
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    repeat (2) @(negedge clk);
+    jump(32'h0000075A);
+    step;
+    chk(rf.gpr[8] === 32'h1234_5678,
+        "while a WORD immediate source is still moved");
 
     // =======================================================================
     // PUSH and POP.  "The PUSH instruction is a shorter encoding of the more
