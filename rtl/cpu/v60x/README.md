@@ -180,6 +180,8 @@ register file, the address unit and the ALU, and retires it.
 | a stack push costing two bus cycles and a branch costing none | p. 3.236 | `tb_v60_seq` |
 | a reserved opcode and a reserved addressing mode raising *different* vectors | Fig 8-2 | `tb_v60_seq` |
 | an immediate used as a destination raising the illegal-mode exception | PgmRef §8 | `tb_v60_seq` |
+| an immediate read at DOUBLEWORD width raising the *reserved*-mode one | PgmRef §6 pp. 6-35/6-36, §7 MOV | `tb_v60_seq` |
+| JMP, JSR and CALL refusing a register or an immediate operand | PgmRef §7 7-50, 7-51, 7-15 | `tb_v60_seq` |
 | each frame's exception code, from the code table's Instruction Exceptions | PgmRef §8 | `tb_v60_seq` |
 | the Current PC on top of the frame, under a code word that carries the count | Table 8-1, Fig 8-3 | `tb_v60_seq`, `tb_v60_exc` |
 | an interrupt's frame being the PSW and the PC, with no code word | Fig 8-3 | `tb_v60_exc` |

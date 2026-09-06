@@ -56,6 +56,50 @@ would spell condition 1011 — "False", the branch that never branches — which
 what makes `C7` a shared encoding rather than a collision, and
 `tools/v60x/insn_table.py` records it as one.
 
+## The operand modes JMP, JSR and CALL may not use
+
+`JMP`, `JSR` and `CALL` are given their operand's effective **address**, never
+its value — `target.b.ex`, and `CALL`'s `arg` the same way — so a mode that
+names no address cannot be one of theirs. All three §7 pages say so in the same
+column, and all three mark the same three rows `X`:
+
+| page | operand | `Rn` | `Immediate` | `Immediate.Quick` |
+|---|---|---|---|---|
+| 7-50 `JMP` | `target` | X | X | X |
+| 7-51 `JSR` | `target` | X | X | X |
+| 7-15 `CALL` | `target` **and** `arg` | X | X | X |
+
+`RET`, `RETIU`, `RETIS`, `PUSH` and `PUSHM` carry no `X` at all — every mode is
+legal for them, register direct included — so this is a property of the three
+that take an address, not of control transfers generally.
+
+**DEFECT, fixed 2026-09-06.** Nothing raised it, and it is audit item M1 in the
+one other place the same question is asked. `MOVEA`'s `src.b.n` had exactly
+this restriction, was found to be unenforced, and was fixed; the three control
+transfers ask for an address the same way — four operand columns between them —
+and were left. They failed the same way and for the same reason: `v60_ea`'s
+reg-direct and immediate branches both
+return `ea = 0` without consulting `addr_only`, and its `illegal` output is
+driven from `we`, which an address-only access never sets — and `v60_top`
+leaves that output unconnected anyway. So
+
+- `jmp R5`, `jmp #addr`, `jsr R5` transferred to **address zero**, and
+- `call target, Rn` did not even do that: it retired having done nothing at
+  all, pushing nothing and leaving `AP` unwritten. A call that silently is not
+  a call.
+
+The check is `ctrl_mode_bad` in `v60_seq.sv`, raised in `S_CTRL` — the
+transfer's first state, and the last one before the operand reaches the address
+unit, which is where `MOVEA`'s sits relative to its own access.
+
+**`S_CTRL` and not the decode state**, and that is load-bearing rather than
+stylistic: `op2_mode` is the last field `v60_idu` latches and it is not settled
+a cycle earlier. Placed in the decode state the check sees `JMP`'s and `JSR`'s
+operand and `CALL`'s *target*, and misses `CALL`'s *argument* — a half-fix that
+passes seven of the nine assertions. `tb_v60_seq` holds the argument case
+separately for that reason, and the `no_call_arg` mutation is the one that
+catches a regression to it.
+
 ## Deliberately not implemented
 
 `CALL` and `RET` pass the argument pointer (`RET`: `tmp1 <- num ; tmp2 <- [SP+]
@@ -86,11 +130,37 @@ rather than silent.
 `tb_v60_seq`'s third program is a running program rather than a list of cases:
 a counted loop whose DBcc branches twice and falls through on the third pass,
 a BSR/RSR subroutine, an unconditional branch over that subroutine's bytes, a
-JSR through a register, a TB taken and a TB not taken, and a conditional branch
-that is not taken whose target is the *second* byte of the instruction below it
+JSR through `[R10]` — register INDIRECT, which is legal, and not the register
+direct mode the section above forbids — a TB taken and a TB not taken, and a
+conditional branch that is not taken whose target is the *second* byte of the
+instruction below it
 — so a branch wrongly taken decodes garbage rather than landing somewhere
 harmless. What ran, and in what order, is read back out of one byte of memory.
 
 Nineteen mutations of the control path were run against it and all nineteen
 fail the bench, including the two that only cost bus cycles: a JMP that reads
 its operand, and a MOV that keeps a previous JMP's `addr_only`.
+
+The illegal-operand-mode cases above are held separately, at 0x694 and 0x6A4,
+with a legal `JMP [R10]` beside them so the check cannot pass by refusing every
+control transfer that has an operand. Four mutations were run against those:
+disabling the check, dropping its `CALL`-argument arm, dropping its immediate
+arm, and moving it back to the decode state. Each fails exactly the assertions
+it should and no others.
+
+**The lockstep is not evidence here.** A 20-seed run after the fix reports the
+same six divergence classes and no new one, and that is absence of coverage
+rather than agreement: `verif/v60x/gen_lockstep_program.py` emits no control
+transfer at all and no `MOV.D`, so neither fix is reachable from it. It is the
+`NOT` carry lesson again — that generator's ALU pool did not contain `NOT`
+either, and the 50-seed gate passed with and without the defect. `tb_v60_seq`
+is the whole of the evidence for both fixes.
+
+Two placement traps were fallen into writing them, and both present as a decode
+bug rather than a placement one. The programs must sit **above** 0x680: the
+level stack is 0x600 and the interrupt stack 0x680, both grow down, and the
+exception frames these very tests push rewrite anything under them. They must
+also avoid 0x6A0 and 0x6B0, which are `put_word` targets — data written at run
+time, which a grep for `mem[11'h...]` does not show. The `CALL` at 0x69E read
+0xDEADBEEF as its two mod fields and decoded a perfectly plausible
+immediate-quick.

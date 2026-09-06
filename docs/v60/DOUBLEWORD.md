@@ -173,6 +173,22 @@ Note the asymmetry the Notes draw: immediate as a *destination* is Illegal
 Addressing Mode; immediate as a *doubleword source* is Reserved Addressing
 Mode. Two different vectors for two different misuses of the same mode.
 
+**Implemented in the clean room (2026-09-06)**, as `imm_dbl_bad` in
+`v60_seq.sv`, raised in `S_OP1` before the operand is taken. The tree had read
+the first of those two Notes and not the second — the immediate-destination
+check has been in `S_OP2` since the beginning — so `mov.d #imm, dst` and the
+long-real `movf.l`/`negf.l`/`absf.l` executed, taking the low word of an
+immediate that cannot supply sixty-four bits. `tb_v60_seq` holds both the
+raise and its vector, and holds `mov.w #imm, dst` beside it so the check
+cannot degenerate into "MOV with an immediate source".
+
+The §7 addressing-mode tables carry the same rule as the mark that is neither
+`O` nor `X`: `Δ`, Reserved. It appears 41 times in the whole Reference — 13 of
+them `XCH`'s `dst1` column, and the other 28 are exactly the `Immediate` and
+`Immediate.Quick` rows of the fourteen pages whose source is 64 bits wide.
+That is the mechanical form of this section's argument, and it is why the
+check belongs to the *mode* rather than to `MOV.D`.
+
 ---
 
 ## 4. MOV.D
@@ -536,7 +552,10 @@ at 2704-2727; `MULX`/`MULUX` at 4655-4675; `DIVX`/`DIVUX` at 4676-4711 with
 5. **No Reserved Addressing Mode check on an immediate doubleword source.**
    Nothing in the `8'h3f` (`MOV.D`) path tests for it. The rule is stated
    twice in the Reference (§3's Immediate page and `MOV.D`'s own page) and
-   shows up on the plate as `MOV.D`'s exception code `3`.
+   shows up on the plate as `MOV.D`'s exception code `3`. Still true of the
+   shipping core; the clean room implements it as of 2026-09-06 (§3 above), so
+   this is a candidate for the stage 4 list in `docs/v60/LANDING-PLAN.md`
+   rather than an open question.
 
 6. **`R31` wraps rather than being flagged.** `op[4:0] + 5'd1` and
    `ra_pair`'s `ra_sel + 5'd1` both wrap 31→0, so a doubleword at `R31` reads
