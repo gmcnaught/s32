@@ -4350,6 +4350,51 @@ initial begin
     chk(mem[11'h755] === 8'h00,
         "and stopped at the destination length");
 
+    // MOVCF's R28/R27, which its Description states in the same words MOVC's
+    // does: "Following the execution of the MOVCF instruction, these registers
+    // contain the address of the next logical character TO BE TRANSFERRED."
+    //
+    // The transfer and the fill are two different clauses of the sentence
+    // above it -- "the number of characters to be transferred" against "any
+    // additional positions in the destination string filled" -- so the fill is
+    // not a transfer and must not move the pointer the sentence is about.
+    //
+    // DEFECT this fixes: the fill phase walked str_dst, so an upward MOVCF
+    // ended with R27 past the FILL (0x755 here, not 0x752), and the downward
+    // form ended with R28 below the source head at 0x73F while R27 sat above
+    // the destination tail at 0x755 -- the two registers on opposite sides of
+    // their own walk, which no reading of the page produces.
+    chk(rf.gpr[28] === 32'h00000742 && rf.gpr[27] === 32'h00000752,
+        "MOVCF's pointers are where the TRANSFER ended, not where the fill did");
+
+    // The downward twin, 58-0B.  "Character string transfers are initiated
+    // from the head of the strings in the address increment mode and from the
+    // tail end of the strings in the address decrement mode" -- a visiting
+    // order, so §2 p.2-7's rule still holds and the bytes land identically.
+    // What must also hold is that BOTH registers end on the same side of
+    // their walk.
+    //
+    // MOVCFD.B [R8], #2, [R9], #5     58 8B 68 02 69 05
+    reset_and_arm;
+    @(negedge clk);
+    mem[11'h7D0] = 8'h58; mem[11'h7D1] = 8'h8B; mem[11'h7D2] = 8'h68;
+    mem[11'h7D3] = 8'h02; mem[11'h7D4] = 8'h69; mem[11'h7D5] = 8'h05;
+    mem[11'h740] = 8'h41; mem[11'h741] = 8'h42;
+    mem[11'h742] = 8'h43; mem[11'h743] = 8'h44;
+    for (i = 0; i < 8; i = i + 1) mem[11'h750 + i[10:0]] = 8'h00;
+    rf.gpr[8]  = 32'h0000_0740;
+    rf.gpr[9]  = 32'h0000_0750;
+    rf.gpr[26] = 32'h0000_002A;
+    repeat (2) @(negedge clk);
+    jump(32'h000007D0);
+    step;
+    chk(mem[11'h750] === 8'h41 && mem[11'h751] === 8'h42,
+        "a downward MOVCF copies the same two characters to the same places");
+    chk(mem[11'h752] === 8'h2A && mem[11'h753] === 8'h2A && mem[11'h754] === 8'h2A,
+        "and fills the same three positions: the direction is a visiting order");
+    chk(rf.gpr[28] === 32'h0000073F && rf.gpr[27] === 32'h0000074F,
+        "and BOTH pointers ended below their heads -- not one below and one above");
+
     // MOVCS -- "copied to the destination string until the end of the source
     // or destination string is reached or the stop character specified by R26
     // is detected in the source string."

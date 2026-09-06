@@ -630,6 +630,14 @@ logic        str_stop_hit;          // the S forms: R26 was seen; the scan
 logic [31:0] str_idx;               // characters processed -- SCHC's and
                                     // SKPC's R27 is an OFFSET, not an address
 logic [31:0] str_delem;             // the destination element, for a compare
+// MOVCF's fill walks its OWN pointer.  R28/R27 are "the address of the next
+// logical character TO BE TRANSFERRED", and the fill is not a transfer -- the
+// Description separates the two clauses, "the number of characters to be
+// transferred" against "any additional positions in the destination string
+// filled".  Walking str_dst through the fill put the two registers on
+// opposite sides of their own walk for a downward MOVCF: R28 below the source
+// head and R27 above the destination tail.
+logic [31:0] str_fillp;
 logic        str_sdiff;             // the compare found a disagreement
 logic        str_sgt;               // and the source character was the greater
 logic        bf_bad_r;    // INSBF's check, latched so the open access can close
@@ -1579,6 +1587,7 @@ always_ff @(posedge clk) begin
         str_stop_hit    <= 1'b0;
         str_idx         <= 32'd0;
         str_delem       <= 32'd0;
+        str_fillp       <= 32'd0;
         str_sdiff       <= 1'b0;
         str_sgt         <= 1'b0;
         bf_bad_r        <= 1'b0;
@@ -3556,9 +3565,9 @@ always_ff @(posedge clk) begin
                 // source to walk beside it and every position takes the same
                 // character, so no page distinguishes the two orders.
                 if (is_movcf && (str_dlen_r > str_n)) begin
-                    str_dst <= val2[31:0] + str_copy_off;
-                    str_cnt <= str_dlen_r - str_n;
-                    state   <= S_STR_FILL;
+                    str_fillp <= val2[31:0] + str_copy_off;
+                    str_cnt   <= str_dlen_r - str_n;
+                    state     <= S_STR_FILL;
                 end else state <= S_STR_FIN;
             end
             else if (is_str_cmp && (str_idx >= str_slen_r)) begin
@@ -3751,7 +3760,7 @@ always_ff @(posedge clk) begin
                 ea_bit_mode   <= 1'b0;
                 ea_rn_sel     <= 5'd0;
                 ea_pc_val     <= idu_pc;
-                ea_rn_val     <= str_dst;
+                ea_rn_val     <= str_fillp;
                 ea_we         <= 1'b1;
                 ea_wdata      <= {32'd0, str_fillv};
                 state         <= S_STR_FILLS;
@@ -3770,9 +3779,9 @@ always_ff @(posedge clk) begin
                 exc_vec_r <= VEC_BUS_FAULT;
                 state     <= S_EXC_SW;
             end else begin
-                str_dst <= str_dst + str_esz;
-                str_cnt <= str_cnt - 32'd1;
-                state   <= S_STR_FILL;
+                str_fillp <= str_fillp + str_esz;
+                str_cnt   <= str_cnt - 32'd1;
+                state     <= S_STR_FILL;
             end
         end
 

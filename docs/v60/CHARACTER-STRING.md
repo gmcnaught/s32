@@ -938,25 +938,45 @@ silence on the rest.
    but no page says a zero-length string is a valid operand rather than an
    Illegal Data Field.
 
-5. **Overlapping source and destination.** The bit string group's `MOVBS` page
+5. **Where `CMPCF`'s and `CMPCS`'s `R28`/`R27` land in the cases their own
+   sentence does not cover.** Both pages carry `CMPC`'s wording -- "the
+   addresses of the characters immediately following the the strings if the
+   end of either string was reached. Otherwise, R28 and R27 will contain the
+   addresses of the characters in disagreement" -- and neither case fits what
+   the instructions actually do:
+
+   * `CMPCF` runs *past* the shorter string's end, so on exhaustion its pointer
+     is not at the character "immediately following" that string. The
+     implementation advances both over `max(slen, dlen)`, so a two-character
+     source compared against four ends at base+4 rather than base+2. Recorded,
+     not benched.
+   * `CMPCS` has a **third** termination the sentence never mentions: the stop
+     character. The implementation treats it like a disagreement and leaves the
+     pointers *at* the stopping pair. Recorded, not benched.
+
+   Neither is executed by any of the four gate games
+   (`docs/v60/UPSTREAM-DIVERGENCE.md`), so nothing observable rests on them
+   yet; both are left as readings rather than claims.
+
+6. **Overlapping source and destination.** The bit string group's `MOVBS` page
    explicitly discusses overlap ("the correct result to be computed when the
    two bit strings overlap"); no page in *this* group mentions it, even though
    the direction bit exists precisely to make overlapping copies work. Whether
    a downward `MOVC` is guaranteed correct for a forward-overlapping copy is
    implied by the direction machinery and stated nowhere.
 
-6. **Whether the `char` operand of `SCHC`/`SKPC` is fetched once or per
+7. **Whether the `char` operand of `SCHC`/`SKPC` is fetched once or per
    element**, which decides whether a memory-resident search character
    produces one single-mode cycle or `slen` of them interleaved with the
    string-mode ones.
 
-7. **What DL1-DL0 and FAS\* do on the non-string cycles of a string
+8. **What DL1-DL0 and FAS\* do on the non-string cycles of a string
    instruction** — the `char` fetch, an address indirection. The pages give
    the rule per cycle ("bus cycles for variable length data types"), which
    implies single mode with a normal data length, but no page walks an example
    instruction's cycle sequence.
 
-8. **Timing**, as everywhere: the plate's Clocks column is blank on all eight
+9. **Timing**, as everywhere: the plate's Clocks column is blank on all eight
    rows (`docs/v60/INSTRUCTION-TIMING.md`).
 
 ## What implementing it settled
@@ -1009,6 +1029,24 @@ point of decision in `v60_seq.sv`:
   visiting order and not a different correspondence. The fill itself has no
   source to walk beside it and every position takes the same character, so no
   page distinguishes the two orders.
+
+And one thing the page *does* settle that the first implementation got wrong.
+`MOVCF`'s Description ends in the same sentence `MOVC`'s does -- "these
+registers contain the address of the next logical character **to be
+transferred**" -- and the sentence above it separates two clauses: "the number
+of characters to be **transferred**" against "any additional positions in the
+destination string **filled**". The fill is not a transfer, so it must not move
+the pointer that sentence is about.
+
+The first implementation walked `str_dst` through the fill, which produced an
+upward `MOVCF` whose `R27` was past the *fill* (`0x755` where the transfer
+ended at `0x752`) and, worse, a downward one that ended with `R28` **below**
+the source head at `0x73F` and `R27` **above** the destination tail at `0x755`
+-- the two registers on opposite sides of their own walk, which no reading of
+the page produces. The fill has its own pointer now (`str_fillp`), the memory
+result stays direction-independent as §2 requires, and both registers end on
+the same side: `0x742`/`0x752` upward, `0x73F`/`0x74F` downward. `tb_v60_seq`
+asserts both directions and mutation M10 covers it.
 
 **Still not implemented, and recorded rather than hidden:** the group is
 **non-interruptible**, which is `docs/v60/NEXT-STEPS.md`'s recommendation and
