@@ -44,7 +44,12 @@ ALU = [0x84,  # ADDW
        0x85,  # MULW
        0x95,  # MULUW
        0xa5,  # DIVW
-       0xb5]  # DIVUW
+       0xb5,  # DIVUW
+       # NOT was absent, so this harness could not see the NOT carry defect at
+       # all -- the lockstep found it and tb_v60_flags pins it.  A one-operand
+       # form in a two-operand slot is fine: NOT is Format I like AND and OR,
+       # and it reads its source the same way.
+       0x3c]  # NOTW
 
 def gen(seed, nops=40):
     rng = random.Random(seed)

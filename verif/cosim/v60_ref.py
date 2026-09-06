@@ -265,7 +265,10 @@ def _cmp(cpu,a,b,o2,d):
 def _and(cpu,a,b,o2,d): r=b&a; cpu.setzs(r,d); cpu.ov=0; cpu.store(o2,r,d)
 def _or(cpu,a,b,o2,d):  r=b|a; cpu.setzs(r,d); cpu.ov=0; cpu.store(o2,r,d)
 def _xor(cpu,a,b,o2,d): r=b^a; cpu.setzs(r,d); cpu.ov=0; cpu.store(o2,r,d)
-def _not(cpu,a,b,o2,d): r=(~a)&M32; cpu.setzs(r,d); cpu.ov=0; cpu.cy=0; cpu.store(o2,r,d)
+# NOT: "CY Unchanged / OV Cleared" -- PgmRef S7, the NOT page (PDF p.192).
+# This model was written from MAME and cleared CY with it; the page says the
+# carry survives, and rtl/cpu/v60/s32_v60.sv now agrees with the page.
+def _not(cpu,a,b,o2,d): r=(~a)&M32; cpu.setzs(r,d); cpu.ov=0; cpu.store(o2,r,d)
 def _neg(cpu,a,b,o2,d):
     r=(0-a)&M32; cpu.cy=1 if dimext(a,d)!=0 else 0
     cpu.ov=dimsgn(a,d)&dimsgn(r,d); cpu.setzs(r,d); cpu.store(o2,r,d)

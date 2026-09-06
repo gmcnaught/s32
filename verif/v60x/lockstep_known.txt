@@ -12,11 +12,11 @@
 83 PSW.OV
 85 PSW.OV
 
-# NOT: "CY Unchanged, OV Cleared" -- PgmRef S7 NOT, p. 7-xx (PDF p. 192).
-# Ship clears CY; clean leaves it.  The rest of the logical group agrees.
-38 PSW.CY
-3a PSW.CY
-3c PSW.CY
+# NOT: "CY Unchanged, OV Cleared" -- PgmRef S7 NOT (PDF p.192).  CLOSED: the
+# shipping core cleared CY and now does not, so 38/3a/3c no longer diverge and
+# their entries are gone rather than kept as documentation of a fixed bug.
+# This is the first of stage 4 to land in s32_v60.sv.  The class count dropped
+# from 9 to 6 and the differing memory bytes from 49 to 9 when it did.
 
 # SHA: "CY Set if the last shifted bit was set, cleared if the last shifted
 # bit was zero or the shift count was zero"; "OV Set if integer overflow
