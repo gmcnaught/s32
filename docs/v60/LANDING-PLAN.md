@@ -241,6 +241,8 @@ git commit -m "docs: the Reference is held; four plates read, and the tree's own
 - [ ] **Step 2:** `gh pr create --base main --head v60/cleanroom` with a body that lists: 93/135, the 6B/7B shipping-core change and its bench, the CI job, what the four plates settled, and that the four-game hardware check has not been run for the 6B/7B change.
 - [ ] **Step 3:** Wait for the gate (`gh pr checks --watch`). Merge with a merge commit, as the repository does (`gh pr merge --merge`). Do the same for PR #23 first.
 
+**Done 2026-09-05:** PR #23 merged as `e852cb2`, PR #24 as `e10968c`, all seven checks green. The four-game hardware check was then run on the device and did not pass for either PR #24 bitstream — nor for main's own CI bitstream. `docs/v60/HARDWARE-GATE-RESULT.md` records the runs and the gaps; stage 4 is gated on closing its item 8.
+
 ## Stage 2 — a top level and a fit
 
 ### Task 6: `v60_top.sv`

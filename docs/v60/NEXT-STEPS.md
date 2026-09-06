@@ -36,6 +36,13 @@ lockstep bench against the shipping core; `docs/v60/FIT-RESULT.md` and
   page and one PR into `s32_v60.sv`. Game exposure — which of the 42
   unexecuted instructions games run — is measurable now with
   `+OPTRACE` and `tools/v60x/exposure.py`, on a machine that has ROMs.
+- **The hardware gate comes before any of it, and it has gaps.** PR #24
+  merged on CI alone; put on a DE10-Nano the same day, its CI bitstream
+  broke Spider-Man and froze Dark Edge, and main's own CI bitstream hung
+  every title. `docs/v60/HARDWARE-GATE-RESULT.md` has the runs and ten
+  recorded gaps — the CI build path, the fitter seed, the gate's 78-second
+  window, a scorer that passes noise. Stage 4's PRs are gated by a local
+  seed-5 build on the device, not by CI's RBF check.
 
 `docs/v60/GOALS.md` is this list in the form the work is started in — four
 paste-ready goal texts, each carrying its own pages and acceptance criteria.
