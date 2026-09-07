@@ -340,6 +340,39 @@ sentence says Rx is taken as a bit displacement, i.e. scaled by one bit, which
 is not a byte count and so has no entry in a table of byte counts. Nothing
 prints that reconciliation, and it is recorded as a reading, not a fact.
 
+### What the base may NOT be
+
+The Addressing Modes column of each page answers a question the Description
+does not: a bit string's base is an **address**, so the two modes that produce
+no address are not available to it. The plain `Rn` row and both immediate rows
+are marked `X` in the `bsrc` column — and five plates print that column, which
+is what makes the reading safe despite every mark being OCR rather than
+reviewed:
+
+| Page | Instruction | `Rn` | `Immediate` | `Immediate.Quick` |
+|---|---|:--:|:--:|:--:|
+| 7-23 | CMPBF | X | X | X |
+| 7-41 | EXTBF | X | X | X |
+| 7-49 | INSBF | X | X | X |
+| 7-94 | SCH0BS | X | X | X |
+| 7-95 | SCH1BS | X | X | X |
+
+Five independent readings, no dissent. The other columns on the same rows are
+`O` throughout — EXTBF's `blen` takes `Rn` and its `dst` takes `Rn` — so this is
+not a page that forbids registers generally; it is the `bsrc` column
+specifically, which is the one that has to be an address.
+
+**DEFECT this records** (fixed 2026-09-07, audit item D3 in
+`ADDRESSING-MODE-AUDIT.md`): none of it was enforced. The group is not
+consistent about which operand its base is — EXTBF's and CMPBF's is the first
+and INSBF's is the second, which `bf_src_is_bit` and `bf_dst_is_bit` already
+say — so the check has to be asked twice, and a check on one side alone passes
+the other. INSBF's *immediate* base was already caught, because it writes its
+base and an immediate cannot be written; its **register** base was not, because
+`dst_is_reg` is false for a Format VIIc operand and `AM_RN` went to `v60_ea`'s
+reg-direct branch instead. So `extbfz R7, #5, R9` extracted a field from a
+register that is not a bit string, and `insbfr R9, R7, #5` inserted one into it.
+
 ### The "must not exceed thirty-two" constraint
 
 All three Description blocks say "The sum of the bit offset and the bit field

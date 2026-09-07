@@ -894,12 +894,23 @@ wire        io_dst = (aop == ALU_OUT);
 // the I/O address is the port operand's EFFECTIVE ADDRESS, and a register has
 // no address to send.
 //
+// DEFECT this fixes: the same column marks Immediate and Immediate.Quick X for
+// the same reason, and only the two register spellings were named here.  An
+// immediate has no address either, and v60_ea's immediate branch returns the
+// literal as `rdata` with NO bus cycle while driving its `illegal` output from
+// `we`, which a read never sets -- so `in.b #0x5B, R9` loaded the constant into
+// R9 and never went near a port.  An IN that reads no input.  OUT's port is its
+// DESTINATION, so an immediate there was already caught by the general rule
+// that an immediate cannot be written; IN's is its source and nothing asked.
+// PgmRef 7-47 (IN) and 7-78 (OUT) print the same three X marks.
+//
 // Not checked here: "bits 24:31 of a port address must be zero.  The operation
 // using an I/O port address outside the range 0x00000000 to 0x00FFFFFF is
 // unpredictable."  Unpredictable is not an exception, and the address bus is
 // 24 bits, so v60_ea's `dx_addr` has already dropped the top byte -- the
 // hardware does the only thing it can and the page permits it.
-wire        io_src_bad = io_src && (src_is_reg || (op1_mode == AM_RN));
+wire        io_src_bad = io_src && (src_is_reg || (op1_mode == AM_RN) ||
+                                    am_is_immediate(op1_mode));
 
 // MOVEA's source, which has the same shape of restriction and a different
 // reason.  Its Addressing Modes table marks Rn, Immediate and Immediate.Quick
@@ -1191,6 +1202,48 @@ always_comb begin
     if (dst_am_is_op2) dst_mode = op2_mode;
     else               dst_mode = op1_mode;
 end
+
+// Whether an IMMEDIATE may stand in the destination operand's position, which
+// is NOT the same question as `dst_read_only`.
+//
+// DEFECT this fixes.  The immediate-destination check is exempted for the
+// instructions that only read there, because `cmp src, #imm` and UPDPSW's
+// immediate mask are legal and an unconditional check raised on both.  But
+// "not written" and "an immediate is acceptable" are different properties, and
+// for one member of that list they disagree: every other one takes a VALUE
+// there -- CMP's src2, TEST's src, UPDPSW's mask, TRAP's vector, LDPR's regID,
+// CHLVL's arg -- while TEST1's is a bit string's BASE ADDRESS.  So PgmRef
+// 7-113 marks Immediate and Immediate.Quick X in that column exactly as SET1's
+// 7-98, CLR1's and NOT1's pages do.  Its three siblings write their base and
+// are caught by the general rule; TEST1 alone reads it, took the exemption,
+// and tested bit 9 of the literal with no bus cycle at all.
+//
+// CMPBF stays exempt: its bit-addressed operand is its FIRST, which is checked
+// as `bf_src_base_bad` below, and the operand reaching here is its ordinary
+// third, whose column PgmRef 7-23 marks O for both immediate rows.
+wire        dst_imm_ok = dst_read_only && (aop != ALU_TEST1);
+
+// The bit field group's BASE, in the one place its own column is not the
+// destination's.  The family addresses a bit string from a base ADDRESS plus a
+// bit offset, and its mode vocabulary is a distinct one -- `@[Rn]`,
+// `offset@[Rn]`, `Rx@/addr` -- in which the plain `Rn` row and both immediate
+// rows are marked X.  Five plates print that column and all five agree: PgmRef
+// 7-23 (CMPBF), 7-41 (EXTBF), 7-49 (INSBF), and 7-94 and 7-95 for the two bit
+// string searches this tree does not implement.  Neither a register nor an
+// immediate has an address, which is the same argument that bars them from
+// JMP's target and from IN's port.
+//
+// Asked on both sides because the group is not consistent about which operand
+// it is: EXTBF's and CMPBF's base is their FIRST operand and INSBF's is its
+// SECOND, which is what `bf_src_is_bit` and `bf_dst_is_bit` already say.
+// INSBF's immediate case was already caught -- it writes its base, so the
+// general immediate-destination rule covers it -- but its REGISTER case was
+// not, because `dst_is_reg` is false for a Format VIIc operand and the mode
+// reached v60_ea's reg-direct branch instead.
+wire        bf_src_base_bad = bf_src_is_bit &&
+                              ((op1_mode == AM_RN) || am_is_immediate(op1_mode));
+wire        bf_dst_base_bad = bf_dst_is_bit &&
+                              ((dst_mode == AM_RN) || am_is_immediate(dst_mode));
 
 
 // The operand widths are the instruction's, not the addressing mode's, so they
@@ -1720,11 +1773,13 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_RESERVED_MODE;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
-            end else if (io_src_bad || movea_src_bad) begin
+            end else if (io_src_bad || movea_src_bad || bf_src_base_bad) begin
                 // A source operand whose addressing mode the page marks X:
-                // IN's port named a register, or MOVEA was asked for the
-                // address of something that has none.  Raised before the
-                // access, like every other Instruction Exception here.
+                // IN's port named a register or an immediate, MOVEA was asked
+                // for the address of something that has none, or EXTBF's or
+                // CMPBF's bit string base was not an address either.  Raised
+                // before the access, like every other Instruction Exception
+                // here.
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;
                 exc_kind   <= EK_INSN;
@@ -1868,7 +1923,17 @@ always_ff @(posedge clk) begin
                 exc_code_r <= CODE_ILLEGAL_DATA;
                 exc_kind   <= EK_INSN;
                 state      <= S_EXC_SW;
-            end else if (!dst_is_reg && !dst_read_only && am_is_immediate(dst_mode)) begin
+            end else if (bf_dst_base_bad) begin
+                // INSBF's bit string base, whose column marks Rn and both
+                // immediate rows X (PgmRef 7-49).  Ahead of the general
+                // immediate rule because it is the more specific statement and
+                // it also catches the register, which that rule does not see:
+                // `dst_is_reg` is false for a Format VIIc operand.
+                exc_vec_r  <= VEC_ILLEGAL_MODE;
+                exc_code_r <= CODE_ILLEGAL_MODE;
+                exc_kind   <= EK_INSN;
+                state      <= S_EXC_SW;
+            end else if (!dst_is_reg && !dst_imm_ok && am_is_immediate(dst_mode)) begin
                 exc_vec_r  <= VEC_ILLEGAL_MODE;
                 exc_code_r <= CODE_ILLEGAL_MODE;
                 exc_kind   <= EK_INSN;

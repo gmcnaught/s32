@@ -1156,6 +1156,35 @@ initial begin
     mem[11'h3D8] = 8'hA7; mem[11'h3D9] = 8'h80; mem[11'h3DA] = 8'hF4;
     mem[11'h3DB] = 8'h09; mem[11'h3DC] = 8'h00; mem[11'h3DD] = 8'h00;
     mem[11'h3DE] = 8'h00; mem[11'h3DF] = 8'h68;
+    // The bit field group's BASE, which its own column marks X for Rn and for
+    // both immediate rows on all five plates that print it -- PgmRef 7-23,
+    // 7-41, 7-49, 7-94 and 7-95.  A bit string is addressed from a base
+    // ADDRESS plus a bit offset and a register has none.  Placed above both
+    // stacks: the level stack is 0x600 and the interrupt stack 0x680 and both
+    // grow DOWN, so 0x681 up is never rewritten by the frames these push.
+    // EXTBFZ R7, #5, R9   5D E9 67 05 69   -- the base is EXTBF's FIRST
+    //   operand.  E9 is A9 with m = 1 on that operand, which is what makes 67
+    //   register-direct rather than [R7].
+    mem[11'h681] = 8'h5D; mem[11'h682] = 8'hE9; mem[11'h683] = 8'h67;
+    mem[11'h684] = 8'h05; mem[11'h685] = 8'h69;
+    // INSBFR R9, R7, #5   5D F8 69 67 05   -- the same column on the other side
+    //   of the group: INSBF's base is its SECOND operand, so this is Format
+    //   VIIc and F8 is D8 with m = 1 on the second rather than the first.
+    mem[11'h686] = 8'h5D; mem[11'h687] = 8'hF8; mem[11'h688] = 8'h69;
+    mem[11'h689] = 8'h67; mem[11'h68A] = 8'h05;
+
+    // TEST1 #9, #0x12345678   87 80 F4 09 00 00 00 F4 78 56 34 12
+    //   An IMMEDIATE base, which PgmRef 7-113 marks X in the base column just
+    //   as its three siblings' pages do -- the bit is at an offset from a base
+    //   ADDRESS, and an immediate is not one.  TEST1 is the only one of the
+    //   four that reads its base without writing it, which is exactly why this
+    //   case needs its own encoding: the check the other three fall into is
+    //   the one for an immediate written to.  Both operands are word data, so
+    //   both immediates are four bytes.
+    mem[11'h434] = 8'h87; mem[11'h435] = 8'h80; mem[11'h436] = 8'hF4;
+    mem[11'h437] = 8'h09; mem[11'h438] = 8'h00; mem[11'h439] = 8'h00;
+    mem[11'h43A] = 8'h00; mem[11'h43B] = 8'hF4; mem[11'h43C] = 8'h78;
+    mem[11'h43D] = 8'h56; mem[11'h43E] = 8'h34; mem[11'h43F] = 8'h12;
     // NOT1 #3, [R8+]   B7 A0 F4 03 00 00 00 88   -- the base is WORD data, so
     //   the autoincrement steps R8 by FOUR and not by one.  The A0 prefix puts
     //   m = 1 on the SECOND operand, which is what makes 88 autoincrement
@@ -1488,6 +1517,14 @@ initial begin
     // IN.b R10, R9      20 E0 6A 69   -- the port names a REGISTER: illegal
     mem[11'h3F8] = 8'h20; mem[11'h3F9] = 8'hE0; mem[11'h3FA] = 8'h6A;
     mem[11'h3FB] = 8'h69;
+    // IN.b #0x5B, R9    20 A0 F4 5B 69   -- the port names an IMMEDIATE, which
+    //   the same column of the same table marks X for the same reason: the I/O
+    //   address is the port operand's effective address and an immediate has
+    //   none.  The A0 prefix is m = 0 on the first operand, which is what makes
+    //   F4 the immediate rather than a mod-111 sibling, and m = 1 on the second
+    //   so 69 is R9 direct.
+    mem[11'h411] = 8'h20; mem[11'h412] = 8'hA0; mem[11'h413] = 8'hF4;
+    mem[11'h414] = 8'h5B; mem[11'h415] = 8'h69;
 
     // TRAPFL at 0x2B0 -- CB, Format V, one byte
     mem[11'h2B0] = 8'hCB;
@@ -2835,11 +2872,37 @@ initial begin
         "and put no write on the bus: test1's base is .r, not .rw");
     chk(mem_word(13'h700) === 32'h0000_0200, "the word is untouched");
 
-    // CLR1 on the same bit, which DOES write back.
+    // CLR1 on the same bit, which DOES write back.  It runs on from the TEST1
+    // above rather than jumping, so nothing may be placed between them.
     step;
     chk(mem_word(13'h700) === 32'h0000_0000, "CLR1 #9 cleared it in memory");
     chk(seq_psw[PSW_CY] === 1'b1 && seq_psw[PSW_Z] === 1'b0,
         "still reporting the bit as it was before");
+
+    // An IMMEDIATE base, which PgmRef 7-113 marks X -- and this one was
+    // accepted, alone among the four.  SET1, CLR1 and NOT1 all write their
+    // base, so an immediate base is caught by the general rule that an
+    // immediate cannot be a destination; TEST1's base is `.r`, so the tree's
+    // `dst_read_only` escape hatch -- added so that `cmp src, #imm` and
+    // UPDPSW's immediate mask would execute -- carried it past the check too.
+    // Read-only is not the same question as "an immediate is acceptable here":
+    // CMP's second operand is a VALUE and TEST1's is a base ADDRESS.  So
+    // `test1 #9, #0x12345678` tested bit 9 of the literal and set the flags
+    // from it, with no bus cycle at all.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    put_word(13'h700, 32'h0000_0200);        // bit 9 set, as above
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    jump(32'h00000434);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "TEST1 through an IMMEDIATE base is the Illegal Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+    chk(mem_word(13'h700) === 32'h0000_0200,
+        "and the word a legal base would have named is untouched");
 
     // The autoincrement, which steps by FOUR: "If the autoincrement or
     // autodecrement addressing mode is specified for the base operand, the
@@ -2949,6 +3012,31 @@ initial begin
         "IN with a register port is the Illegal Addressing Mode exception");
     chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
     chk(n_io == 0, "and no I/O cycle was issued");
+
+    // An IMMEDIATE port, which is the same column of the same table and the
+    // same reason -- and it was accepted.  The register case above was caught
+    // and this one was not, because the check named only the two register
+    // spellings.  What it did instead is the quiet failure: v60_ea's immediate
+    // branch returns the literal as rdata with NO bus cycle and drives its
+    // `illegal` output from `we`, which a read never sets, so `in.b #0x5B, R9`
+    // loaded the constant 0x5B into R9 and never went near a port.  An IN that
+    // reads no input.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[9] = 32'h1234_5678;
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    n_io = 0;
+    jump(32'h00000411);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "and an IMMEDIATE port is the same exception");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+    chk(n_io == 0, "and no I/O cycle was issued");
+    chk(rf.gpr[9] === 32'h1234_5678,
+        "with the destination untouched -- not loaded with the immediate");
 
     // Both are privileged: "I/O space accesses are always generated by the
     // execution of the privileged IN and OUT instructions."
@@ -3793,6 +3881,43 @@ initial begin
     step;
     chk(mem_word(13'h700) === 32'hFFFF_FF17,
         "INSBF's bit-addressed operand is its DESTINATION, and its source is an ordinary read");
+
+    // A REGISTER bit string base, which the bsrc column marks X on all five
+    // plates that print it.  Both sides of the group, because the group is not
+    // consistent about which operand its base is: EXTBF's is the first and
+    // INSBF's is the second, and a check on one side alone would pass the
+    // other.  Neither was raised -- v60_ea's reg-direct branch returned ea = 0
+    // and the field was extracted from, and inserted into, a register that the
+    // instruction never names as a bit string.
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[7] = 32'h0000_00F8;
+    rf.gpr[9] = 32'hDEAD_BEEF;
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    jump(32'h00000681);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "EXTBF from a REGISTER bit string base is the Illegal Addressing Mode exception");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+    chk(rf.gpr[9] === 32'hDEAD_BEEF, "and the destination is untouched");
+
+    reset_and_arm;
+    jump(32'h00000440);
+    step; step;
+    @(negedge clk);
+    rf.gpr[7] = 32'h0000_0000;
+    rf.gpr[9] = 32'h0000_001F;
+    put_word(13'h5FC, 32'd0);
+    repeat (2) @(negedge clk);
+    jump(32'h00000686);
+    step;
+    chk(seq_pc === 32'h000007C0,
+        "and INSBF into one is the same exception -- the base is its SECOND operand");
+    chk(mem_word(13'h5FC) === 32'h13000004, "with vector 19's code");
+    chk(rf.gpr[7] === 32'h0000_0000, "with the register left alone");
 
     // A length above 32 at residual zero, where only the length can fail the
     // sum -- and where a six-bit sum would have wrapped and let it through.
