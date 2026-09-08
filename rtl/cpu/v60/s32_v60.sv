@@ -4482,8 +4482,15 @@ task automatic exec_op;
         wb_op2(res, d2);
     end
     8'h38, 8'h3a, 8'h3c: begin      // NOT
+        // "CY Unchanged / OV Cleared" -- PgmRef S7, the NOT page (PDF p.192).
+        //
+        // This cleared CY.  Found by verif/v60x/tb_v60_lockstep.sv, which
+        // compares this core against the clean-room one, and adjudicated in
+        // the page's favour; the rest of the logical group in this same file
+        // already agrees with it -- AND, OR and XOR below clear OV and leave
+        // CY alone, and NOT is the only member that did not.
         res = ~dimext(a,d2);
-        set_zs(res, d2); f_ov <= 0; f_cy <= 0;
+        set_zs(res, d2); f_ov <= 0;
         wb_op2(res, d2);
     end
     8'h39, 8'h3b, 8'h3d: begin      // NEG

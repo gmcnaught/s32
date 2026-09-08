@@ -155,6 +155,40 @@ initial begin
     ab(8'hBD); ab(8'h20); ab(8'hF4); ab(8'hF8);
     ab(8'h84); ab(8'h00); ab(8'h18); ab(8'h7A);
 
+
+    // 13: NOT leaves CY ALONE.  PgmRef S7, the NOT page (PDF p.192, opcodes
+    // 38/3A/3C), prints its Condition Codes as:
+    //
+    //      CY  Unchanged
+    //      OV  Cleared
+    //      S   Set if the MSB of the result is set, otherwise cleared
+    //      Z   Set if the result is zero, otherwise cleared
+    //
+    // This core cleared CY.  Found by verif/v60x/tb_v60_lockstep.sv against
+    // the clean-room core and recorded in verif/v60x/lockstep_known.txt; the
+    // rest of the logical group in this same file already agrees with the
+    // page -- AND, OR and XOR set OV and leave CY untouched.
+    //
+    // Format I register-to-register is [op][0 m d reg][mod] with m=d=1, so
+    // NOT.W Rsrc, Rdst is 3C, 0x60|dst, 0x60|src.
+    //
+    // The source is loaded BEFORE the instruction that sets CY, so that
+    // nothing sits between the two and the carry under test is the one DEC
+    // produced.
+    movw_imm(5'd3, 32'h0000_000F);               // NOT source
+    movw_imm(5'd2, 32'h0000_0000);
+    ab(8'hD5); ab(8'h60 | 5'd2);                 // DEC.W R2: 0-1, so CY=1
+    ab(8'h3C); ab(8'h60 | 5'd4); ab(8'h60 | 5'd3);  // NOT.W R3, R4
+    getpsw(5'd5);
+    // 14: and the other half, which is what makes it a preservation test
+    // rather than a clear test -- an incoming CY of 0 must still be 0
+    // afterwards.  Without this pair, "f_cy <= 0" passes case 13's twin.
+    movw_imm(5'd20, 32'h0000_00FF);              // NOT source
+    movw_imm(5'd16, 32'h0000_0000);
+    ab(8'hDD); ab(8'h60 | 5'd16);                // INC.W R16: 0+1, so CY=0
+    ab(8'h3C); ab(8'h60 | 5'd22); ab(8'h60 | 5'd20);  // NOT.W R20, R22
+    getpsw(5'd25);
+
     ab(8'h00);                                   // HALT
 
     ram[16'h163D] = 16'hAA55;                    // 2C7A=55, 2C7B=AA
@@ -212,6 +246,15 @@ initial begin
         "Arabian Fight MUL.W immediate writes memory speed 00000100");
     chk({ram[16'h207C >> 1], ram[16'h207A >> 1]} == 32'hFFFF_0100,
         "Arabian Fight fixed-point accumulator advances by 00000100");
+
+    $display("NOT: R4=%08x P5=%01x  R22=%08x P25=%01x",
+        cpu.r[4], cpu.r[5]&4'hf, cpu.r[22], cpu.r[25]&4'hf);
+    chk(cpu.r[4]  == 32'hFFFF_FFF0, "NOT.W 0000000F result");
+    // {CY,OV,S,Z}: CY carried in from DEC and must survive, OV cleared,
+    // S set from the MSB, Z clear.
+    chk((cpu.r[5]  & 4'hf) == 4'hA,  "NOT.W leaves an incoming CY=1 SET (page: CY Unchanged)");
+    chk(cpu.r[22] == 32'hFFFF_FF00, "NOT.W 000000FF result");
+    chk((cpu.r[25] & 4'hf) == 4'h2,  "NOT.W leaves an incoming CY=0 clear, with OV cleared and S set");
 
     if (fail == 0) $display("V60 FLAGS PASS (%0d checks)", pass);
     else           $display("V60 FLAGS FAIL (%0d/%0d failed)", fail, pass+fail);
