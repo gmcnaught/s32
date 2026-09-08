@@ -284,13 +284,21 @@ removes the cache the trap needs.
 ## Not built yet
 
 No MMU translation, no task switching, no address traps, no emulation mode.
-**93 of the instruction table's 135 mnemonics execute** and are benched; the
-42 that do not are four groups, each its own subsystem: the floating point
-arithmetic (twelve — `MOVF`, `NEGF` and `ABSF` are done), the character
-strings (eight), the bit strings (ten) and the MMU and task group (twelve).
+**101 of the instruction table's 135 mnemonics execute** and are benched; the
+34 that do not are three groups, each its own subsystem: the floating point
+arithmetic (twelve — `MOVF`, `NEGF` and `ABSF` are done), the bit strings
+(ten) and the MMU and task group (twelve).
 `tools/v60x/insn_table.py`'s `EXEC_OP`, `EXEC_OP_ESCAPE` and `CTRL_OP` are the
 authority on which is which. The doubleword register pair, the decimal group
-and the bit field group are done (2026-08-28).
+and the bit field group are done (2026-08-28); the character manipulation
+group is done (2026-09-05).
+
+That last one is why the count matters against something other than itself:
+`tools/v60x/exposure.py` on the four gate games' `+OPTRACE` traces reads
+**100.00% for all four** — 26 million instructions, and every one of them an
+instruction this core executes. The character group was the entire gap
+(`docs/v60/UPSTREAM-DIVERGENCE.md`). The remaining 34 are real instructions
+with real pages; they are simply not ones these four games run.
 
 `docs/v60/NEXT-STEPS.md` is the ordered list of what is open and what each
 piece would take; `docs/v60/LANDING-PLAN.md` is how this tree reaches `main`

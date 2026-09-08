@@ -1155,11 +1155,35 @@ function automatic alu_op_e op_alu_escape(input logic [7:0] op,
     alu_op_e r;
     begin
         case ({op, 3'b000, subop})
+            16'h5800: r = ALU_CMPC;    // CMPC
+            16'h5801: r = ALU_CMPCF;   // CMPCF
+            16'h5802: r = ALU_CMPCS;   // CMPCS
+            16'h5808: r = ALU_MOVC;    // MOVC
+            16'h5809: r = ALU_MOVC;    // MOVC
+            16'h580A: r = ALU_MOVCF;   // MOVCF
+            16'h580B: r = ALU_MOVCF;   // MOVCF
+            16'h580C: r = ALU_MOVCS;   // MOVCS
+            16'h5818: r = ALU_SCHC;    // SCHC
+            16'h5819: r = ALU_SCHC;    // SCHC
+            16'h581A: r = ALU_SKPC;    // SKPC
+            16'h581B: r = ALU_SKPC;    // SKPC
             16'h5900: r = ALU_ADDDC;   // ADDDC
             16'h5901: r = ALU_SUBDC;   // SUBDC
             16'h5902: r = ALU_SUBRDC;  // SUBRDC
             16'h5910: r = ALU_CVTDPZ;  // CVTD.PZ
             16'h5918: r = ALU_CVTDZP;  // CVTD.ZP
+            16'h5A00: r = ALU_CMPC;    // CMPC
+            16'h5A01: r = ALU_CMPCF;   // CMPCF
+            16'h5A02: r = ALU_CMPCS;   // CMPCS
+            16'h5A08: r = ALU_MOVC;    // MOVC
+            16'h5A09: r = ALU_MOVC;    // MOVC
+            16'h5A0A: r = ALU_MOVCF;   // MOVCF
+            16'h5A0B: r = ALU_MOVCF;   // MOVCF
+            16'h5A0C: r = ALU_MOVCS;   // MOVCS
+            16'h5A18: r = ALU_SCHC;    // SCHC
+            16'h5A19: r = ALU_SCHC;    // SCHC
+            16'h5A1A: r = ALU_SKPC;    // SKPC
+            16'h5A1B: r = ALU_SKPC;    // SKPC
             16'h5C08: r = ALU_MOVF;    // MOVF
             16'h5C09: r = ALU_NEGF;    // NEGF
             16'h5C0A: r = ALU_ABSF;    // ABSF

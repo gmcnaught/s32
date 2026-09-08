@@ -505,7 +505,9 @@ localparam logic [1:0] STOP_NO_ALU   = 2'd0;   // not an operation v60_alu has
 localparam logic [1:0] STOP_FORMAT   = 2'd1;   // not a format this executes
 localparam logic [1:0] STOP_TWO_WB   = 2'd2;   // two addressing-mode writebacks
 
-typedef enum logic [5:0] {
+// Seven bits since the character group: the eleven states its engine needs
+// carried the count past 64, and an inferred enum silently wraps to S_IDLE.
+typedef enum logic [6:0] {
     S_IDLE, S_FETCH,
     S_OP1, S_OP1R, S_OP1S, S_OP1W,     // describe, read registers, start, wait
     S_OP2, S_OP2R, S_OP2S, S_OP2W,
@@ -536,6 +538,18 @@ typedef enum logic [5:0] {
     // The bit field group's length, when the ext byte names a register rather
     // than carrying the value.
     S_BF_LEN,
+    // The character manipulation group's engine.  docs/v60/CHARACTER-STRING.md.
+    // Two states to resolve the lengths and R26 before either operand (a
+    // length is a literal or the register its ext byte names, and both are
+    // needed to compute min(slen, dlen)); then a read/write element loop that
+    // drives v60_ea itself, the way the stack engine above does.
+    S_STR_L1, S_STR_L2,
+    S_STR_GO,
+    S_STR_RD, S_STR_RDS, S_STR_RDW,
+    S_STR_FILL, S_STR_FILLS, S_STR_FILLW,
+    S_STR_CRD, S_STR_CRDS, S_STR_CRDW,
+    S_STR_WR, S_STR_WRS, S_STR_WRW,
+    S_STR_FIN, S_STR_FIN2,
     // TKCW, for the floating point group's exception enables.
     S_FP_TK,
     // The upper word of a doubleword REGISTER destination.  Two registers, one
@@ -601,6 +615,31 @@ logic [31:0] tkcw_r;
 // The bit field's length, and whether its address is legal.  Six bits: a
 // length of 32 is the maximum and does not fit in five.
 logic  [5:0] bf_len_r;
+// The character engine's working state.  R28 and R27 are written only at the
+// end: this tree ships the group NON-INTERRUPTIBLE and records it, which is
+// docs/v60/NEXT-STEPS.md's recommendation and what the shipping core already
+// does -- the resumption contract the pages describe cannot be derived from
+// the documents held (docs/v60/INTERRUPTIBILITY.md).
+logic [31:0] str_src, str_dst;      // the two working addresses
+logic [31:0] str_slen_r, str_dlen_r;
+logic [31:0] str_cnt;               // elements left in the copy phase
+logic [31:0] str_fillv;             // R26: the filler, or the stopper
+logic [31:0] str_elem;              // the element just read
+logic        str_stop_hit;          // the S forms: R26 was seen; the scan
+                                    // pair: the criterion was met
+logic [31:0] str_idx;               // characters processed -- SCHC's and
+                                    // SKPC's R27 is an OFFSET, not an address
+logic [31:0] str_delem;             // the destination element, for a compare
+// MOVCF's fill walks its OWN pointer.  R28/R27 are "the address of the next
+// logical character TO BE TRANSFERRED", and the fill is not a transfer -- the
+// Description separates the two clauses, "the number of characters to be
+// transferred" against "any additional positions in the destination string
+// filled".  Walking str_dst through the fill put the two registers on
+// opposite sides of their own walk for a downward MOVCF: R28 below the source
+// head and R27 above the destination tail.
+logic [31:0] str_fillp;
+logic        str_sdiff;             // the compare found a disagreement
+logic        str_sgt;               // and the source character was the greater
 logic        bf_bad_r;    // INSBF's check, latched so the open access can close
 logic  [2:0] bf_resid_r;  // where the field starts within the word read
 logic  [7:0] dec_pat_r;   // the decimal group's mask pattern
@@ -646,6 +685,59 @@ wire fmt_iii = (idu_fmt == FMT_III);
 wire fmt_viib = (idu_fmt == FMT_VIIB);
 wire fmt_viic = (idu_fmt == FMT_VIIC);
 
+// ---------------------------------------------------------------------------
+// The character manipulation group.
+// ---------------------------------------------------------------------------
+// Eight instructions on two escape opcodes, and the only group here whose
+// instructions are LOOPS over memory rather than one operation on operands the
+// address unit has already fetched.  docs/v60/CHARACTER-STRING.md carries the
+// pages; what matters at this level is that both addressed operands of a
+// Format VIIa are ADDRESSES, and the engine reads and writes the elements
+// itself.
+//
+// Declared here, above `dst_am_is_op2` and `src_addr_only`, because Icarus
+// rejects use before declaration where Quartus tolerates it -- the same reason
+// the debug taps sit below `st` rather than beside `pc`.
+wire        fmt_viia = (idu_fmt == FMT_VIIA);
+
+wire        is_movc  = (aop == ALU_MOVC);
+wire        is_movcf = (aop == ALU_MOVCF);
+wire        is_movcs = (aop == ALU_MOVCS);
+wire        is_cmpc  = (aop == ALU_CMPC);
+wire        is_cmpcf = (aop == ALU_CMPCF);
+wire        is_cmpcs = (aop == ALU_CMPCS);
+wire        is_schc  = (aop == ALU_SCHC);
+wire        is_skpc  = (aop == ALU_SKPC);
+wire        is_str_move = is_movc || is_movcf || is_movcs;
+wire        is_str_cmp  = is_cmpc || is_cmpcf || is_cmpcs;
+wire        is_str_scan = is_schc || is_skpc;
+wire        is_str      = is_str_move || is_str_cmp || is_str_scan;
+
+// The `d` bit.  Only MOVC, MOVCF, SCHC and SKPC carry one; MOVCS, CMPC, CMPCF
+// and CMPCS print no u/d form and process upward only.  §2 p.2-7 is what the
+// bit means: "In all cases the ordering of characters within the string is in
+// the upward (increasing addresses) direction.  Only the direction of
+// processing changes" -- so a downward move copies the same bytes to the same
+// places and merely visits them last-first.
+wire        str_has_dir = is_movc || is_movcf || is_schc || is_skpc;
+wire        str_down    = str_has_dir && idu_subop[0];
+
+// R26 is a filler for the F forms and a stopper for the S forms, which is
+// exactly what the two suffixes name.
+wire        str_uses_r26 = is_movcf || is_movcs || is_cmpcf || is_cmpcs;
+
+// A Format VIIa's second operand is the destination STRING, so its address is
+// wanted and not its contents.  A VIIb's is the search or skip character,
+// which is an ordinary value.
+wire        str_dst_is_addr = is_str && fmt_viia;
+
+// A length field: bit 7 clear means bits 6:0 are the count, bit 7 set means
+// bits 4:0 name the register holding it (p.3.293).  So a literal length is at
+// most 127 and a register one is a full 32 bits.  The count is in CHARACTERS.
+wire  [7:0] str_slen_raw = op1_ext;
+wire  [7:0] str_dlen_raw = op2_ext;
+
+
 wire        src_is_reg  = fmt_i && !idu_d;   // d = 0: the register is the source
 wire        dst_is_reg  = (fmt_i &&  idu_d) ||          // d = 1: it is the dest
                           (fmt_ii  && (op2_mode == AM_RN)) ||
@@ -666,7 +758,8 @@ wire  [4:0] reg_operand = fmt_iii ? op1_rn : (fmt_i ? idu_reg : op2_rn);
 // it is whichever side `d` did not take.
 // Format VII puts its destination in mod' too -- `op subop mod ext mod'` for
 // VIIb and `op subop mod mod' ext'` for VIIc -- so both join Format II here.
-wire        dst_am_is_op2 = fmt_ii || fmt_viib || fmt_viic;
+// Format VIIa puts its second string in mod' as well, so it joins them.
+wire        dst_am_is_op2 = fmt_ii || fmt_viia || fmt_viib || fmt_viic;
 
 // Which operations WRITE their destination without reading it first.  It is
 // the syntax line that says so: MOV's is "dst.w" where ADD's is "dst.rw", and
@@ -746,7 +839,9 @@ wire        dst_read_only = (aop == ALU_CMP) || (aop == ALU_TEST) ||
 // is issued for the source at all, and "the source operand is not referenced
 // and remains unchanged".  Its size field still matters, because it is what
 // [Rn+] steps by and what (Rx) scales by.
-wire        src_addr_only = (aop == ALU_MOVEA);
+// MOVEA wants the address of its source; so does every instruction in the
+// character group, whose first operand is always a string.
+wire        src_addr_only = (aop == ALU_MOVEA) || is_str;
 
 // The PSW merge, which is the whole of UPDPSW: "PSW <- ( PSW & ~mask ) |
 // ( newPSW & mask )".  val1 is the first operand and val2 the second, which
@@ -1009,6 +1104,17 @@ wire        is_cmpbf = (aop == ALU_CMPBFS) || (aop == ALU_CMPBFZ) ||
 wire        is_insbf = (aop == ALU_INSBFR) || (aop == ALU_INSBFL);
 wire        is_bf    = is_extbf || is_cmpbf || is_insbf;
 
+// The same question asked a cycle earlier.  `aop` is latched in S_FETCH by the
+// very state that dispatches, so a dispatch branch reading `aop` reads the
+// PREVIOUS instruction's -- which is why every branch there calls the table
+// instead.  The character group needs the question twice, so it is named once.
+alu_op_e    aop_now;
+always_comb aop_now = op_alu_all(idu_op, idu_subop);
+wire        is_str_now = (aop_now == ALU_MOVC)  || (aop_now == ALU_MOVCF) ||
+                         (aop_now == ALU_MOVCS) || (aop_now == ALU_CMPC)  ||
+                         (aop_now == ALU_CMPCF) || (aop_now == ALU_CMPCS) ||
+                         (aop_now == ALU_SCHC)  || (aop_now == ALU_SKPC);
+
 // Which operand is bit-addressed.  EXTBF's and CMPBF's `bsrc` is operand one;
 // INSBF's `bdst` is operand two, because it is the destination.
 wire        bf_src_is_bit = is_extbf || is_cmpbf;
@@ -1064,6 +1170,7 @@ wire        bf_addr_bad = is_bf &&
 // one.
 wire        fmt_vii_bf  = (idu_op == 8'h5D);
 wire        fmt_vii_dec = (idu_op == 8'h59);
+
 wire        is_dec_ar = (aop == ALU_ADDDC) || (aop == ALU_SUBDC) ||
                         (aop == ALU_SUBRDC);
 wire        is_dec    = is_dec_ar || (aop == ALU_CVTDPZ) || (aop == ALU_CVTDZP);
@@ -1255,6 +1362,50 @@ wire [3:0] w_dst_raw = op_data_bytes(idu_op, idu_subop, 1'b1);
 // and asking for the second operand's width returns "none" rather than a size.
 wire [3:0] w_dst = fmt_iii ? w_src : w_dst_raw;
 
+// The character group's element size.  The `c` bit picks it -- 0x58 is the
+// byte-character group and 0x5A the halfword one (p.3.295) -- and the
+// generated width table already carries it, so it is read from there rather
+// than decoded from the opcode a second time.
+wire        str_hw  = (w_src == 4'd2);
+wire [31:0] str_esz = str_hw ? 32'd2 : 32'd1;
+
+// min(slen, dlen), and where a downward pass starts.  The tail offset is a
+// shift rather than a multiply: a character is one byte or two.
+wire [31:0] str_n = (str_slen_r < str_dlen_r) ? str_slen_r : str_dlen_r;
+wire [31:0] str_tail_off = str_hw ? ((str_n - 32'd1) << 1) : (str_n - 32'd1);
+// How far into the destination the copied prefix reaches -- where MOVCF's
+// "additional positions" begin.
+wire [31:0] str_copy_off = str_hw ? (str_n << 1) : str_n;
+// CMPCF runs over the LONGER length: "the shorter string will be automatically
+// extended using the fill character in R26 to the longer string length".  The
+// other two compares stop at the shorter, as the moves do.
+wire [31:0] str_cmp_len = is_cmpcf
+                        ? ((str_slen_r > str_dlen_r) ? str_slen_r : str_dlen_r)
+                        : str_n;
+// A character is a byte or a halfword, so a comparison against R26 -- or
+// between two elements -- is only ever that wide.
+wire [31:0] str_mask = str_hw ? 32'h0000_FFFF : 32'h0000_00FF;
+// The scan pair's criterion, against the character its VIIb second operand
+// carried.  SCHC searches for a match and SKPC skips over one, so the two are
+// the same comparison read opposite ways.
+wire [31:0] str_elem_now = ea_rdata[31:0];
+wire        scan_eq  = ((str_elem_now & str_mask) == (val2[31:0] & str_mask));
+wire        scan_hit = is_schc ? scan_eq : !scan_eq;
+
+// The compare group's element test.  The destination character is the filler
+// when the destination string has run out and comes straight off the bus
+// otherwise -- the same shape the scan pair uses for its own element.
+wire        cmp_d_is_fill = (str_idx >= str_dlen_r);
+wire [31:0] cmp_dnow = cmp_d_is_fill ? str_fillv : ea_rdata[31:0];
+wire [31:0] cmp_s    = str_elem & str_mask;
+wire [31:0] cmp_d    = cmp_dnow & str_mask;
+wire        cmp_diff_here = (cmp_s != cmp_d);
+// "S Set if src > dst", and "the S flag reflects the UNSIGNED comparison of
+// the two strings" -- which is what a character is.
+wire        cmp_src_gt    = (cmp_s > cmp_d);
+wire        cmp_stop_here = ((cmp_s == (str_fillv & str_mask)) ||
+                             (cmp_d == (str_fillv & str_mask)));
+
 // The ALU is combinational; its inputs are the two operand values.
 wire  [3:0] alu_flags;
 wire        alu_dec_bad;
@@ -1426,6 +1577,19 @@ always_ff @(posedge clk) begin
         r28_r           <= 32'd0;
         tkcw_r          <= 32'd0;
         bf_len_r        <= 6'd0;
+        str_src         <= 32'd0;
+        str_dst         <= 32'd0;
+        str_slen_r      <= 32'd0;
+        str_dlen_r      <= 32'd0;
+        str_cnt         <= 32'd0;
+        str_fillv       <= 32'd0;
+        str_elem        <= 32'd0;
+        str_stop_hit    <= 1'b0;
+        str_idx         <= 32'd0;
+        str_delem       <= 32'd0;
+        str_fillp       <= 32'd0;
+        str_sdiff       <= 1'b0;
+        str_sgt         <= 1'b0;
         bf_bad_r        <= 1'b0;
         bf_resid_r      <= 3'd0;
         dec_pat_r       <= 8'd0;
@@ -1722,8 +1886,19 @@ always_ff @(posedge clk) begin
                 // docs/v60/DECIMAL.md rather than given a reading here.
                 dec_pat_r <= op2_ext;
                 state     <= S_OP1;
+            end else if (is_str_now) begin
+                // The character manipulation group.  Both lengths first,
+                // before either operand: a length is a literal in its ext byte
+                // or the register that byte names, and min(slen, dlen) needs
+                // both.  The register file has two read ports, so one state
+                // presents both and the next takes them.
+                rf_ra_sel <= str_slen_raw[4:0];
+                rf_rb_sel <= str_dlen_raw[4:0];
+                state     <= S_STR_L1;
             end else if (fmt_viib || fmt_viic) begin
-                // The bit field group.  Its length comes from the ext byte the
+                // The bit field group.  SCHC and SKPC are Format VIIb as well,
+                // and do not arrive here: the character branch above runs
+                // first and takes them.  Its length comes from the ext byte the
                 // format carries, or -- when bit 7 is set -- from the register
                 // that byte names.  Taken here, before either operand, because
                 // both the length check and the address check need it.
@@ -1959,12 +2134,14 @@ always_ff @(posedge clk) begin
                 // place computes the address once; one that only writes does
                 // not read at all; and one that only reads must not leave a
                 // write pending behind it.
-                ea_rmw        <= !dst_write_only && !dst_read_only;
+                // The character group never reads its destination through
+                // this path: the engine makes its own element accesses.
+                ea_rmw        <= !dst_write_only && !dst_read_only && !is_str;
                 // Every field of the descriptor is set before an access
                 // starts: JMP leaves this one set, and the next instruction
                 // would otherwise compute its destination address and never
                 // write to it.
-                ea_addr_only  <= 1'b0;
+                ea_addr_only  <= str_dst_is_addr;
                 ea_bit_mode   <= bf_dst_is_bit;
                 // OUT writes its port here.
                 // And TASI and CAXI lock the bus around theirs.  v60_ea holds
@@ -2033,9 +2210,12 @@ always_ff @(posedge clk) begin
                 exc_vec_r <= VEC_BUS_FAULT;
                 state     <= S_EXC_SW;
                 end else begin
-                    val2  <= ea_rdata;
+                    // A Format VIIa's destination operand is a string, so what
+                    // was wanted is where it is.
+                    val2  <= str_dst_is_addr ? {32'd0, ea_ea} : ea_rdata;
                     if (fmt_iii && !dst_write_only) val1 <= ea_rdata;
-                    state <= S_EXEC;
+                    if (is_str) state <= S_STR_GO;
+                    else        state <= S_EXEC;
                 end
             end
         end
@@ -3314,6 +3494,360 @@ always_ff @(posedge clk) begin
             redirect_pc <= exc_handler_pc;
             retired     <= 1'b1;
             state       <= S_IDLE;
+        end
+
+        // ---- the character manipulation group --------------------------------
+        // docs/v60/CHARACTER-STRING.md.  The engine drives v60_ea itself, one
+        // element at a time, exactly as the stack engine above does: AM_RN_IND
+        // with `ea_rn_sel` zero, so the access raises no addressing-mode
+        // writeback of its own and R28/R27 stay this module's to write.
+
+        S_STR_L1: begin
+            // "bit 7 (ext) = 0 -> bits 6:0 are the operand length; bit 7 = 1 ->
+            // bits 6:0 contain a pointer (register ID) to the general purpose
+            // register containing the operand length" (p.3.293).  So a literal
+            // length is at most 127 and a register one is a full 32 bits.
+            str_slen_r <= str_slen_raw[7] ? rf_ra : {25'd0, str_slen_raw[6:0]};
+            // Format VIIb carries ONE length, the string's: SCHC and SKPC take
+            // their character as an addressed operand, not as a second length.
+            // Nothing bounds the destination for them, so it cannot be the
+            // smaller of the two.
+            str_dlen_r <= !fmt_viia          ? 32'hFFFF_FFFF
+                        : str_dlen_raw[7]    ? rf_rb
+                                             : {25'd0, str_dlen_raw[6:0]};
+            rf_ra_sel  <= 5'd26;
+            state      <= S_STR_L2;
+        end
+
+        S_STR_L2: begin
+            // R26 -- the fill character for the F forms, the stop character
+            // for the S forms.  Read unconditionally: it costs no bus cycle
+            // and it keeps the state count the same for all eight.
+            str_fillv <= rf_ra;
+            state     <= S_OP1;
+        end
+
+        S_STR_GO: begin
+            // "The number of characters copied is the minimum of the source
+            // and the destination string lengths."
+            if (is_str_cmp) str_cnt <= str_cmp_len;
+            else            str_cnt <= str_n;
+            str_sdiff <= 1'b0;
+            str_sgt   <= 1'b0;
+            // "Character string transfers are initiated from the head of the
+            // strings in the address increment mode and from the tail end of
+            // the strings in the address decrement mode."  §2 p.2-7 settles
+            // what that does NOT mean: the ordering of characters within the
+            // string is upward either way, so a downward transfer moves the
+            // same bytes to the same places and only visits them last-first.
+            str_src <= str_down ? (val1[31:0] + str_tail_off) : val1[31:0];
+            str_dst <= str_down ? (val2[31:0] + str_tail_off) : val2[31:0];
+            str_stop_hit <= 1'b0;
+            str_idx <= 32'd0;
+            state   <= S_STR_RD;
+        end
+
+        S_STR_RD: begin
+            if (str_cnt == 32'd0) begin
+                // MOVCF: "the shorter of the source and destination lengths
+                // determines the number of characters to be transferred with
+                // any additional positions in the destination string filled
+                // using the fill character in R26."
+                //
+                // The additional positions are dst[n .. dlen-1], counted from
+                // the destination BASE -- which is where they are for a
+                // downward pass too, because §2 p.2-7 makes the direction bit
+                // a visiting order and not a different correspondence.  So
+                // the fill is computed from val2 rather than from wherever the
+                // copy loop's pointer stopped.
+                //
+                // The fill itself runs upward in both directions: it has no
+                // source to walk beside it and every position takes the same
+                // character, so no page distinguishes the two orders.
+                if (is_movcf && (str_dlen_r > str_n)) begin
+                    str_fillp <= val2[31:0] + str_copy_off;
+                    str_cnt   <= str_dlen_r - str_n;
+                    state     <= S_STR_FILL;
+                end else state <= S_STR_FIN;
+            end
+            else if (is_str_cmp && (str_idx >= str_slen_r)) begin
+                // CMPCF past the end of the source.  The extension is
+                // NOTIONAL -- no page says the shorter string is written and
+                // every operand of all three compares is `.r` -- so the
+                // character comes from R26 and costs no bus cycle.
+                str_elem <= str_fillv;
+                state    <= S_STR_CRD;
+            end
+            else begin
+                ea_mode       <= AM_RN_IND;
+                ea_index      <= 1'b0;
+                ea_disp       <= 32'd0;
+                ea_disp_outer <= 32'd0;
+                ea_opbytes    <= w_src;      // the character size
+                ea_rmw        <= 1'b0;
+                ea_addr_only  <= 1'b0;
+                ea_bit_mode   <= 1'b0;
+                ea_rn_sel     <= 5'd0;
+                ea_pc_val     <= idu_pc;
+                ea_rn_val     <= str_src;
+                ea_we         <= 1'b0;
+                state         <= S_STR_RDS;
+            end
+        end
+
+        S_STR_RDS: begin
+            ea_start <= 1'b1;
+            state    <= S_STR_RDW;
+        end
+
+        S_STR_RDW: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                str_elem <= ea_rdata[31:0];
+                // MOVCS stops when "the stop character specified by R26 is
+                // detected in the source string" -- the source, where CMPCS
+                // looks in either.  The element is still written: the page
+                // says the copy runs UNTIL the character is detected and does
+                // not say the detected one is withheld, and the shipping core
+                // copies it too, so this is the reading that leaves the
+                // lockstep clean on a point no page settles.
+                if (is_movcs &&
+                    ((ea_rdata[31:0] & str_mask) == (str_fillv & str_mask)))
+                    str_stop_hit <= 1'b1;
+                // SCHC and SKPC write nothing: they walk the string and report
+                // where they stopped.  SCHC stops on a character EQUAL to the
+                // one its third operand names; SKPC "is scanned until a
+                // position different from the designated character is
+                // reached", so it stops on the first that is NOT.
+                if (is_str_scan) begin
+                    if (scan_hit) begin
+                        // R28 is the address OF that character, so the pointer
+                        // does not move past it and the offset does not count
+                        // it: "R28 contains the address of the first character
+                        // meeting the search criteria".
+                        str_stop_hit <= 1'b1;
+                        state        <= S_STR_FIN;
+                    end else begin
+                        str_src <= str_down ? (str_src - str_esz)
+                                            : (str_src + str_esz);
+                        str_idx <= str_idx + 32'd1;
+                        str_cnt <= str_cnt - 32'd1;
+                        state   <= S_STR_RD;
+                    end
+                end
+                else if (is_str_cmp) state <= S_STR_CRD;
+                else state <= S_STR_WR;
+            end
+        end
+
+        // The compare group's second read.  Nothing is written by any of the
+        // three: every operand on all three syntax lines is `.r`.
+        S_STR_CRD: begin
+            if (str_idx >= str_dlen_r) begin
+                str_delem <= str_fillv;
+                state     <= S_STR_CRDW;
+            end else begin
+                ea_mode       <= AM_RN_IND;
+                ea_index      <= 1'b0;
+                ea_disp       <= 32'd0;
+                ea_disp_outer <= 32'd0;
+                ea_opbytes    <= w_src;
+                ea_rmw        <= 1'b0;
+                ea_addr_only  <= 1'b0;
+                ea_bit_mode   <= 1'b0;
+                ea_rn_sel     <= 5'd0;
+                ea_pc_val     <= idu_pc;
+                ea_rn_val     <= str_dst;
+                ea_we         <= 1'b0;
+                state         <= S_STR_CRDS;
+            end
+        end
+
+        S_STR_CRDS: begin
+            ea_start <= 1'b1;
+            state    <= S_STR_CRDW;
+        end
+
+        S_STR_CRDW: if (cmp_d_is_fill || ea_done) begin
+            if (!cmp_d_is_fill && berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                if (!cmp_d_is_fill) begin
+                    insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+                    str_delem   <= ea_rdata[31:0];
+                end
+                // CMPCS: "The CY flag is cleared if the stop character is
+                // detected in either string, otherwise it is set" -- with no
+                // equality condition on it.  The shipping core reaches its
+                // stop test only after `a != b` has fallen through, so a
+                // CMPCS whose characters DIFFER and one of which IS the stop
+                // character keeps CY set.  That is s32_v60.sv's defect; the
+                // sentence puts the test here, beside the disagreement and
+                // not inside it.
+                if (is_cmpcs && cmp_stop_here) str_stop_hit <= 1'b1;
+                if (cmp_diff_here) begin
+                    // "R28 and R27 will contain the addresses of the
+                    // characters in disagreement", so the pointers stay put.
+                    str_sdiff <= 1'b1;
+                    str_sgt   <= cmp_src_gt;
+                    state     <= S_STR_FIN;
+                end else if (is_cmpcs && cmp_stop_here) begin
+                    state     <= S_STR_FIN;
+                end else begin
+                    str_src <= str_src + str_esz;
+                    str_dst <= str_dst + str_esz;
+                    str_idx <= str_idx + 32'd1;
+                    str_cnt <= str_cnt - 32'd1;
+                    state   <= S_STR_RD;
+                end
+            end
+        end
+
+        S_STR_WR: begin
+            ea_mode       <= AM_RN_IND;
+            ea_index      <= 1'b0;
+            ea_disp       <= 32'd0;
+            ea_disp_outer <= 32'd0;
+            ea_opbytes    <= w_src;
+            ea_rmw        <= 1'b0;
+            ea_addr_only  <= 1'b0;
+            ea_bit_mode   <= 1'b0;
+            ea_rn_sel     <= 5'd0;
+            ea_pc_val     <= idu_pc;
+            ea_rn_val     <= str_dst;
+            ea_we         <= 1'b1;
+            ea_wdata      <= {32'd0, str_elem};
+            state         <= S_STR_WRS;
+        end
+
+        S_STR_WRS: begin
+            ea_start <= 1'b1;
+            state    <= S_STR_WRW;
+        end
+
+        S_STR_WRW: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                str_src <= str_down ? (str_src - str_esz) : (str_src + str_esz);
+                str_dst <= str_down ? (str_dst - str_esz) : (str_dst + str_esz);
+                str_cnt <= str_cnt - 32'd1;
+                // The stopper was written; nothing after it is.
+                if (str_stop_hit) state <= S_STR_FIN;
+                else              state <= S_STR_RD;
+            end
+        end
+
+        S_STR_FILL: begin
+            if (str_cnt == 32'd0) state <= S_STR_FIN;
+            else begin
+                ea_mode       <= AM_RN_IND;
+                ea_index      <= 1'b0;
+                ea_disp       <= 32'd0;
+                ea_disp_outer <= 32'd0;
+                ea_opbytes    <= w_src;
+                ea_rmw        <= 1'b0;
+                ea_addr_only  <= 1'b0;
+                ea_bit_mode   <= 1'b0;
+                ea_rn_sel     <= 5'd0;
+                ea_pc_val     <= idu_pc;
+                ea_rn_val     <= str_fillp;
+                ea_we         <= 1'b1;
+                ea_wdata      <= {32'd0, str_fillv};
+                state         <= S_STR_FILLS;
+            end
+        end
+
+        S_STR_FILLS: begin
+            ea_start <= 1'b1;
+            state    <= S_STR_FILLW;
+        end
+
+        S_STR_FILLW: if (ea_done) begin
+            insn_cycles <= insn_cycles + {1'b0, ea_bus_cycles};
+            if (berr_r) begin
+                exc_kind  <= EK_BERR;
+                exc_vec_r <= VEC_BUS_FAULT;
+                state     <= S_EXC_SW;
+            end else begin
+                str_fillp <= str_fillp + str_esz;
+                str_cnt   <= str_cnt - 32'd1;
+                state     <= S_STR_FILL;
+            end
+        end
+
+        // "Following the execution of the MOVC instruction, these registers
+        // contain the address of the next logical character to be
+        // transferred" -- so the pointers as the loop left them, and two
+        // states because the register file has one write port.
+        S_STR_FIN: begin
+            rf_wr_en   <= 1'b1;
+            rf_wr_be   <= 4'b1111;
+            rf_wr_sel  <= 5'd28;
+            rf_wr_data <= str_src;
+            state      <= S_STR_FIN2;
+        end
+
+        S_STR_FIN2: begin
+            rf_wr_en   <= 1'b1;
+            rf_wr_be   <= 4'b1111;
+            rf_wr_sel  <= 5'd27;
+            // "R28 <- search character byte address / R27 <- search character
+            // offset" -- the scan pair's two results are different KINDS of
+            // thing, and for a halfword search they differ by a factor of two
+            // plus the base.  The move group's R27 is the destination address.
+            if (is_str_scan) rf_wr_data <= str_idx;
+            else             rf_wr_data <= str_dst;
+            // "CY Unchanged / OV Unchanged / S Unchanged / Z Unchanged" for
+            // MOVC and MOVCF, so they retire without writing the PSW at all --
+            // S_RETIRE would write four flags from `eff_flags`, which is why
+            // this path does not go there.
+            //
+            // MOVCS is the one move that reports something: "CY Cleared if the
+            // stop character is found, otherwise set".  Its other three stay
+            // unchanged, so one bit is assigned rather than a flag word.
+            if (is_movcs) psw[PSW_CY] <= !str_stop_hit;
+            // "Z Set if the search character is found, otherwise cleared."
+            // Read for SKPC as "the scan ended on its own criterion" -- see
+            // the bench and CHARACTER-STRING.md's open question 2.  The other
+            // three flags are Unchanged for both.
+            if (is_str_scan) psw[PSW_Z] <= str_stop_hit;
+            // The compare group.  On a disagreement both flags come from the
+            // differing pair; with no disagreement "the S flag will indicate
+            // the shorter string" and "the Z flag will be set if and only if
+            // the character strings are of identical length and contents" --
+            // which is why equal prefixes of unequal length do NOT set it.
+            // CMPCF is the exception to both: its filler makes the lengths
+            // notionally equal, so an unbroken run to the longer length is
+            // equality.
+            if (is_str_cmp) begin
+                if (str_sdiff) begin
+                    psw[PSW_Z] <= 1'b0;
+                    psw[PSW_S] <= str_sgt;
+                end else if (is_cmpcf) begin
+                    psw[PSW_Z] <= 1'b1;
+                    psw[PSW_S] <= 1'b0;
+                end else begin
+                    psw[PSW_Z] <= (str_slen_r == str_dlen_r);
+                    psw[PSW_S] <= (str_slen_r >  str_dlen_r);
+                end
+                // "CY Set if the compare operation terminates without
+                // detecting the stop character in either string, otherwise
+                // cleared."  CMPC and CMPCF leave CY Unchanged.
+                if (is_cmpcs) psw[PSW_CY] <= !str_stop_hit;
+            end
+            retired    <= 1'b1;
+            pc         <= idu_pc + {27'd0, idu_len};
+            state      <= S_IDLE;
         end
 
         S_STOP: ;

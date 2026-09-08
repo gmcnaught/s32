@@ -245,6 +245,27 @@ typedef enum logic [6:0] {
     ALU_MOVF    = 7'd76,
     ALU_NEGF    = 7'd77,
     ALU_ABSF    = 7'd78,
+    // The character manipulation group.  These never reach v60_alu: the
+    // sequencer diverts on them and drives the element loop itself, the same
+    // way the control transfers are kept out of EXEC_OP.  They are given ALU
+    // op codes only because that is how v60_op_pkg names an operation the
+    // sub-op picks, and the sub-op is exactly what distinguishes these eight.
+    // docs/v60/CHARACTER-STRING.md.
+    //
+    // The direction bit is NOT here.  MOVC's two sub-ops (58-08 upward and
+    // 58-09 downward) are one operation visited in two orders -- "In all cases
+    // the ordering of characters within the string is in the upward
+    // (increasing addresses) direction.  Only the direction of processing
+    // changes" (PgmRef S2, p. 2-7) -- so both map to ALU_MOVC and the
+    // sequencer reads the bit.  Same for MOVCF, SCHC and SKPC.
+    ALU_MOVC    = 7'd79,
+    ALU_MOVCF   = 7'd80,
+    ALU_MOVCS   = 7'd81,
+    ALU_CMPC    = 7'd82,
+    ALU_CMPCF   = 7'd83,
+    ALU_CMPCS   = 7'd84,
+    ALU_SCHC    = 7'd85,
+    ALU_SKPC    = 7'd86,
     // v60_muldiv's six.  Not combinational, and v60_seq waits on them; see
     // docs/v60/MULTIPLY-DIVIDE.md.
     ALU_MUL  = 7'd19,

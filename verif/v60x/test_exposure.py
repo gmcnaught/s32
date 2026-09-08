@@ -48,7 +48,7 @@ class ExposureTests(unittest.TestCase):
         self.assertIn('MOVF', self.executed)
         self.assertNotIn('MOVBS', self.executed)
         self.assertNotIn('ADDF', self.executed)
-        self.assertEqual(len(self.executed), 93)
+        self.assertEqual(len(self.executed), 101)
 
     def test_report_counts_and_coverage(self):
         counts = exposure.count(io.StringIO(TRACE), self.decode)

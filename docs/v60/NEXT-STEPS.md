@@ -36,6 +36,9 @@ lockstep bench against the shipping core; `docs/v60/FIT-RESULT.md` and
   page and one PR into `s32_v60.sv`. Game exposure — which of the 42
   unexecuted instructions games run — is measurable now with
   `+OPTRACE` and `tools/v60x/exposure.py`, on a machine that has ROMs.
+  **Measured 2026-09-05** — `docs/v60/UPSTREAM-DIVERGENCE.md` carries the run.
+  The answer was three instructions, `MOVC` `SKPC` `MOVCF`, and the group they
+  belong to is implemented now, so the figure is 100.00% on all four games.
 - **The hardware gate comes before any of it, and it has gaps.** PR #24
   merged on CI alone; put on a DE10-Nano the same day, its CI bitstream
   broke Spider-Man and froze Dark Edge, and main's own CI bitstream hung
@@ -149,6 +152,21 @@ point**, not doubleword-integer conversions. "Long" in those mnemonics means
 one. They need the FP datapath and belong with that group below.
 
 What is left, in rough order of how much machinery each needs:
+- **The character manipulation group is DONE**, 2026-09-05 — `MOVC` `MOVCF`
+  `MOVCS` `CMPC` `CMPCF` `CMPCS` `SCHC` `SKPC`, all sixteen encodings, both
+  character sizes and both directions, in `v60_seq`'s `S_STR_*` engine. Nine
+  mutations checked, both simulators. It resolved four places where
+  `docs/v60/CHARACTER-STRING.md` had recorded the shipping core disagreeing
+  with the pages, all four in the pages' favour: `SCHC`'s and `SKPC`'s `Z`,
+  `CMPC`'s `R28`/`R27`, and `CMPCS`'s `CY`. None of the four reaches the
+  lockstep, because `gen_lockstep_program.py` emits no `0x58`/`0x5A` — which is
+  itself the next small piece of work if those findings are to be pushed into
+  `s32_v60.sv` the way stage 4's three are.
+
+  **What it was worth is now measured rather than guessed.** This group was the
+  whole of what the four gate games execute and the clean room did not:
+  `exposure.py` read 99.98–100% before and **100.00% on all four after**.
+
 - **The bit-string group.** All ten subops are read (see
   `docs/v60/INSTRUCTION-DECODE.md`) and none is executed. They are among the
   instructions that are *interruptible mid-execution*, which is a sequencer
@@ -176,7 +194,11 @@ What is left, in rough order of how much machinery each needs:
 
   **Recommendation, and it is a recommendation rather than a page fact:** ship
   the eighteen **non-interruptible** and record it, as `s32_v60.sv` already
-  does.
+  does. **Taken, 2026-09-05**, for the eight character-manipulation
+  instructions: they execute, and `R28`/`R27` are written at the termination
+  branches rather than maintained through the loop. The reason is recorded in
+  `v60_seq.sv` at the point of decision and in
+  `docs/v60/CHARACTER-STRING.md`.
 
   **The bounded check has now been done and the search is exhausted**
   (`INTERRUPTIBILITY.md`'s addendum). All four held books were searched and two

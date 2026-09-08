@@ -30,7 +30,7 @@ mkdir -p "$build_dir" "$out_dir"
   --top-module tb_core_romboot --Mdir "$build_dir" -o romboot \
   -f verif/v25/s80x86.f \
   rtl/cpu/v25/s32_v25_rom_cache.sv rtl/cpu/v25/s32_v25_cpu.sv \
-  -f scratch/romboot.f
+  -f verif/verilator/romboot.f
 
 (
   cd "$out_dir"

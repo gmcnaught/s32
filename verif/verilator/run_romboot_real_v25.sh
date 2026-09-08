@@ -38,7 +38,7 @@ command -v "$verilator_sim_safe" >/dev/null 2>&1 || { echo "missing $verilator_s
   --top-module tb_core_romboot --Mdir "$build_dir" -o romboot \
   -f verif/v25/s80x86.f \
   rtl/cpu/v25/s32_v25_rom_cache.sv rtl/cpu/v25/s32_v25_cpu.sv \
-  -f scratch/romboot.f
+  -f verif/verilator/romboot.f
 
 mkdir -p "$output_dir"
 cd "$output_dir"
